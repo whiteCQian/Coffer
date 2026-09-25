@@ -16,18 +16,16 @@ jobs:
       SPRING_PROFILES_ACTIVE: test
       MINIO_ACCESS_KEY: ci-minio-user
       MINIO_SECRET_KEY: ci-minio-password-for-isolated-tests
-      MINIO_ENDPOINT: http://127.0.0.1:4566
+      MINIO_ENDPOINT: http://127.0.0.1:9090
     services:
       redis:
         image: redis:8
         ports:
           - 6379:6379
       s3:
-        image: localstack/localstack:2026.08.2
-        env:
-          SERVICES: s3
+        image: adobe/s3mock:5.2.2
         ports:
-          - 4566:4566
+          - 9090:9090
     steps:
       - name: Check out source
         uses: actions/checkout@v7.0.1
@@ -40,7 +38,7 @@ jobs:
       - name: Wait for isolated S3
         run: |
           for attempt in {1..30}; do
-            if curl --fail --silent http://127.0.0.1:4566/_localstack/health > /dev/null; then
+            if curl --fail --silent http://127.0.0.1:9090/favicon.ico > /dev/null; then
               exit 0
             fi
             sleep 2
