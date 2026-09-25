@@ -11,7 +11,6 @@ Coffer/
 ├── backend/              # 后端 Spring Boot（Java / Maven）
 │   ├── src/              # main + test
 │   ├── pom.xml
-│   └── e2e-sample/       # 端到端上传测试样本
 ├── frontend/             # 前端 Vue3 + Element Plus（Vite）
 │   ├── src/              # 页面 / 组件 / Pinia store / 路由
 │   └── node_modules/     # 依赖（缺失时 start-all.bat 首次会自动 npm install）

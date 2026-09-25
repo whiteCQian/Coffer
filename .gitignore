@@ -40,3 +40,6 @@ docs/archive/legacy/*.docx
 
 # Locally generated launcher secrets; never commit these.
 *-local.cmd
+
+# Local E2E input documents are not part of the repository.
+/backend/e2e-sample/
