@@ -74,9 +74,9 @@ flowchart LR
 
 **R03｜搭建持续验收骨架。**
 
-- 已建立最小 GitHub Actions 骨架：后端运行 Maven verify，前端用锁文件安装并执行类型检查/生产构建。仓库目前没有 Git remote，因此尚无 hosted run 证据。
-- R03 后续补齐 OpenAPI 生成差异检查、依赖漏洞扫描、H2/MySQL 迁移升级矩阵和文件系统故障注入。OpenAPI job 要等后端可在不启动 MinIO 的隔离环境安全运行后加入；Redis 按可选/可重建依赖测试。尚无 Git remote；将仓库连接到获准的 remote 并取得首条成功 hosted run 作为 M1 合并门禁。
-- **完成判据**：在仓库连接 CI 后，后端与前端两个基础 job 至少各有一条成功 hosted run；后续每个阶段的迁移、接口契约和故障用例能在合并前被自动发现。
+- 基础 CI 已连接用户指定的 GitHub 仓库 `https://github.com/whiteCQian/Coffer.git`。工作流为后端运行 Maven `verify`（使用隔离 Redis 8 与 Adobe S3Mock 5.2.2），前端执行 `npm ci` 和生产构建；提交 `b4cafb2` 的后端与前端 job 均成功，见[GitHub Actions 运行记录](https://github.com/whiteCQian/Coffer/actions/runs/36127838415)。
+- 基础门禁已完成。后续仍须补齐 OpenAPI 生成差异检查、依赖漏洞扫描、H2/MySQL 迁移升级矩阵和文件系统故障注入；Redis 按可选/可重建依赖测试。OpenAPI job 应在接口契约生成稳定且无需外部服务后加入。将成功运行设为 M1 及后续阶段的合并门禁，并在分支保护中强制要求两个基础 job。
+- **完成判据**：基础后端、前端各有成功 hosted run（已满足）；增强门禁随对应迁移、契约和故障用例实施，并在其任务验收前成为必须通过的 CI job。
 
 ### M1：多账号、身份和全链路数据隔离（所有后续工作的前置门禁）
 
