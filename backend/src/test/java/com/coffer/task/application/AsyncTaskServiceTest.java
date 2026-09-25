@@ -6,6 +6,7 @@ import com.coffer.task.infrastructure.persistence.AsyncTaskRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.transaction.annotation.Transactional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -15,9 +16,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * PENDING -> PROCESSING -> COMPLETED 正流向、PENDING 直转 FAILED 失败场景、
  * 终态不可再变更的合法性校验，以及任务不存在时的静默忽略。
  *
- * <p>使用独立 taskId 隔离用例数据，避免共享上下文时相互干扰。
+ * <p>每个用例在事务回滚中清理种子数据；独立 taskId 同时避免共享上下文时发生主键冲突。
  */
 @SpringBootTest
+@Transactional
 class AsyncTaskServiceTest {
 
     @Autowired
