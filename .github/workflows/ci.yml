@@ -12,6 +12,23 @@ jobs:
   backend:
     name: Backend verify
     runs-on: ubuntu-latest
+    env:
+      SPRING_PROFILES_ACTIVE: test
+      MINIO_ACCESS_KEY: ci-minio-user
+      MINIO_SECRET_KEY: ci-minio-password-for-isolated-tests
+    services:
+      redis:
+        image: redis:8
+        ports:
+          - 6379:6379
+      minio:
+        image: quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z
+        env:
+          MINIO_ROOT_USER: ci-minio-user
+          MINIO_ROOT_PASSWORD: ci-minio-password-for-isolated-tests
+        command: server /data
+        ports:
+          - 9000:9000
     steps:
       - name: Check out source
         uses: actions/checkout@v7.0.1
@@ -21,6 +38,15 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: maven
+      - name: Wait for isolated MinIO
+        run: |
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:9000/minio/health/live > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          exit 1
       - name: Compile and run existing backend verification
         run: mvn --batch-mode --no-transfer-progress -f backend/pom.xml verify
 
