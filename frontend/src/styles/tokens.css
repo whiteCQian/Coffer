@@ -1,0 +1,195 @@
+/* ============================================================
+   Coffer 设计 Token —— 双主题（亮色暖白 · 默认 / 深色 · data-theme=dark）
+   · 全圆角（卡片 20 / 内部 12 / 图标 50%），无锐角
+   · 间距系统：基准 8px，卡片间距 20，内边距 24
+   · 亮色：暖白底 #F6F1E6，柔和大色块浮层
+   · 深色：机身黑底 #0F0F12，大色块浮层
+   切换机制：<html data-theme="dark"> 覆盖以下所有 token，组件只引用语义名。
+   ============================================================ */
+
+/* ============ 亮色（默认） ============ */
+:root {
+  /* —— 基底与导航 —— */
+  --bg: #f6f1e6;           /* 暖白 · 整页底色 */
+  --rail: #eae1d1;         /* 暖沙 · 导航/头像 */
+
+  /* —— 品牌强调（按钮 / Logo / 链接 / 焦点 / 主操作） —— */
+  --accent: #3e7d8e;            /* 深青 */
+  --accent-hover: #4f91a3;      /* 深青 hover */
+  --accent-rgb: 62 125 142;     /* accent 的 RGB 通道（tint / 阴影用） */
+  --accent-soft-rgb: 62 125 142;/* 弱化 accent RGB 通道（浅文字 tint） */
+  --accent-soft-text: #3e7d8e;  /* 弱化 accent 文字（联想/标签选中态） */
+
+  /* —— 功能色块 —— */
+  --upload: #99cdd8;       /* 柔青蓝 · 上传区 */
+  --ice: #fde8d3;          /* 暖杏 · AI 猜你需要 */
+  --olive: #f3c382;        /* 暖琥珀 · 最近上传 */
+  --mint: #c6e4d3;         /* 浅薄荷 · AI 解析进度 */
+  --chat: #657166;         /* 鼠尾草绿 · AI 管家对话（深色卡） */
+  --chat-gold: #e6c77d; /* AI 管家卡上浅金色迷你圆钮 */
+  --chat-gold-rgb: 230 199 125; /* 其 RGB 通道（光晕环 tint 用） */
+
+  /* —— 各色块上的墨色文字 —— */
+  --ink-teal: #1f4b55;       /* 上传区深文字 */
+  --ink-peach: #7a4a22;      /* 暖杏区深文字 */
+  --ink-amber: #6b4518;      /* 暖琥珀区深文字 */
+  --ink-mint: #2f5b48;       /* 浅薄荷区深文字 */
+  /* 各色块墨色的 RGB 通道（卡片内 tint 文字/描边用） */
+  --ink-teal-rgb: 31 75 85;
+  --ink-peach-rgb: 122 74 34;
+  --ink-amber-rgb: 107 69 24;
+  --ink-mint-rgb: 47 91 72;
+
+  /* —— 深色卡文字（AI 管家卡，两主题皆深底） —— */
+  --text-on-dark: #f0ebe5;   /* 深色卡主文字 · 暖白 */
+  --text-on-dark-2: #8a8580; /* 深色卡次文字 · 暖灰 */
+
+  /* —— 语义状态 —— */
+  --ok: #2e8b57;           /* 成功 · 深翠绿 */
+  --warn: #c08514;         /* 待确认 · 深琥珀 */
+  --danger: #c94b4b;       /* 失败 · 深珊瑚红 */
+  --on-warn: #ffffff;      /* warn 底上的文字色 */
+  --danger-rgb: 201 75 75; /* danger 的 RGB 通道（tint 用） */
+  --ok-rgb: 46 139 87;     /* ok 的 RGB 通道（tint 用） */
+  --warn-tint: rgb(192 133 20 / 0.14); /* 待确认弱化底 */
+
+  /* —— 左栏图标 —— */
+  --icon: #8a7f70;         /* 默认暖灰 */
+
+  /* —— 中性浮层 / 边框（按钮 hover、标签底、面板描边） —— */
+  --hover-bg: rgb(62 54 44 / 0.06);        /* 按钮/芯片 hover 底 */
+  --hover-bg-strong: rgb(62 54 44 / 0.08); /* 稍强 hover 底 */
+  --tag-bg: rgb(62 54 44 / 0.06);          /* 标签弱化底 */
+  --line-strong: rgb(62 54 44 / 0.12);     /* 面板/浮层描边 */
+  --line-dashed: rgb(62 54 44 / 0.2);      /* 虚线描边 */
+  --line-hover: rgb(62 54 44 / 0.16);        /* 卡片/按钮 hover 描边 */
+  --line-hover-strong: rgb(62 54 44 / 0.25); /* 分页 hover 强描边 */
+  --border-panel: rgb(62 54 44 / 0.12);    /* 抽屉/弹窗描边 */
+  --card-hover-bg: #f7f1e6;                /* 文件卡片/结果行 hover 底 */
+  --hover-ink: var(--accent);              /* 标签/引导芯片 hover 高亮文字 */
+
+  /* —— 内容页面板 —— */
+  --panel: #fdfaf4;          /* 内容页主面板 */
+  --panel-2: #f7f1e6;        /* 面板内浮层 / 抽屉底 */
+  --panel-3: #efe7d8;        /* 输入框 / 卡片底 */
+  --line: rgb(62 54 44 / 0.12);  /* 分隔线 */
+  --text-1: #3e362c;         /* 主文字（暖深） */
+  --text-2: #8a7f70;         /* 次文字（暖灰） */
+  --text-3: #a79d8f;         /* 弱化文字（暖浅灰） */
+
+  /* —— 文件分类色相 —— */
+  --cat-contract: #d96a3e;  /* 合同 · 暖橙 */
+  --cat-invoice: #c8922e;   /* 发票 · 深琥珀 */
+  --cat-report: #2e8fa6;    /* 报告 · 青碧 */
+  --cat-id: #4e76b0;        /* 证件 · 雾蓝 */
+  --cat-image: #c45585;     /* 图片 · 樱粉 */
+  --cat-video: #8a5fc0;     /* 视频 · 紫藤 */
+  --cat-other: #7c8594;     /* 其他 · 灰蓝 */
+
+  /* —— 滚动条 —— */
+  --scrollbar-thumb: rgb(62 54 44 / 0.16);
+
+  /* —— AI 管家对话内用户气泡底 —— */
+  --chat-user-bubble: rgb(243 195 130 / 0.32);
+
+  /* —— 彩色卡片内白色/墨色浮层（上传按钮 / 进度条目 / 进度标签） —— */
+  --card-btn-bg: rgb(255 255 255 / 0.55);        /* 上传区按钮底 */
+  --card-btn-bg-hover: rgb(255 255 255 / 0.72);  /* 上传区按钮 hover */
+  --card-item-bg: rgb(255 255 255 / 0.55);       /* 进度条目底 */
+  --card-chip-bg: rgb(255 255 255 / 0.6);        /* 进度标签底 */
+  --ink-mint-strong: #2f5b48;                    /* 薄荷区白底强调字 */
+
+  /* —— 圆角 —— */
+  --radius-card: 20px;
+  --radius-inner: 12px;
+  --radius-pill: 999px;
+
+  /* —— 间距系统（8 的倍数） —— */
+  --gap: 20px;             /* 卡片间距 */
+  --pad: 24px;             /* 卡片内边距 */
+  --unit: 8px;             /* 基准单位 */
+
+  /* —— 字体 —— */
+  --font-display: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'STSong', serif;
+  --font-body: -apple-system, 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+}
+
+/* ============ 深色（data-theme=dark） ============ */
+[data-theme='dark'] {
+  --bg: #0f0f12;
+  --rail: #16161a;
+
+  --accent: #ff6b4a;
+  --accent-hover: #ff8568;
+  --accent-rgb: 255 107 74;
+  --accent-soft-rgb: 255 179 160;
+  --accent-soft-text: #ffb3a0;
+
+  --upload: #ff6b4a;
+  --ice: #7ec8e3;
+  --olive: #a8b89a;
+  --mint: #8b7ab8;
+  --chat: #1f1b16;
+  --chat-gold: #f0d28d;
+  --chat-gold-rgb: 240 210 141;
+
+  --ink-teal: #ffffff;
+  --ink-peach: #0f2f3f;
+  --ink-amber: #2a3a20;
+  --ink-mint: #ffffff;
+  --ink-teal-rgb: 255 255 255;
+  --ink-peach-rgb: 15 47 63;
+  --ink-amber-rgb: 42 58 32;
+  --ink-mint-rgb: 255 255 255;
+
+  --text-on-dark: #f0ebe5;
+  --text-on-dark-2: #8a8580;
+
+  --ok: #4caf7a;
+  --warn: #ffd700;
+  --danger: #ff6b6b;
+  --on-warn: #3a2f00;
+  --danger-rgb: 255 107 107;
+  --ok-rgb: 76 175 122;
+  --warn-tint: rgb(255 215 0 / 0.12);
+
+  --icon: #6b6b75;
+
+  --hover-bg: rgb(255 255 255 / 0.08);
+  --hover-bg-strong: rgb(255 255 255 / 0.1);
+  --tag-bg: rgb(255 255 255 / 0.07);
+  --line-strong: rgb(255 255 255 / 0.08);
+  --line-dashed: rgb(255 255 255 / 0.18);
+  --line-hover: rgb(255 255 255 / 0.14);
+  --line-hover-strong: rgb(255 255 255 / 0.22);
+  --border-panel: rgb(255 255 255 / 0.06);
+  --card-hover-bg: #2a2a34;
+  --hover-ink: #ffffff;
+
+  --panel: #17171d;
+  --panel-2: #1f1f27;
+  --panel-3: #26262f;
+  --line: rgb(255 255 255 / 0.08);
+  --text-1: #f0ebe5;
+  --text-2: #8a8580;
+  --text-3: #6b6560;
+
+  --cat-contract: #ff8a5c;
+  --cat-invoice: #e6b74e;
+  --cat-report: #46b5c7;
+  --cat-id: #7fa9e0;
+  --cat-image: #ee8cb0;
+  --cat-video: #b083e8;
+  --cat-other: #8b93a3;
+
+  --scrollbar-thumb: rgb(255 255 255 / 0.12);
+
+  --chat-user-bubble: rgb(255 107 74 / 0.3);
+
+  --card-btn-bg: rgb(255 255 255 / 0.2);
+  --card-btn-bg-hover: rgb(255 255 255 / 0.3);
+  --card-item-bg: rgb(255 255 255 / 0.12);
+  --card-chip-bg: rgb(255 255 255 / 0.22);
+  --ink-mint-strong: #8b7ab8;
+}

@@ -1,0 +1,12 @@
+CREATE INDEX idx_async_task_status ON async_task(status);
+CREATE INDEX idx_chat_message_session_id ON chat_message(session_id);
+CREATE INDEX idx_chat_message_timestamp ON chat_message(`timestamp`);
+CREATE INDEX idx_file_metadata_status ON file_metadata(status);
+CREATE INDEX idx_file_metadata_upload_time ON file_metadata(upload_time);
+CREATE INDEX idx_file_tag_mapping_file_id ON file_tag_mapping(file_id);
+CREATE INDEX idx_file_tag_mapping_tag_id ON file_tag_mapping(tag_id);
+CREATE INDEX idx_model_call_session ON model_call_log(session_id);
+CREATE INDEX idx_model_call_time ON model_call_log(call_time);
+
+ALTER TABLE file_metadata
+    ADD FULLTEXT INDEX idx_file_search (file_name, summary) WITH PARSER ngram;

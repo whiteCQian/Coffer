@@ -1,0 +1,3 @@
+AgentFS 智能文件管理测试文本
+第一行内容 text-parsing
+第二行包含关键词

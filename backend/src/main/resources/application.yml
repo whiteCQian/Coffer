@@ -1,0 +1,252 @@
+# =============================================================================
+# Coffer 后端配置
+#
+# 采用 Spring Profiles 多文档格式，用 --- 分隔各环境：
+#   · 公共段    —— 所有环境共享（默认激活 dev）
+#   · dev       —— H2 本地文件数据库，本地开发
+#   · prod      —— MySQL 8 + Hikari 连接池
+#
+# 生产切换：java -jar coffer-backend.jar --spring.profiles.active=prod
+# 连接地址类配置使用占位符；模型密钥由设置页面加密保存，生产环境的加密主密钥来自 COFFER_SECRET_KEY。
+# =============================================================================
+
+# ==================== 公共配置（所有环境共享） ====================
+server:
+  port: 8080
+
+spring:
+  application:
+    name: coffer-backend
+
+  # 默认激活 dev 环境（prod 通过 --spring.profiles.active=prod 覆盖）
+  profiles:
+    active: dev
+
+  # JPA 只校验实体与数据库结构，所有结构变更由 Flyway 迁移脚本负责
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  open-in-view: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration/{vendor}
+    baseline-on-migrate: true
+    baseline-version: 3
+    validate-on-migrate: true
+    clean-disabled: true
+
+  # DevTools 热重启
+  devtools:
+    restart:
+      enabled: true
+
+  # 文件上传大小限制（与 FileUploadRequest 的 50MB 校验保持一致，
+  # 否则超过 1MB（默认值）的文件会在 servlet 层被直接拒绝）
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+
+  # ========== Redis 8（Spring Data Redis，默认 Lettuce 客户端） ==========
+  # 懒连接：Redis 未启动不影响应用启动
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      connect-timeout: 5000ms
+      timeout: 5000ms
+      # Lettuce 连接池（依赖 commons-pool2，已在 pom 引入）
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
+          max-wait: -1ms              # -1ms 表示获取连接不设等待上限
+
+# 日志级别
+logging:
+  level:
+    com.coffer: debug
+
+# Actuator
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+# ==================== MinIO 对象存储 ====================
+minio:
+  endpoint: ${MINIO_ENDPOINT:http://127.0.0.1:9000}
+  access-key: ${MINIO_ACCESS_KEY:}
+  secret-key: ${MINIO_SECRET_KEY:}
+  bucket-name: ${MINIO_BUCKET:coffer-bucket}
+  secure: ${MINIO_SECURE:false}        # HTTP=false / HTTPS=true
+
+# ==================== Coffer 业务配置 ====================
+coffer:
+  # 全局模型运行模式由数据库中的 model_runtime_setting 管理；LOCAL 的端点
+  # 通过环境变量覆盖，默认指向 Ollama OpenAI-compatible API，不会回退到云端。
+  runtime:
+    local:
+      chat:
+        base-url: ${COFFER_LOCAL_CHAT_BASE_URL:http://127.0.0.1:11434/v1}
+        model-name: ${COFFER_LOCAL_CHAT_MODEL:llama3.2}
+        api-key: ${COFFER_LOCAL_CHAT_API_KEY:}
+      vision:
+        base-url: ${COFFER_LOCAL_VISION_BASE_URL:http://127.0.0.1:11434/v1}
+        model-name: ${COFFER_LOCAL_VISION_MODEL:llava}
+        api-key: ${COFFER_LOCAL_VISION_API_KEY:}
+      embedding:
+        base-url: ${COFFER_LOCAL_EMBEDDING_BASE_URL:http://127.0.0.1:11434/v1}
+        model-name: ${COFFER_LOCAL_EMBEDDING_MODEL:nomic-embed-text}
+        api-key: ${COFFER_LOCAL_EMBEDDING_API_KEY:}
+  # 模型密钥不放在配置文件中，由 /api/settings/models 管理并加密存入数据库。
+  models:
+    deepseek:
+      base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com/v1}
+      model-name: ${DEEPSEEK_MODEL:deepseek-chat}
+      temperature: 0.1
+      max-tokens: 2048
+    qwen-vl:
+      base-url: ${QWEN_VL_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+      model-name: ${QWEN_VL_MODEL:qwen-vl-max}
+  # Agent 系统提示词（AiAgentConfig / PromptTemplateUtil 通过 @Value 读取）
+  system-prompt: "你是 Coffer 智能文件管家，擅长总结与分类，能够准确理解用户的文件管理需求并调用合适的工具完成任务"
+  # 文本解析后最大保留长度（超出截断，TextTruncator 通过 @Value 读取）
+  max-token-text-length: 10000
+  # 提示词模板（PromptTemplateUtil 通过 @Value 读取，缺省时回退到类内内置常量）
+  prompt:
+    file-context: "当前正在处理的文件信息：文件名为 {fileName}，类型为 {fileType}，大小为 {fileSize} 字节，上传时间为 {uploadTime}"
+    search-context: "用户查询：{query}\n最近对话历史：\n{recentHistory}"
+    tag-generation: "请根据以下文件内容生成 3 到 5 个关键词标签，文件名为 {fileName}，类型为 {fileType}，内容预览如下：\n{contentPreview}"
+  memory:
+    max-window-size: 10        # 每会话最大对话轮数，超出后移除最早消息
+    expiry-seconds: 3600       # 会话记忆过期时间（秒），自动清理历史会话
+  # 模型调用日志（ModelCallLogger 切面通过 @Value 读取，false 时直接放行不记录）
+  model-log:
+    enabled: true
+  # Embedding 默认关闭。启用后复用 QWEN_VL 的加密密钥，避免在配置文件中保存明文密钥。
+  embedding:
+    enabled: ${COFFER_EMBEDDING_ENABLED:false}
+    base-url: ${EMBEDDING_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+    model-name: ${EMBEDDING_MODEL:text-embedding-v3}
+    dimensions: ${EMBEDDING_DIMENSIONS:1024}
+    timeout-seconds: ${EMBEDDING_TIMEOUT_SECONDS:30}
+  # Redis 向量记录的命名空间，以及向量索引补偿任务配置。
+  vector-store:
+    redis:
+      key-prefix: ${COFFER_VECTOR_REDIS_KEY_PREFIX:coffer:vector:}
+    reindex:
+      fixed-delay-ms: ${COFFER_VECTOR_REINDEX_DELAY_MS:300000}
+      page-size: ${COFFER_VECTOR_REINDEX_PAGE_SIZE:100}
+    cleanup:
+      fixed-delay-ms: ${COFFER_VECTOR_CLEANUP_DELAY_MS:60000}
+      page-size: ${COFFER_VECTOR_CLEANUP_PAGE_SIZE:100}
+      max-backoff-ms: ${COFFER_VECTOR_CLEANUP_MAX_BACKOFF_MS:3600000}
+  # Hybrid search is opt-in; disabling it preserves the existing FULLTEXT/LIKE behavior.
+  hybrid:
+    enabled: ${COFFER_HYBRID_ENABLED:false}
+    top-k: ${COFFER_HYBRID_TOP_K:50}
+    rrf-k: ${COFFER_HYBRID_RRF_K:60}
+    vector-timeout-ms: ${COFFER_HYBRID_VECTOR_TIMEOUT_MS:1500}
+  # First-version batch import: opt in with a configured local inbox directory.
+  import:
+    inbox:
+      enabled: ${COFFER_INBOX_ENABLED:false}
+      directory: ${COFFER_INBOX_DIRECTORY:}
+      fixed-delay-ms: ${COFFER_INBOX_SCAN_DELAY_MS:30000}
+      stable-observation-threshold: ${COFFER_INBOX_STABLE_OBSERVATIONS:2}
+      max-files-per-scan: ${COFFER_INBOX_MAX_FILES_PER_SCAN:50}
+      retry-delay-ms: ${COFFER_INBOX_RETRY_DELAY_MS:60000}
+  # Dry-run governance preview retention and lifecycle.
+  governance:
+    preview:
+      expiration-minutes: ${COFFER_GOVERNANCE_PREVIEW_EXPIRATION_MINUTES:1440}
+      expiry-scan-delay-ms: ${COFFER_GOVERNANCE_PREVIEW_EXPIRY_SCAN_DELAY_MS:60000}
+      analysis-model: ${COFFER_GOVERNANCE_PREVIEW_ANALYSIS_MODEL:configured-chat-model}
+    archive:
+      retry-delay-seconds: ${COFFER_GOVERNANCE_ARCHIVE_RETRY_DELAY_SECONDS:30}
+      max-attempts: ${COFFER_GOVERNANCE_ARCHIVE_MAX_ATTEMPTS:3}
+  # 多模态视觉模型 Qwen-VL（DashScope OpenAI 兼容模式，非流式）
+  # 第二模型必须按需临时构建（OpenAiChatModel.builder()），勿建显式 @Bean（与 starter 自动装配冲突）。
+  qwen-vl:
+    base-url: ${QWEN_VL_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+    model-name: ${QWEN_VL_MODEL:qwen-vl-max}
+    max-tokens: 1024          # 单次回复最大 token 数
+    temperature: 0.1           # 采样温度：越低越稳定，适合结构化 JSON 输出
+    timeout-seconds: 60        # 单次调用超时（秒）
+
+# ==================== LangChain4j + DeepSeek ====================
+langchain4j:
+  open-ai:
+    # 非流式 Chat 模型（DeepSeekConfig 显式创建 OpenAiChatModel Bean）
+    chat-model:
+      model-name: deepseek-chat
+      base-url: https://api.deepseek.com/v1
+      temperature: 0.1           # 采样温度：越低越稳定，适合标签生成等确定性任务
+      max-tokens: 2048           # 单次回复最大 token 数
+      log-requests: true
+      log-responses: true
+    # 流式 Chat 模型（自动创建 OpenAiStreamingChatModel Bean）
+    streaming-chat-model:
+      model-name: deepseek-chat
+      base-url: https://api.deepseek.com/v1
+      log-requests: true
+      log-responses: true
+      # accumulateToolCallId 未暴露为配置项，后续手动 @Bean 设置 .accumulateToolCallId(false)
+
+# ==================== 开发环境 dev：本地文件 H2 数据库 ====================
+---
+spring:
+  config:
+    activate:
+      on-profile: dev
+
+  # H2 本地文件数据库（开发环境持久化模型凭据和业务数据）
+  datasource:
+    url: jdbc:h2:file:./data/coffer;AUTO_SERVER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+
+  # 开发期打印 SQL 便于调试
+  jpa:
+    show-sql: true
+
+  # H2 控制台
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+# ==================== 生产环境 prod：MySQL 8 + Hikari 连接池 ====================
+---
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+  datasource:
+    url: "${COFFER_DB_URL:jdbc:mysql://localhost:3306/coffer?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf-8&allowPublicKeyRetrieval=true}"
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:}
+    # Hikari 连接池参数
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  # 生产环境关闭 SQL 打印
+  # 方言不显式声明：Hibernate 6.6 会依据 JDBC URL 自动探测 MySQL，
+  # 显式声明 MySQL8Dialect/MySQLDialect 均已 @Deprecated，非必需
+  jpa:
+    show-sql: false
+    hibernate:
+      # 表结构和 FULLTEXT 索引由 Flyway 迁移脚本维护，启动时校验实体结构
+      ddl-auto: validate

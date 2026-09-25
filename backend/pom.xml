@@ -1,0 +1,278 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- 继承 Spring Boot 父 POM，统一管理依赖版本
+         注意：LangChain4j 1.18.1-beta28 的 Spring Boot Starter 硬性依赖 spring-boot 3.5.13，
+         故父 POM 由 3.3.13 升级至 3.5.13 以保证版本一致（同属 Spring Boot 3.x 大版本） -->
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.5.13</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.coffer</groupId>
+    <artifactId>coffer-backend</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <name>coffer-backend</name>
+    <description>Coffer - 基于大模型 Agent 的智能文件存储管理系统（后端）</description>
+    <packaging>jar</packaging>
+
+    <properties>
+        <java.version>17</java.version>
+        <!-- ==================== LangChain4j 版本锁定 ====================
+             官方说明：LangChain4j 针对 Spring Boot 3.x（3.5+）提供 -spring-boot-starter 集成，
+             需 Java 17。Boot Starter 发布线为 1.18.1-beta28（langchain4j-open-ai-spring-boot-starter /
+             langchain4j-spring-boot-starter 均发布至该版本），核心库 langchain4j-core 无 beta 版本、
+             最新稳定版为 1.18.1（与 beta28 Starter 同一发布线，Starter 内部即依赖 1.18.1）。
+             两处版本分开管理，避免因锁死不存在的 core-beta 版本导致解析失败 -->
+        <langchain4j.version>1.18.1-beta28</langchain4j.version>
+        <langchain4j.core.version>1.18.1</langchain4j.core.version>
+    </properties>
+
+    <dependencies>
+        <!-- Web：REST API / MVC -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- Data JPA：文件元数据、标签、对话记录持久化 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+
+        <!-- Flyway：统一管理数据库表结构、索引和版本迁移 -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-mysql</artifactId>
+        </dependency>
+
+        <!-- Validation：参数校验 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
+        <!-- AOP：模型调用日志切面（ModelCallLogger @Around 拦截） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
+
+        <!-- Spring Retry：DeepSeek 限流/超时自动重试（RetryTemplate / @EnableRetry），版本由 BOM 托管 -->
+        <dependency>
+            <groupId>org.springframework.retry</groupId>
+            <artifactId>spring-retry</artifactId>
+        </dependency>
+
+        <!-- Lombok：简化实体/DTO/服务代码 -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- DevTools：开发期热重启，运行时排除 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-devtools</artifactId>
+            <scope>runtime</scope>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Actuator：健康检查与运行指标 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!-- H2：开发环境内存数据库（dev profile） -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <!-- MySQL Connector/J：生产环境驱动（prod profile），版本由 Spring Boot BOM 托管 -->
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- ==================== LangChain4j + DeepSeek ==================== -->
+        <!-- OpenAI 集成 Starter：DeepSeek 兼容 OpenAI 接口，自动创建 OpenAiChatModel / OpenAiStreamingChatModel Bean -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-open-ai-spring-boot-starter</artifactId>
+            <version>${langchain4j.version}</version>
+        </dependency>
+        <!-- Embedding：复用 OpenAI 兼容协议，可接入 DashScope/Qwen Embedding 等模型。
+             排除 JDK HTTP 客户端，保持项目统一使用 Spring RestClient。 -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-open-ai</artifactId>
+            <version>${langchain4j.core.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>dev.langchain4j</groupId>
+                    <artifactId>langchain4j-http-client-jdk</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <!-- Spring Boot Starter：支持 AiServices 等高级特性（版本与上述保持一致） -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-spring-boot-starter</artifactId>
+            <version>${langchain4j.version}</version>
+        </dependency>
+        <!-- LangChain4j 核心库：Starter 已传递引入 core，此处显式声明以锁定版本并直接使用 AiServices / @Tool / 记忆等 API -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-core</artifactId>
+            <version>${langchain4j.core.version}</version>
+        </dependency>
+
+        <!-- ==================== MinIO 对象存储 ==================== -->
+        <dependency>
+            <groupId>io.minio</groupId>
+            <artifactId>minio</artifactId>
+            <version>8.6.0</version>
+        </dependency>
+        <!-- OkHttp 4.12.0：Minio 8.6.0 的类文件引用 okhttp3.HttpUrl（4.x API），但其 pom 声明
+             的 okhttp 5.1.0 为 Kotlin 多平台空桩 jar（仅 767 字节、无 .class），Maven 直接消费
+             会编译失败。此处显式固定 4.12.0（含完整 okhttp3.HttpUrl）覆盖传递依赖 -->
+        <dependency>
+            <groupId>com.squareup.okhttp3</groupId>
+            <artifactId>okhttp</artifactId>
+            <version>4.12.0</version>
+        </dependency>
+
+        <!-- ==================== PDF 解析（Apache PDFBox） ==================== -->
+        <!-- fontbox 已由 pdfbox 3.0.8 传递引入（同版本），无需单独声明 -->
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+            <version>3.0.8</version>
+        </dependency>
+
+        <!-- ==================== Word 解析（Apache POI） ==================== -->
+        <!-- poi 处理 .doc，poi-ooxml 处理 .docx；poi-ooxml-lite 规避完整 ooxml-schemas/Xerces
+             （poi-ooxml 5.5.1 已传递引入 lite，此处显式声明以固化该规避意图） -->
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi</artifactId>
+            <version>5.5.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>5.5.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml-lite</artifactId>
+            <version>5.5.1</version>
+        </dependency>
+        <!-- poi-scratchpad：提供 HWPF（旧版 .doc）解析的 WordExtractor / POIFSFileSystem -->
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-scratchpad</artifactId>
+            <version>5.5.1</version>
+        </dependency>
+
+        <!-- ==================== Redis（Spring Data Redis，默认 Lettuce 客户端） ==================== -->
+        <!-- 版本由 Spring Boot 父 BOM 统一管理 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+        <!-- Apache Commons Pool2：使 spring.data.redis.lettuce.pool 连接池配置生效（BOM 托管版本） -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-pool2</artifactId>
+        </dependency>
+
+        <!-- ==================== Knife4j 接口文档（springdoc-openapi 增强版 UI） ====================
+             注意：knife4j-openapi3 4.3.0 的 pom 错误地传递引入了面向 Spring Boot 2 的
+             springdoc-openapi-ui:1.7.0（不含 jakarta，且不注册 /v3/api-docs），必须排除；
+             显式引入 springdoc-openapi-starter-webmvc-ui 2.8.x（Boot 3.5 + actuator 的最低
+             兼容线为 springdoc 2.8+）。访问 /doc.html 查看文档 -->
+        <dependency>
+            <groupId>com.github.xiaoymin</groupId>
+            <artifactId>knife4j-openapi3-spring-boot-starter</artifactId>
+            <version>4.3.0</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.springdoc</groupId>
+                    <artifactId>springdoc-openapi-ui</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <version>2.8.17</version>
+        </dependency>
+
+        <!-- 单元测试 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- 编译器插件：JDK 23+ 不再隐式启用 classpath 上的注解处理器，
+                 必须显式声明 annotationProcessorPaths，否则 Lombok 的 @Data/@Slf4j 等不生效 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                            <version>${lombok.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+
+            <!-- Spring Boot 可执行 jar 打包插件 -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <exclude>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
+
+            <!-- 测试使用独立的内存 H2，避免污染本地开发文件数据库 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <spring.profiles.active>test</spring.profiles.active>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

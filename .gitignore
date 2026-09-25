@@ -1,0 +1,42 @@
+# Maven
+target/
+*.jar
+*.war
+*.ear
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log
+logs/
+
+# 前端
+node_modules/
+dist/
+
+# Local runtime/state and TypeScript incremental build cache
+*.rdb
+*.tsbuildinfo
+backend/data/
+/data/
+.vite/
+
+# Office temporary lock files
+~$*.docx
+
+# Original academic reports stay local; the GitHub repository is public.
+docs/product/*.docx
+docs/archive/legacy/*.docx
+
+# Locally generated launcher secrets; never commit these.
+*-local.cmd

@@ -1,0 +1,119 @@
+/* ============================================================
+   全局样式 + 共享卡片类 + Element Plus 主题微调（双主题）
+   ============================================================ */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-1);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* —— 共享卡片头部（各色块内复用，颜色由组件内覆盖） —— */
+.card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.card-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+}
+.card-sub,
+.card-count {
+  font-size: 12px;
+}
+
+/* —— 内容页公共排版原语（/files /search /settings） —— */
+.pg {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  min-width: 0;
+  min-height: 0;
+}
+.pg-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex: none;
+}
+.pg-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--text-1);
+}
+.pg-sub {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.pg-panel {
+  background: var(--panel);
+  border-radius: var(--radius-card);
+  padding: var(--pad);
+  min-width: 0;
+  min-height: 0;
+}
+
+/* —— Element Plus 主题：品牌主色映射（亮=深青 / 暗=珊瑚橙） —— */
+:root {
+  --el-color-primary: var(--accent);
+  --el-color-primary-light-3: #6ba1b0;
+  --el-color-primary-light-5: #92bac4;
+  --el-color-primary-light-7: #bbd3da;
+  --el-color-primary-light-8: #d0e1e6;
+  --el-color-primary-light-9: #e5eff2;
+  --el-color-primary-dark-2: #2f6371;
+  --el-border-radius-base: var(--radius-inner);
+  --el-font-family: var(--font-body);
+}
+[data-theme='dark'] {
+  --el-color-primary: var(--accent);
+  --el-color-primary-light-3: #ff8f74;
+  --el-color-primary-light-5: #ffb3a0;
+  --el-color-primary-light-7: #ffd6cc;
+  --el-color-primary-light-8: #ffe5de;
+  --el-color-primary-light-9: #fff4f0;
+  --el-color-primary-dark-2: #cc5236;
+}
+
+/* —— 滚动条 —— */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 按钮/输入框基础过渡（仅基础交互，动画动态效果后续商议） */
+button {
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
