@@ -1,6 +1,8 @@
 package com.coffer.model.runtime.api;
 
 import com.coffer.dto.Result;
+import com.coffer.auth.service.RequestRateLimiter;
+import com.coffer.auth.service.ClientAddressResolver;
 import com.coffer.governance.domain.GovernanceRunMode;
 import com.coffer.model.runtime.ModelRuntimeCapability;
 import com.coffer.model.runtime.ModelRuntimeConnectivityTester;
@@ -17,6 +19,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.time.Duration;
 
 /** C16 endpoint configuration and per-capability connectivity APIs. */
 @RestController
@@ -26,6 +29,8 @@ public class ModelRuntimeEndpointController {
 
     private final ModelRuntimeEndpointConfigurationService configurationService;
     private final ModelRuntimeConnectivityTester connectivityTester;
+    private final RequestRateLimiter rateLimiter;
+    private final ClientAddressResolver clientAddressResolver;
 
     @GetMapping
     public Result<List<ModelRuntimeEndpointResponse>> list() {
@@ -50,7 +55,10 @@ public class ModelRuntimeEndpointController {
 
     @PostMapping("/test")
     public Result<ModelRuntimeEndpointTestResponse> test(
-            @Valid @RequestBody ModelRuntimeEndpointRequest request) {
+            @Valid @RequestBody ModelRuntimeEndpointRequest request,
+            jakarta.servlet.http.HttpServletRequest servletRequest) {
+        String remote = clientAddressResolver.clientKey(servletRequest);
+        rateLimiter.requireAllowed("runtime-test:" + remote, 10, Duration.ofMinutes(15));
         return Result.success(connectivityTester.test(configurationService.resolveForTest(request)));
     }
 

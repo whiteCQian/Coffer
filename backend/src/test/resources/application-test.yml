@@ -14,3 +14,7 @@ spring:
     baseline-on-migrate: false
     validate-on-migrate: true
     clean-disabled: true
+minio:
+  access-key: test-access-key
+  secret-key: test-secret-key
+  bucket-name: ""

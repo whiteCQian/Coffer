@@ -41,6 +41,7 @@ import static org.mockito.Mockito.when;
 /** Unit coverage for stable-file detection, duplicate suppression and failures. */
 @ExtendWith(MockitoExtension.class)
 class InboxImportScannerTest {
+    @org.junit.jupiter.api.AfterEach void clearOwner() { com.coffer.auth.service.TenantContext.clear(); }
 
     @TempDir
     Path inbox;
@@ -59,10 +60,13 @@ class InboxImportScannerTest {
     private InboxImportScanner scanner;
 
     @BeforeEach
-    void setUp() {
+    void setUp() throws IOException {
+        com.coffer.auth.service.TenantContext.set(7L);
+        Path template = inbox.resolve("{ownerId}");
+        inbox = Files.createDirectories(inbox.resolve("7"));
         properties = new InboxImportProperties();
         properties.setEnabled(true);
-        properties.setDirectory(inbox.toString());
+        properties.setDirectory(template.toString());
         properties.setStableObservationThreshold(2);
         properties.setRetryDelayMs(60_000);
         records = new HashMap<>();
@@ -89,11 +93,11 @@ class InboxImportScannerTest {
             records.put(record.getSnapshotKey(), record);
             return record;
         }).when(recordRepository).save(any(InboxImportRecord.class));
-        when(recordRepository.claimForImport(anyLong(), any(InboxImportStatus.class), anyCollection(), any()))
+        when(recordRepository.claimForImport(anyLong(), anyLong(), any(InboxImportStatus.class), anyCollection(), any()))
                 .thenAnswer(invocation -> {
                     Long id = invocation.getArgument(0, Long.class);
-                    InboxImportStatus target = invocation.getArgument(1, InboxImportStatus.class);
-                    Collection<InboxImportStatus> claimable = invocation.getArgument(2, Collection.class);
+                    InboxImportStatus target = invocation.getArgument(2, InboxImportStatus.class);
+                    Collection<InboxImportStatus> claimable = invocation.getArgument(3, Collection.class);
                     Optional<InboxImportRecord> record = records.values().stream()
                             .filter(candidate -> candidate.getId().equals(id))
                             .findFirst();

@@ -26,6 +26,7 @@ public class ModelLogConfig {
         executor.setMaxPoolSize(2);
         executor.setQueueCapacity(1000);
         executor.setThreadNamePrefix("model-log-");
+        executor.setTaskDecorator(new TenantContextTaskDecorator());
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.initialize();
         return executor;

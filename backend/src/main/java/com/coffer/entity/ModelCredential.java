@@ -15,14 +15,18 @@ import java.time.LocalDateTime;
 
 /** Encrypted API credentials for the locally configured model providers. */
 @Entity
-@Table(name = "model_credential")
+@Table(name = "user_model_credential")
 @Data
+@lombok.EqualsAndHashCode(callSuper = false)
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class ModelCredential {
+public class ModelCredential extends com.coffer.auth.domain.TenantOwnedEntity {
 
     @Id
+    @jakarta.persistence.GeneratedValue(strategy = jakarta.persistence.GenerationType.IDENTITY)
+    private Long id;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "provider", length = 32, nullable = false)
     private ModelProvider provider;

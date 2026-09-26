@@ -12,7 +12,7 @@ import java.util.Optional;
  * 异步任务 Repository。
  */
 @Repository
-public interface AsyncTaskRepository extends JpaRepository<AsyncTask, Long> {
+public interface AsyncTaskRepository extends com.coffer.auth.infrastructure.OwnedRepository<AsyncTask, Long> {
 
     /**
      * 按任务 ID 查询任务详情。

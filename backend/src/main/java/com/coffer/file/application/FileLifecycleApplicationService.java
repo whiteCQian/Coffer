@@ -1,27 +1,22 @@
 package com.coffer.file.application;
 
 import com.coffer.file.application.async.AsyncFileProcessor;
-import com.coffer.service.MinioStorageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-/** Application-level orchestration for file rename, category, retry, and deletion use cases. */
+/** Application-level orchestration for file rename, retry, and deletion use cases. */
 @Slf4j
+@com.coffer.auth.service.OwnerOnly
 @Service
 @RequiredArgsConstructor
 public class FileLifecycleApplicationService {
 
     private final FileOperationService fileOperationService;
-    private final MinioStorageService minioStorageService;
     private final AsyncFileProcessor asyncFileProcessor;
 
     public void renameFile(Long id, String newName) {
         fileOperationService.renameFile(id, newName);
-    }
-
-    public void changeCategory(Long id, String category) {
-        fileOperationService.changeCategory(id, category);
     }
 
     public void retryFile(Long id) {
@@ -31,16 +26,7 @@ public class FileLifecycleApplicationService {
     }
 
     public void deleteFile(Long id) {
-        String storagePath = fileOperationService.deleteFile(id);
-        if (storagePath == null || storagePath.isBlank()) {
-            return;
-        }
-        try {
-            minioStorageService.deleteFile(null, storagePath);
-            log.info("MinIO 对象已删除 storagePath={}", storagePath);
-        } catch (Exception e) {
-            log.warn("MinIO 对象删除失败（留孤儿可 GC）fileId={}, storagePath={}: {}",
-                    id, storagePath, e.getMessage());
-        }
+        fileOperationService.deleteFile(id);
+        log.info("文件删除及持久化存储清理任务已登记 fileId={}", id);
     }
 }

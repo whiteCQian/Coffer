@@ -27,7 +27,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 @SpringBootTest
 @Transactional
-class TagConfirmationServiceTest {
+class TagConfirmationServiceTest extends com.coffer.auth.OwnerTestSupport {
 
     @Autowired
     private TagConfirmationService tagConfirmationService;
@@ -156,15 +156,13 @@ class TagConfirmationServiceTest {
     @Test
     void confirmTagNotFoundThrows() {
         assertThatThrownBy(() -> tagConfirmationService.confirmTag(999L, 888L))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("关联不存在");
+                .isInstanceOf(com.coffer.auth.service.ResourceNotFoundException.class);
     }
 
     @Test
     void rejectTagNotFoundThrows() {
         assertThatThrownBy(() -> tagConfirmationService.rejectTag(999L, 888L, "x"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("关联不存在");
+                .isInstanceOf(com.coffer.auth.service.ResourceNotFoundException.class);
     }
 
     @Test

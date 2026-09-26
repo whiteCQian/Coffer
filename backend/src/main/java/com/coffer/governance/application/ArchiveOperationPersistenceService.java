@@ -27,6 +27,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /** Short database transactions used by the external-IO archive executor. */
+@com.coffer.auth.service.OwnerOnly
 @Service
 @RequiredArgsConstructor
 public class ArchiveOperationPersistenceService {
@@ -40,7 +41,7 @@ public class ArchiveOperationPersistenceService {
     @Transactional
     public ArchiveOperationItem claimItem(Long itemId) {
         ArchiveOperationItem item = itemRepository.findByIdForUpdate(itemId)
-                .orElseThrow(() -> new IllegalArgumentException("归档操作明细不存在: " + itemId));
+                .orElseThrow(() -> new com.coffer.auth.service.ResourceNotFoundException());
         if (item.getExecutionStatus() == ArchiveOperationItemExecutionStatus.SUCCEEDED
                 || item.getExecutionStatus() == ArchiveOperationItemExecutionStatus.CONFLICTED
                 || item.getExecutionStatus() == ArchiveOperationItemExecutionStatus.SKIPPED) {
@@ -117,6 +118,7 @@ public class ArchiveOperationPersistenceService {
             metadata.setArchived(true);
             metadata.setContentEtag(targetEtag);
             metadata.setRevision(currentRevision + 1);
+            metadata.setVectorIndexedAt(null);
             fileMetadataRepository.save(metadata);
             item.setPostExecuteRevision(metadata.getRevision());
         }
@@ -283,7 +285,7 @@ public class ArchiveOperationPersistenceService {
         // suggestion. Remove only this file's associations; keep the global Tag dictionary.
         // Always insert fresh mappings afterwards: looking an association up again would
         // silently degrade back to incremental-tag semantics if a delete ever failed.
-        fileTagMappingRepository.deleteByFileId(fileId);
+        fileTagMappingRepository.deleteByFileId(fileId, com.coffer.auth.service.TenantContext.requireOwnerId());
         for (String tagName : normalizedTags) {
             Tag tag = tagRepository.findByTagName(tagName)
                     .orElseGet(() -> tagRepository.save(Tag.builder().tagName(tagName).build()));
@@ -314,12 +316,12 @@ public class ArchiveOperationPersistenceService {
 
     private ArchiveOperationItem lockItem(Long itemId) {
         return itemRepository.findByIdForUpdate(itemId)
-                .orElseThrow(() -> new IllegalArgumentException("归档操作明细不存在: " + itemId));
+                .orElseThrow(() -> new com.coffer.auth.service.ResourceNotFoundException());
     }
 
     private ArchiveOperationBatch lockBatch(String batchId) {
         return batchRepository.findByBatchIdForUpdate(batchId)
-                .orElseThrow(() -> new IllegalArgumentException("归档操作批次不存在: " + batchId));
+                .orElseThrow(() -> new com.coffer.auth.service.ResourceNotFoundException());
     }
 
     private int count(List<ArchiveOperationItem> items, ArchiveOperationItemExecutionStatus status) {

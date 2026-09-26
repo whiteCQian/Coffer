@@ -11,7 +11,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
-public interface GovernanceCompensationTaskRepository extends JpaRepository<GovernanceCompensationTask, Long> {
+public interface GovernanceCompensationTaskRepository extends com.coffer.auth.infrastructure.OwnedRepository<GovernanceCompensationTask, Long> {
     Optional<GovernanceCompensationTask> findByTaskKey(String taskKey);
     List<GovernanceCompensationTask> findByBatchIdOrderByCreatedAtDesc(String batchId);
     List<GovernanceCompensationTask> findByStatus(GovernanceCompensationStatus status);

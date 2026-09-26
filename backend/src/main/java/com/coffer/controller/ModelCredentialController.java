@@ -6,9 +6,12 @@ import com.coffer.dto.ModelCredentialTestResponse;
 import com.coffer.dto.Result;
 import com.coffer.dto.SaveModelCredentialRequest;
 import com.coffer.dto.TestModelCredentialRequest;
+import com.coffer.auth.service.RequestRateLimiter;
+import com.coffer.auth.service.ClientAddressResolver;
 import com.coffer.entity.ModelProvider;
 import com.coffer.model.provider.ChatProvider;
 import com.coffer.service.ModelCredentialService;
+import com.coffer.model.runtime.ModelRuntimeEndpointConfigurationService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,6 +26,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
+import java.time.Duration;
 import java.util.stream.Collectors;
 
 /** Local single-user settings API for encrypted model credentials. */
@@ -33,6 +37,9 @@ import java.util.stream.Collectors;
 public class ModelCredentialController {
 
     private final ModelCredentialService credentialService;
+    private final ModelRuntimeEndpointConfigurationService endpointConfigurationService;
+    private final ClientAddressResolver clientAddressResolver;
+    private final RequestRateLimiter rateLimiter;
 
     @Value("${coffer.models.deepseek.base-url:https://api.deepseek.com/v1}")
     private String deepSeekBaseUrl;
@@ -72,9 +79,14 @@ public class ModelCredentialController {
 
     @PostMapping("/{provider}/test")
     public Result<ModelCredentialTestResponse> test(@PathVariable String provider,
-                                                    @Valid @RequestBody TestModelCredentialRequest request) {
+                                                    @Valid @RequestBody TestModelCredentialRequest request,
+                                                    jakarta.servlet.http.HttpServletRequest servletRequest) {
         ModelProvider modelProvider = parseProvider(provider);
+        String remote = clientAddressResolver.clientKey(servletRequest);
+        rateLimiter.requireAllowed("model-test:" + remote + ":" + modelProvider, 10, Duration.ofMinutes(15));
         try {
+            String configuredBaseUrl = modelProvider == ModelProvider.DEEPSEEK ? deepSeekBaseUrl : qwenBaseUrl;
+            endpointConfigurationService.assertApiEndpointAllowed(configuredBaseUrl);
             ChatProvider client = ModelClientConfig.buildTestClient(
                     modelProvider, request.getApiKey().trim(), deepSeekBaseUrl, deepSeekModel,
                     qwenBaseUrl, qwenModel);
@@ -82,9 +94,9 @@ public class ModelCredentialController {
             return Result.success(ModelCredentialTestResponse.builder()
                     .success(true).message("连接成功").build());
         } catch (Exception e) {
-            log.warn("模型连接测试失败 provider={}: {}", modelProvider, e.getMessage());
+            log.warn("模型连接测试失败 provider={}，异常类型={}", modelProvider, e.getClass().getSimpleName());
             return Result.success(ModelCredentialTestResponse.builder()
-                    .success(false).message(safeTestMessage(e)).build());
+                    .success(false).message(safeTestMessage()).build());
         }
     }
 
@@ -96,11 +108,7 @@ public class ModelCredentialController {
         }
     }
 
-    private String safeTestMessage(Exception e) {
-        if (e.getMessage() == null || e.getMessage().isBlank()) {
-            return "连接失败，请检查密钥和网络配置";
-        }
-        String message = e.getMessage();
-        return message.length() > 200 ? message.substring(0, 200) : message;
+    private String safeTestMessage() {
+        return "连接失败，请检查密钥和网络配置";
     }
 }

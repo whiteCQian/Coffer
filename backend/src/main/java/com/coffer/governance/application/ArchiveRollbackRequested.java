@@ -1,5 +1,7 @@
 package com.coffer.governance.application;
 
-/** Starts either a whole-batch rollback or one item after the request transaction commits. */
-public record ArchiveRollbackRequested(String batchId, Long itemId) {
+public record ArchiveRollbackRequested(Long ownerId, String batchId, Long itemId) implements com.coffer.auth.service.OwnedWork {
+    public ArchiveRollbackRequested(String batchId, Long itemId) {
+        this(com.coffer.auth.service.TenantContext.requireOwnerId(), batchId, itemId);
+    }
 }

@@ -28,9 +28,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * <p>{@link Transactional} 保证种子任务自动回滚，互不污染。
  */
 @SpringBootTest
-@AutoConfigureMockMvc
+@AutoConfigureMockMvc(addFilters = false)
 @Transactional
-class TaskControllerTest {
+class TaskControllerTest extends com.coffer.auth.OwnerTestSupport {
 
     @Autowired
     private MockMvc mockMvc;
@@ -132,8 +132,8 @@ class TaskControllerTest {
     @Test
     void getTaskProgressNotFoundReturns404() throws Exception {
         mockMvc.perform(get("/api/tasks/no-such-task"))
-                .andExpect(status().isOk())
+                .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value(404))
-                .andExpect(jsonPath("$.msg").value("任务不存在"));
+                .andExpect(jsonPath("$.msg").value("资源不存在"));
     }
 }

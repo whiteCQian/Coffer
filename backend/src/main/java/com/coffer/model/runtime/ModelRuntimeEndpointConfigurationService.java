@@ -13,15 +13,21 @@ import com.coffer.service.SecretCryptoService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.core.env.Environment;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.net.URI;
+import java.util.Arrays;
+import java.util.Locale;
+import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.ArrayList;
 import java.util.List;
 
 /** Resolves persisted runtime endpoint overrides over the existing environment defaults. */
 @Service
+@com.coffer.auth.service.OwnerOnly
 @RequiredArgsConstructor
 public class ModelRuntimeEndpointConfigurationService {
 
@@ -32,6 +38,14 @@ public class ModelRuntimeEndpointConfigurationService {
     private final SecretCryptoService cryptoService;
     private final ApplicationEventPublisher eventPublisher;
     private final Environment environment;
+
+    @Value("${coffer.models.allowed-api-hosts:api.deepseek.com,dashscope.aliyuncs.com}")
+    private String allowedApiHosts;
+
+    @Value("${coffer.runtime.local.allowed-hosts:localhost,127.0.0.1,::1}")
+    private String allowedLocalHosts;
+    @Value("${coffer.runtime.local.allowed-ports:11434,1234,8000}")
+    private String allowedLocalPorts;
 
     @Transactional(readOnly = true)
     public List<ModelRuntimeEndpointResponse> list() {
@@ -62,6 +76,7 @@ public class ModelRuntimeEndpointConfigurationService {
         } else if (resolvedMode == GovernanceRunMode.API) {
             apiKey = credentialService.getApiKey(defaults.credentialProvider);
         }
+        validateBaseUrl(resolvedMode, baseUrl);
         return new ResolvedModelRuntimeEndpoint(
                 resolvedMode, resolvedCapability, baseUrl, modelName, apiKey,
                 override == null ? "DEFAULT" : "CUSTOM", override != null,
@@ -72,7 +87,7 @@ public class ModelRuntimeEndpointConfigurationService {
     public ModelRuntimeEndpointResponse save(ModelRuntimeEndpointRequest request) {
         GovernanceRunMode mode = requireMode(request.getMode());
         ModelRuntimeCapability capability = requireCapability(request.getCapability());
-        String baseUrl = validateBaseUrl(request.getBaseUrl());
+        String baseUrl = validateBaseUrl(mode, request.getBaseUrl());
         String modelName = requireText(request.getModelName(), "模型名称");
         ModelRuntimeEndpoint endpoint = repository.findByRunModeAndCapability(mode, capability)
                 .orElseGet(() -> ModelRuntimeEndpoint.builder()
@@ -107,6 +122,7 @@ public class ModelRuntimeEndpointConfigurationService {
     public ResolvedModelRuntimeEndpoint resolveForTest(ModelRuntimeEndpointRequest request) {
         ResolvedModelRuntimeEndpoint current = resolve(request.getMode(), request.getCapability());
         String baseUrl = isBlank(request.getBaseUrl()) ? current.baseUrl() : request.getBaseUrl().trim();
+        baseUrl = validateBaseUrl(current.mode(), baseUrl);
         String modelName = isBlank(request.getModelName()) ? current.modelName() : request.getModelName().trim();
         String apiKey = isBlank(request.getApiKey()) ? current.apiKey() : request.getApiKey().trim();
         return new ResolvedModelRuntimeEndpoint(current.mode(), current.capability(), baseUrl, modelName,
@@ -137,7 +153,7 @@ public class ModelRuntimeEndpointConfigurationService {
                 case VISION -> runtimeProperties.getLocal().getVision();
                 case EMBEDDING -> runtimeProperties.getLocal().getEmbedding();
             };
-            return new Defaults(endpoint.getBaseUrl(), endpoint.getModelName(), endpoint.getApiKey(), provider);
+            return new Defaults(endpoint.getBaseUrl(), endpoint.getModelName(), "", provider);
         }
         return switch (capability) {
             case CHAT -> new Defaults(deepSeekBaseUrl(), deepSeekModel(), credentialService.getApiKey(provider), provider);
@@ -182,18 +198,48 @@ public class ModelRuntimeEndpointConfigurationService {
         return capability;
     }
 
-    private String validateBaseUrl(String value) {
+    public void assertApiEndpointAllowed(String value) {
+        validateBaseUrl(GovernanceRunMode.API, value);
+    }
+
+    private String validateBaseUrl(GovernanceRunMode mode, String value) {
         String baseUrl = requireText(value, "Base URL");
+        URI uri;
         try {
-            URI uri = URI.create(baseUrl);
-            if (!("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
-                    || uri.getHost() == null) {
-                throw new IllegalArgumentException("Base URL 必须是有效的 HTTP(S) 地址");
-            }
+            uri = URI.create(baseUrl);
         } catch (IllegalArgumentException e) {
             throw new IllegalArgumentException("Base URL 必须是有效的 HTTP(S) 地址");
         }
+        String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
+        String host = uri.getHost();
+        if (host == null || uri.getRawUserInfo() != null || uri.getRawQuery() != null || uri.getRawFragment() != null
+                || !("http".equals(scheme) || "https".equals(scheme))) {
+            throw new IllegalArgumentException("Base URL 必须是有效的 HTTP(S) 地址");
+        }
+        host = host.replace("[", "").replace("]", "").toLowerCase(Locale.ROOT);
+        if (mode == GovernanceRunMode.API) {
+            if (!"https".equals(scheme) || (uri.getPort() != -1 && uri.getPort() != 443)
+                    || !allowedHosts(allowedApiHosts).contains(host)) {
+                throw new IllegalArgumentException("API 模式只允许已批准的 HTTPS 模型端点");
+            }
+        } else if (!allowedHosts(allowedLocalHosts).contains(host)
+                || !allowedHosts(allowedLocalPorts).contains(String.valueOf(uri.getPort() == -1 ? ("https".equals(scheme) ? 443 : 80) : uri.getPort()))) {
+            throw new IllegalArgumentException("本地模型端点不在部署允许列表中");
+        }
+        String path = uri.getRawPath();
+        if (path != null && (path.contains("%") || path.contains("..") || path.contains("\\")
+                || !(path.isEmpty() || path.equals("/") || path.equals("/v1") || path.equals("/v1/")
+                || path.equals("/compatible-mode/v1") || path.equals("/compatible-mode/v1/"))))
+            throw new IllegalArgumentException("模型端点路径不在允许范围内");
         return baseUrl;
+    }
+
+    private Set<String> allowedHosts(String configured) {
+        return Arrays.stream(configured.split(","))
+                .map(String::trim)
+                .map(value -> value.toLowerCase(Locale.ROOT))
+                .filter(value -> !value.isBlank())
+                .collect(Collectors.toUnmodifiableSet());
     }
 
     private String requireText(String value, String field) {

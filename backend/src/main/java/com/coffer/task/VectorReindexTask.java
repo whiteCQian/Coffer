@@ -26,6 +26,7 @@ public class VectorReindexTask {
     @Autowired(required = false)
     private VectorIndexCoordinator coordinator;
 
+    @com.coffer.auth.service.OwnerScheduled
     @Scheduled(fixedDelayString = "${coffer.vector-store.reindex.fixed-delay-ms:300000}")
     public void reindexPendingFiles() {
         if (!embeddingProperties.isEnabled()) {

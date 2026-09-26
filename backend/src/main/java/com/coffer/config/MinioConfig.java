@@ -29,8 +29,7 @@ public class MinioConfig {
     @Bean
     public MinioClient minioClient(MinioProperties properties) {
         String endpoint = normalizeEndpoint(properties.getEndpoint(), properties.isSecure());
-        log.info("初始化 MinIO 客户端: endpoint={}, bucket={}",
-                endpoint, properties.getBucketName());
+        log.info("初始化 MinIO 客户端");
         return MinioClient.builder()
                 .endpoint(endpoint)
                 .credentials(properties.getAccessKey(), properties.getSecretKey())

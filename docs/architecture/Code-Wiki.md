@@ -1,14 +1,14 @@
 # AgentFS Code Wiki（当前版本）
 
-> 本文是当前代码现状快照，文中的单用户、MinIO 与部署说明描述现有实现，不是最终产品要求。最终合同和目标架构见[ADR-001](../decisions/ADR-001-最终产品合同与存储架构.md)、[需求追踪矩阵](../plans/需求追踪矩阵.md)和[最终落地计划](../plans/AgentFS最终落地执行计划.md)。
+> 本文是当前代码现状快照，文中的单用户、MinIO 与部署说明描述现有实现，不是最终产品要求。目标架构为桌面本地文件库且不依赖 MinIO，Web/NAS 保留各自独立的 MinIO。最终合同见[ADR-001](../decisions/ADR-001-最终产品合同与存储架构.md)、[需求追踪矩阵](../plans/需求追踪矩阵.md)和[最终落地计划](../plans/AgentFS最终落地执行计划.md)。
 >
-> 更新时间：2026-09-22
+> 更新时间：2026-09-26
 > 项目：AgentFS Nexus
 > 说明：本文描述当前代码结构和运行架构；Cofferer C01～C16 的阶段性成果见[归档交接文档](../archive/legacy/Cofferer_C01-C16交接文档.md)。
 
 ## 1. 系统概览
 
-AgentFS Nexus 是本地单用户 AI 文件管家。后端负责文件生命周期、AI Agent 编排、文档解析、标签确认、对象存储和混合检索；前端负责文件管理、任务进度、搜索、对话和模型设置。
+AgentFS Nexus 当前仍是缺少正式认证与 owner 隔离的单用户实现，不能公开部署。目标产品要求 Windows 桌面、服务器 Web 和 NAS 三种独立实例都支持多账号；该目标尚未落地。当前代码负责文件生命周期、AI Agent 编排、文档解析、标签确认、MinIO 对象存储和混合检索；前端负责文件管理、任务进度、搜索、对话和模型设置。
 
 核心业务链路：
 
@@ -45,7 +45,7 @@ H2/MySQL、MinIO、Redis、DeepSeek/Qwen-VL
 ### 3.1 后端业务包
 
 ```text
-backend/src/main/java/com/agentfs/
+backend/src/main/java/com/coffer/
 ├── agent/                 # AiAgentService，Agent 组装与调用
 ├── file/                  # 文件业务边界
 │   ├── api/               # FileController、文件 DTO
@@ -99,7 +99,7 @@ frontend/src/
 |---|---|
 | `FileController` | 文件 HTTP 入口，保持接口契约，不编排底层流程 |
 | `FileUploadApplicationService` | 上传用例：类型解析、编码修复、路径生成、MinIO 上传、登记任务 |
-| `FileLifecycleApplicationService` | 删除、重命名、改分类、失败重试 |
+| `FileLifecycleApplicationService` | 删除、重命名、失败重试；分类与归档由治理预览和操作台账处理 |
 | `FileService` | 列表、详情、分类计数、查询结果组装 |
 | `FileResponseAssembler` | 领域对象到 API DTO 的映射，避免 DTO 依赖 Entity |
 | `UploadPipelineService` | 解析、摘要、标签、分类和处理状态推进 |
@@ -319,22 +319,22 @@ npm run build
 
 | 功能 | 文件 |
 |---|---|
-| 应用入口 | `backend/src/main/java/com/agentfs/AgentfsApplication.java` |
+| 应用入口 | `backend/src/main/java/com/coffer/CofferApplication.java` |
 | 全局配置 | `backend/src/main/resources/application.yml` |
-| 文件入口 | `backend/src/main/java/com/agentfs/file/api/FileController.java` |
-| 上传用例 | `backend/src/main/java/com/agentfs/file/application/FileUploadApplicationService.java` |
-| 上传管线 | `backend/src/main/java/com/agentfs/file/application/UploadPipelineService.java` |
-| Agent | `backend/src/main/java/com/agentfs/agent/AiAgentService.java` |
-| Agent 搜索 | `backend/src/main/java/com/agentfs/tool/FileSearchTool.java` |
-| Hybrid 服务 | `backend/src/main/java/com/agentfs/service/HybridSearchService.java` |
-| Redis 向量 | `backend/src/main/java/com/agentfs/vector/RedisVectorStore.java` |
-| 向量协调 | `backend/src/main/java/com/agentfs/vector/VectorIndexCoordinator.java` |
-| 向量重建 | `backend/src/main/java/com/agentfs/service/VectorReindexService.java` |
-| 模型密钥 | `backend/src/main/java/com/agentfs/service/ModelCredentialService.java` |
-| 治理预览 | `backend/src/main/java/com/agentfs/governance/application/GovernancePreviewService.java` |
-| 归档执行与标签替换 | `backend/src/main/java/com/agentfs/governance/application/ArchiveOperationPersistenceService.java` |
-| 操作台账与撤销 | `backend/src/main/java/com/agentfs/governance/application/ArchiveOperationQueryService.java`、`ArchiveRollbackService.java` |
-| 模型运行模式 | `backend/src/main/java/com/agentfs/model/runtime/` |
+| 文件入口 | `backend/src/main/java/com/coffer/file/api/FileController.java` |
+| 上传用例 | `backend/src/main/java/com/coffer/file/application/FileUploadApplicationService.java` |
+| 上传管线 | `backend/src/main/java/com/coffer/file/application/UploadPipelineService.java` |
+| Agent | `backend/src/main/java/com/coffer/agent/AiAgentService.java` |
+| Agent 搜索 | `backend/src/main/java/com/coffer/tool/FileSearchTool.java` |
+| Hybrid 服务 | `backend/src/main/java/com/coffer/service/HybridSearchService.java` |
+| Redis 向量 | `backend/src/main/java/com/coffer/vector/RedisVectorStore.java` |
+| 向量协调 | `backend/src/main/java/com/coffer/vector/VectorIndexCoordinator.java` |
+| 向量重建 | `backend/src/main/java/com/coffer/service/VectorReindexService.java` |
+| 模型密钥 | `backend/src/main/java/com/coffer/service/ModelCredentialService.java` |
+| 治理预览 | `backend/src/main/java/com/coffer/governance/application/GovernancePreviewService.java` |
+| 归档执行与标签替换 | `backend/src/main/java/com/coffer/governance/application/ArchiveOperationPersistenceService.java` |
+| 操作台账与撤销 | `backend/src/main/java/com/coffer/governance/application/ArchiveOperationQueryService.java`、`ArchiveRollbackService.java` |
+| 模型运行模式 | `backend/src/main/java/com/coffer/model/runtime/` |
 | 前端 API | `frontend/src/api/` |
 | 生成类型 | `frontend/src/api/generated/schema.ts` |
 | 启动脚本 | `start-all.bat` |

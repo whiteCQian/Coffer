@@ -32,6 +32,7 @@ type DrawerFile = {
 
 const props = defineProps<{
   modelValue: number | null
+  revision?: number
   /** 在对话放大态打开时提升抽屉层级，避免被对话遮罩覆盖。 */
   elevated?: boolean
 }>()
@@ -87,7 +88,7 @@ const file = computed<DrawerFile | undefined>(() => {
 async function loadDetail(id: number) {
   loading.value = true
   try {
-    const { data } = await fileApi.getFileDetail(id)
+    const { data } = await fileApi.getFileDetail(id, props.revision)
     detail.value = data.data
   } catch {
     /* 拦截器已弹错：加载失败直接收起抽屉 */
@@ -207,8 +208,8 @@ watch(open, (v) => {
   }
 })
 watch(
-  () => props.modelValue,
-  async (id) => {
+  () => [props.modelValue, props.revision] as const,
+  async ([id]) => {
     detail.value = null
     if (id !== null) {
       await loadDetail(id)

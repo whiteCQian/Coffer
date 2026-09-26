@@ -25,7 +25,7 @@ import java.time.LocalDateTime;
         name = "archive_object_name_reservation",
         uniqueConstraints = @UniqueConstraint(
                 name = "uk_archive_object_name_reservation",
-                columnNames = {"business_date", "category_slug", "normalized_file_name", "sequence_number"}
+                columnNames = {"owner_id", "business_date", "category_slug", "normalized_file_name", "sequence_number"}
         )
 )
 @Getter
@@ -33,7 +33,7 @@ import java.time.LocalDateTime;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class ArchiveObjectNameReservation {
+public class ArchiveObjectNameReservation extends com.coffer.auth.domain.TenantOwnedEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

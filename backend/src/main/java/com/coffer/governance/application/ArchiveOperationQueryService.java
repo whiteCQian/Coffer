@@ -24,6 +24,7 @@ import java.util.Locale;
 import java.util.Objects;
 
 /** Read-only query and export application service for the C08 operation ledger. */
+@com.coffer.auth.service.OwnerOnly
 @Service
 @RequiredArgsConstructor
 public class ArchiveOperationQueryService {

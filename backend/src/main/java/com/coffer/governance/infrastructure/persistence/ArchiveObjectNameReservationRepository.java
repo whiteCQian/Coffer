@@ -8,7 +8,7 @@ import org.springframework.data.repository.query.Param;
 import java.time.LocalDate;
 
 public interface ArchiveObjectNameReservationRepository
-        extends JpaRepository<ArchiveObjectNameReservation, Long> {
+        extends com.coffer.auth.infrastructure.OwnedRepository<ArchiveObjectNameReservation, Long> {
 
     @Query("select max(reservation.sequenceNumber) "
             + "from ArchiveObjectNameReservation reservation "

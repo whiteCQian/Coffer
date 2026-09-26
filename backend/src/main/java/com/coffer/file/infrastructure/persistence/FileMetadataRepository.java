@@ -21,7 +21,7 @@ import jakarta.persistence.LockModeType;
  * 文件元数据 Repository。
  */
 @Repository
-public interface FileMetadataRepository extends JpaRepository<FileMetadata, Long> {
+public interface FileMetadataRepository extends com.coffer.auth.infrastructure.OwnedRepository<FileMetadata, Long> {
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT f FROM FileMetadata f WHERE f.id = :id")
@@ -86,10 +86,11 @@ public interface FileMetadataRepository extends JpaRepository<FileMetadata, Long
      * @param keyword 搜索关键词
      * @return 按相关性排序的匹配文件列表
      */
-    @Query(value = "SELECT * FROM file_metadata WHERE MATCH(file_name, summary) AGAINST(:keyword IN NATURAL LANGUAGE MODE)",
+    @Query(value = "SELECT * FROM file_metadata WHERE owner_id = :ownerId "
+            + "AND MATCH(file_name, summary) AGAINST(:keyword IN NATURAL LANGUAGE MODE)",
             nativeQuery = true)
     @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
-    List<FileMetadata> fullTextSearch(@Param("keyword") String keyword);
+    List<FileMetadata> fullTextSearch(@Param("keyword") String keyword, @Param("ownerId") Long ownerId);
 
     /**
      * 列表搜索：按文件名模糊匹配「或」未拒绝标签名模糊匹配（任一命中即返回），支持分页。

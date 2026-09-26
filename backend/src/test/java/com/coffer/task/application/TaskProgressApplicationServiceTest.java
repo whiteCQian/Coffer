@@ -56,8 +56,8 @@ class TaskProgressApplicationServiceTest {
         when(repository.findByTaskId("missing")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.getTaskProgress("missing"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("任务不存在");
+                .isInstanceOf(com.coffer.auth.service.ResourceNotFoundException.class)
+                .hasMessage("资源不存在");
     }
 
     @Test

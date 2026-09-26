@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 由 {@link AfterEach} 清空表数据避免污染其它测试。
  */
 @SpringBootTest
-class ModelCallLogCleanupTaskTest {
+class ModelCallLogCleanupTaskTest extends com.coffer.auth.OwnerTestSupport {
 
     @Autowired
     private ModelCallLogCleanupTask task;
@@ -48,13 +48,23 @@ class ModelCallLogCleanupTaskTest {
     }
 
     @Test
-    void keepsRecentLogsUntouched() {
+    void retainsRecentLogsAfterRedactingLegacyContent() {
         LocalDateTime recent = LocalDateTime.now().minusDays(10);
         ModelCallLog recentLog = repository.save(
-                ModelCallLog.builder().callTime(recent).modelName("m").status("SUCCESS").build());
+                ModelCallLog.builder().callTime(recent).modelName("m").status("SUCCESS")
+                        .sessionId("private-session")
+                        .userMessage("private prompt")
+                        .aiResponse("private response")
+                        .errorMessage("private provider detail")
+                        .build());
 
         task.cleanExpiredLogs();
 
-        assertThat(repository.findById(recentLog.getId())).isPresent();
+        ModelCallLog retained = repository.findById(recentLog.getId()).orElseThrow();
+        assertThat(retained.getModelName()).isNull();
+        assertThat(retained.getSessionId()).isNull();
+        assertThat(retained.getUserMessage()).isNull();
+        assertThat(retained.getAiResponse()).isNull();
+        assertThat(retained.getErrorMessage()).isNull();
     }
 }

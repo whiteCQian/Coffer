@@ -27,7 +27,7 @@ public class ModeAwareChatProvider implements ChatProvider {
     }
 
     protected ChatProvider delegate() {
-        GovernanceRunMode mode = modeService.providerMode();
+        GovernanceRunMode mode = ModelExecutionContext.require().mode();
         return providerFactory.chat(mode);
     }
 

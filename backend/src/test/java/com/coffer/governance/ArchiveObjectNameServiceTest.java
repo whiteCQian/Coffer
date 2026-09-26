@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         "minio.access-key=test-access-key",
         "minio.secret-key=test-secret-key"
 })
-class ArchiveObjectNameServiceTest {
+class ArchiveObjectNameServiceTest extends com.coffer.auth.OwnerTestSupport {
 
     @Autowired
     private ArchiveObjectNameService archiveObjectNameService;
@@ -45,8 +45,8 @@ class ArchiveObjectNameServiceTest {
         String second = archiveObjectNameService.generateArchivePath(
                 CategoryType.CONTRACT, "采购合同.txt", uploadTime);
 
-        assertThat(first).isEqualTo("contracts/2026/09/21/000-采购合同.txt");
-        assertThat(second).isEqualTo("contracts/2026/09/21/001-采购合同.txt");
+        assertThat(first).isEqualTo("users/" + com.coffer.auth.service.TenantContext.requireOwnerId() + "/archive/contracts/2026/09/21/000-采购合同.txt");
+        assertThat(second).isEqualTo("users/" + com.coffer.auth.service.TenantContext.requireOwnerId() + "/archive/contracts/2026/09/21/001-采购合同.txt");
     }
 
     @Test
@@ -56,8 +56,8 @@ class ArchiveObjectNameServiceTest {
         String anotherName = archiveObjectNameService.generateArchivePath(
                 CategoryType.CONTRACT, "销售合同.txt", LocalDateTime.of(2026, 9, 21, 10, 30));
 
-        assertThat(anotherDate).isEqualTo("contracts/2026/09/22/000-采购合同.txt");
-        assertThat(anotherName).isEqualTo("contracts/2026/09/21/000-销售合同.txt");
+        assertThat(anotherDate).isEqualTo("users/" + com.coffer.auth.service.TenantContext.requireOwnerId() + "/archive/contracts/2026/09/22/000-采购合同.txt");
+        assertThat(anotherName).isEqualTo("users/" + com.coffer.auth.service.TenantContext.requireOwnerId() + "/archive/contracts/2026/09/21/000-销售合同.txt");
     }
 
     @Test
@@ -69,7 +69,7 @@ class ArchiveObjectNameServiceTest {
         String invoicePath = archiveObjectNameService.generateArchivePath(
                 CategoryType.INVOICE, "采购合同.txt", uploadTime);
 
-        assertThat(contractPath).isEqualTo("contracts/2026/09/21/000-采购合同.txt");
-        assertThat(invoicePath).isEqualTo("invoices/2026/09/21/000-采购合同.txt");
+        assertThat(contractPath).isEqualTo("users/" + com.coffer.auth.service.TenantContext.requireOwnerId() + "/archive/contracts/2026/09/21/000-采购合同.txt");
+        assertThat(invoicePath).isEqualTo("users/" + com.coffer.auth.service.TenantContext.requireOwnerId() + "/archive/invoices/2026/09/21/000-采购合同.txt");
     }
 }

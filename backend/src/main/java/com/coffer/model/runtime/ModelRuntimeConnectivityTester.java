@@ -1,6 +1,7 @@
 package com.coffer.model.runtime;
 
 import com.coffer.model.provider.openai.OpenAiCompatibleVisionProvider;
+import com.coffer.config.SafeModelHttpClient;
 import com.coffer.model.runtime.api.ModelRuntimeEndpointTestResponse;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.openai.OpenAiEmbeddingModel;
@@ -31,13 +32,15 @@ public class ModelRuntimeConnectivityTester {
             return ModelRuntimeEndpointTestResponse.builder()
                     .success(false)
                     .capability(endpoint.capability())
-                    .message(safeMessage(e, endpoint.apiKey()))
+                    .message(safeMessage())
                     .build();
         }
     }
 
     private OpenAiChatModel buildChat(ResolvedModelRuntimeEndpoint endpoint, int maxTokens, int timeoutSeconds) {
         return OpenAiChatModel.builder()
+                .logRequests(false).logResponses(false).maxRetries(0)
+                .httpClientBuilder(SafeModelHttpClient.builder())
                 .baseUrl(requireText(endpoint.baseUrl(), "Base URL"))
                 .apiKey(apiKey(endpoint.apiKey()))
                 .modelName(requireText(endpoint.modelName(), "模型名称"))
@@ -49,6 +52,8 @@ public class ModelRuntimeConnectivityTester {
 
     private OpenAiEmbeddingModel buildEmbedding(ResolvedModelRuntimeEndpoint endpoint) {
         return OpenAiEmbeddingModel.builder()
+                .logRequests(false).logResponses(false).maxRetries(0)
+                .httpClientBuilder(SafeModelHttpClient.builder())
                 .baseUrl(requireText(endpoint.baseUrl(), "Base URL"))
                 .apiKey(apiKey(endpoint.apiKey()))
                 .modelName(requireText(endpoint.modelName(), "模型名称"))
@@ -68,14 +73,7 @@ public class ModelRuntimeConnectivityTester {
         return value.trim();
     }
 
-    private String safeMessage(Exception e, String apiKey) {
-        String message = e.getMessage();
-        if (message == null || message.isBlank()) {
-            return "连接失败，请检查端点、模型名称和密钥";
-        }
-        if (apiKey != null && !apiKey.isBlank()) {
-            message = message.replace(apiKey, "***");
-        }
-        return message.length() > 200 ? message.substring(0, 200) : message;
+    private String safeMessage() {
+        return "连接失败，请检查模型端点、模型名称和密钥配置";
     }
 }

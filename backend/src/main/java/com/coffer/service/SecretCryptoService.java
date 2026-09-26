@@ -26,6 +26,8 @@ public class SecretCryptoService {
     private final Environment environment;
     private final SecureRandom secureRandom = new SecureRandom();
     private SecretKeySpec secretKey;
+    private String keyId;
+    private final java.util.List<SecretKeySpec> decryptionKeys = new java.util.ArrayList<>();
 
     public SecretCryptoService(
             @Value("${COFFER_SECRET_KEY:}") String configuredMasterKey,
@@ -47,6 +49,11 @@ public class SecretCryptoService {
             byte[] key = MessageDigest.getInstance("SHA-256")
                     .digest(masterKey.getBytes(StandardCharsets.UTF_8));
             secretKey = new SecretKeySpec(key, "AES");
+            keyId = java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(key)).substring(0, 16);
+            decryptionKeys.add(secretKey);
+            String previous = environment.getProperty("COFFER_SECRET_PREVIOUS_KEY", "");
+            if (!previous.isBlank()) decryptionKeys.add(new SecretKeySpec(MessageDigest.getInstance("SHA-256")
+                    .digest(previous.getBytes(StandardCharsets.UTF_8)), "AES"));
         } catch (Exception e) {
             throw new IllegalStateException("Unable to initialize secret encryption", e);
         }
@@ -62,19 +69,30 @@ public class SecretCryptoService {
             byte[] combined = new byte[iv.length + ciphertext.length];
             System.arraycopy(iv, 0, combined, 0, iv.length);
             System.arraycopy(ciphertext, 0, combined, iv.length, ciphertext.length);
-            return Base64.getEncoder().encodeToString(combined);
+            return "v1:" + keyId + ":" + Base64.getEncoder().encodeToString(combined);
         } catch (Exception e) {
             throw new IllegalStateException("Unable to encrypt model credential", e);
         }
     }
 
     public String decrypt(String encrypted) {
+        for (SecretKeySpec key : decryptionKeys) {
+            try { return decryptWith(encrypted, key); }
+            catch (Exception ignored) { }
+        }
+        throw new IllegalStateException("无法解密凭据，请检查加密主密钥配置");
+    }
+
+    public String rewrap(String encrypted) { return encrypt(decrypt(encrypted)); }
+
+    private String decryptWith(String encrypted, SecretKeySpec key) throws Exception {
         try {
+            if (encrypted.startsWith("v1:")) encrypted = encrypted.split(":", 3)[2];
             byte[] combined = Base64.getDecoder().decode(encrypted);
             byte[] iv = java.util.Arrays.copyOfRange(combined, 0, IV_LENGTH);
             byte[] ciphertext = java.util.Arrays.copyOfRange(combined, IV_LENGTH, combined.length);
             Cipher cipher = Cipher.getInstance(ALGORITHM);
-            cipher.init(Cipher.DECRYPT_MODE, secretKey, new GCMParameterSpec(TAG_LENGTH, iv));
+            cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(TAG_LENGTH, iv));
             return new String(cipher.doFinal(ciphertext), StandardCharsets.UTF_8);
         } catch (Exception e) {
             throw new IllegalStateException("Unable to decrypt model credential; check COFFER_SECRET_KEY", e);

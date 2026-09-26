@@ -37,6 +37,7 @@ class HybridSearchServiceTest {
 
     @BeforeEach
     void setUp() {
+        com.coffer.auth.service.TenantContext.set(1L);
         fileRepository = mock(FileMetadataRepository.class);
         tagMappingRepository = mock(FileTagMappingRepository.class);
         vectorStore = mock(RedisVectorStore.class);
@@ -47,8 +48,11 @@ class HybridSearchServiceTest {
         properties = new HybridSearchProperties();
         properties.setTopK(10);
         properties.setRrfK(60);
+        properties.setEnabled(true);
+        var authorization = mock(com.coffer.auth.service.OwnerAuthorization.class);
+        when(authorization.requireOwner()).thenReturn(1L);
         service = new HybridSearchService(properties, fileRepository, tagMappingRepository,
-                vectorStore, provider);
+                vectorStore, provider, authorization);
 
         FileMetadata first = metadata(1L, "精确命中.txt");
         FileMetadata second = metadata(2L, "语义命中.txt");
@@ -65,13 +69,16 @@ class HybridSearchServiceTest {
                 .thenReturn(Response.from(Embedding.from(new float[]{0.1f, 0.2f})));
     }
 
+    @org.junit.jupiter.api.AfterEach
+    void clearOwner() { com.coffer.auth.service.TenantContext.clear(); }
+
     @Test
     void fusesLexicalAndVectorRanksWithRrf() {
-        when(fileRepository.fullTextSearch("合同"))
+        when(fileRepository.fullTextSearch(org.mockito.ArgumentMatchers.eq("合同"), org.mockito.ArgumentMatchers.anyLong()))
                 .thenReturn(List.of(files.get(1L), files.get(3L)));
         when(vectorStore.searchSimilar(any(), anyInt()))
-                .thenReturn(List.of(new VectorSearchResult("3:0", 0.99),
-                        new VectorSearchResult("2:0", 0.88)));
+                .thenReturn(List.of(new VectorSearchResult("3:0:0", 0.99),
+                        new VectorSearchResult("2:0:0", 0.88)));
 
         List<HybridSearchService.SearchEvidence> evidence = service.searchWithEvidence("合同");
 
@@ -83,7 +90,7 @@ class HybridSearchServiceTest {
 
     @Test
     void vectorFailureKeepsLexicalResults() {
-        when(fileRepository.fullTextSearch("关键词"))
+        when(fileRepository.fullTextSearch(org.mockito.ArgumentMatchers.eq("关键词"), org.mockito.ArgumentMatchers.anyLong()))
                 .thenReturn(List.of(files.get(1L)));
         when(vectorStore.searchSimilar(any(), anyInt()))
                 .thenThrow(new IllegalStateException("Redis down"));
@@ -95,7 +102,7 @@ class HybridSearchServiceTest {
 
     @Test
     void fullTextFailureFallsBackToLikeResults() {
-        when(fileRepository.fullTextSearch("图片"))
+        when(fileRepository.fullTextSearch(org.mockito.ArgumentMatchers.eq("图片"), org.mockito.ArgumentMatchers.anyLong()))
                 .thenThrow(new IllegalStateException("H2 does not support MATCH"));
         when(fileRepository.findByFileNameOrSummaryContainingIgnoreCase("图片"))
                 .thenReturn(List.of(files.get(2L)));
@@ -109,6 +116,8 @@ class HybridSearchServiceTest {
     private FileMetadata metadata(long id, String name) {
         FileMetadata metadata = FileMetadata.builder().fileName(name).build();
         metadata.setId(id);
+        metadata.setStatus(com.coffer.file.domain.FileStatus.COMPLETED);
+        org.springframework.test.util.ReflectionTestUtils.setField(metadata, "ownerId", 1L);
         return metadata;
     }
 }

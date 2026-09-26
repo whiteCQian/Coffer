@@ -1,6 +1,7 @@
 package com.coffer.model.runtime;
 
 import com.coffer.config.EmbeddingProperties;
+import com.coffer.config.SafeModelHttpClient;
 import com.coffer.entity.ModelProvider;
 import com.coffer.governance.domain.GovernanceRunMode;
 import com.coffer.model.provider.ChatProvider;
@@ -21,6 +22,7 @@ import java.util.Map;
 
 /** Builds concrete OpenAI-compatible providers for an explicit immutable mode snapshot. */
 @Component
+@com.coffer.auth.service.OwnerOnly
 @RequiredArgsConstructor
 public class ModelRuntimeProviderFactory {
 
@@ -39,14 +41,14 @@ public class ModelRuntimeProviderFactory {
     private int qwenTimeoutSeconds;
 
     public ChatProvider chat(GovernanceRunMode mode) {
-        ResolvedModelRuntimeEndpoint endpoint = configurationService.resolve(mode, ModelRuntimeCapability.CHAT);
+        ResolvedModelRuntimeEndpoint endpoint = endpoint(mode, ModelRuntimeCapability.CHAT);
         return new OpenAiCompatibleChatProvider(
                 buildChat(endpoint, deepSeekTemperature, deepSeekMaxTokens, 60),
                 providerId(endpoint, ModelProvider.DEEPSEEK), endpoint.modelName());
     }
 
     public VisionProvider vision(GovernanceRunMode mode) {
-        ResolvedModelRuntimeEndpoint endpoint = configurationService.resolve(mode, ModelRuntimeCapability.VISION);
+        ResolvedModelRuntimeEndpoint endpoint = endpoint(mode, ModelRuntimeCapability.VISION);
         return new OpenAiCompatibleVisionProvider(
                 buildChat(endpoint, qwenTemperature, qwenMaxTokens, qwenTimeoutSeconds),
                 providerId(endpoint, ModelProvider.QWEN_VL), endpoint.modelName());
@@ -56,7 +58,7 @@ public class ModelRuntimeProviderFactory {
         if (!embeddingProperties.isEnabled()) {
             throw new IllegalStateException("Embedding 能力未启用");
         }
-        ResolvedModelRuntimeEndpoint endpoint = configurationService.resolve(mode, ModelRuntimeCapability.EMBEDDING);
+        ResolvedModelRuntimeEndpoint endpoint = endpoint(mode, ModelRuntimeCapability.EMBEDDING);
         OpenAiEmbeddingModel delegate = buildEmbedding(endpoint);
         return new OpenAiCompatibleEmbeddingProvider(delegate,
                 providerId(endpoint, ModelProvider.QWEN_VL), endpoint.modelName());
@@ -84,7 +86,7 @@ public class ModelRuntimeProviderFactory {
             chat(mode).chat("Reply with OK only.");
             capabilities.put("chat", "OK");
         } catch (Exception e) {
-            capabilities.put("chat", safeMessage(e));
+            capabilities.put("chat", safeMessage());
         }
     }
 
@@ -94,7 +96,7 @@ public class ModelRuntimeProviderFactory {
             vision(mode).chat("Reply with OK only.");
             capabilities.put("vision", "OK");
         } catch (Exception e) {
-            capabilities.put("vision", safeMessage(e));
+            capabilities.put("vision", safeMessage());
         }
     }
 
@@ -104,7 +106,7 @@ public class ModelRuntimeProviderFactory {
             embedding(mode).embed("Coffer runtime mode validation");
             capabilities.put("embedding", "OK");
         } catch (Exception e) {
-            capabilities.put("embedding", safeMessage(e));
+            capabilities.put("embedding", safeMessage());
         }
     }
 
@@ -120,6 +122,8 @@ public class ModelRuntimeProviderFactory {
     private OpenAiChatModel buildChat(ResolvedModelRuntimeEndpoint endpoint,
                                       double temperature, int maxTokens, int timeoutSeconds) {
         return OpenAiChatModel.builder()
+                .logRequests(false).logResponses(false).maxRetries(0)
+                .httpClientBuilder(SafeModelHttpClient.builder())
                 .baseUrl(requireText(endpoint.baseUrl(), "Chat Base URL"))
                 .apiKey(apiKey(endpoint.apiKey()))
                 .modelName(requireText(endpoint.modelName(), "模型名称"))
@@ -129,8 +133,17 @@ public class ModelRuntimeProviderFactory {
                 .build();
     }
 
+    private ResolvedModelRuntimeEndpoint endpoint(GovernanceRunMode mode, ModelRuntimeCapability capability) {
+        var snapshot = ModelExecutionContext.current();
+        if (snapshot == null) return configurationService.resolve(mode, capability); // Connectivity probes use synthetic text only.
+        if (snapshot.mode() != mode || !snapshot.endpoints().containsKey(capability)) throw new ModelConsentRequiredException();
+        return snapshot.endpoints().get(capability);
+    }
+
     private OpenAiEmbeddingModel buildEmbedding(ResolvedModelRuntimeEndpoint endpoint) {
         return OpenAiEmbeddingModel.builder()
+                .logRequests(false).logResponses(false).maxRetries(0)
+                .httpClientBuilder(SafeModelHttpClient.builder())
                 .baseUrl(requireText(endpoint.baseUrl(), "Embedding Base URL"))
                 .apiKey(apiKey(endpoint.apiKey()))
                 .modelName(requireText(endpoint.modelName(), "Embedding 模型名称"))
@@ -154,11 +167,7 @@ public class ModelRuntimeProviderFactory {
         return value.trim();
     }
 
-    private String safeMessage(Exception e) {
-        String message = e.getMessage();
-        if (message == null || message.isBlank()) {
-            return "连接失败";
-        }
-        return message.length() > 200 ? message.substring(0, 200) : message;
+    private String safeMessage() {
+        return "模型运行时配置无效，请检查模型端点和凭据";
     }
 }

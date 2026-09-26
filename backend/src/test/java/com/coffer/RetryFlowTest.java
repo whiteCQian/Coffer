@@ -24,8 +24,8 @@ import static org.mockito.Mockito.when;
  * 模拟连接异常触发超时归类，重试 2 次（共 3 次尝试）后降级；
  * 日志按 sessionId + status 过滤，避免与其他测试共享上下文时干扰。
  */
-@SpringBootTest
-class RetryFlowTest {
+@SpringBootTest(properties = "coffer.model-log.enabled=true")
+class RetryFlowTest extends com.coffer.auth.OwnerTestSupport {
 
     @Autowired
     private RetryableModelService retryableModelService;
@@ -38,6 +38,7 @@ class RetryFlowTest {
 
     @Test
     void retriesTwiceThenDegrades() throws Exception {
+        java.time.LocalDateTime startedAt = java.time.LocalDateTime.now().minusSeconds(1);
         // 模拟 DeepSeek 连接异常（translateException 归类为 TimeoutException）
         when(chatProvider.chat(anyString())).thenThrow(new RuntimeException("Connection refused: connect"));
 
@@ -50,7 +51,8 @@ class RetryFlowTest {
         // 等待异步落库：期望 3 条 FAILED 记录，retryCount 依次为 0、1、2
         List<ModelCallLog> failed = null;
         for (int i = 0; i < 30; i++) {
-            failed = repository.findBySessionIdOrderByCallTimeDesc("s1").stream()
+            failed = repository.findAll().stream()
+                    .filter(log -> log.getCallTime().isAfter(startedAt))
                     .filter(log -> "FAILED".equals(log.getStatus()))
                     .toList();
             if (failed.size() >= 3) {
@@ -62,5 +64,8 @@ class RetryFlowTest {
         assertThat(failed).hasSize(3);
         assertThat(failed).allMatch(log -> "FAILED".equals(log.getStatus()));
         assertThat(failed.stream().map(ModelCallLog::getRetryCount).sorted()).containsExactly(0, 1, 2);
+        assertThat(failed).allMatch(log -> log.getSessionId() == null
+                && log.getUserMessage() == null && log.getAiResponse() == null);
+        assertThat(failed).allMatch(log -> "MODEL_FAILURE".equals(log.getErrorMessage()));
     }
 }

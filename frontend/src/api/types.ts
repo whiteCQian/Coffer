@@ -139,9 +139,6 @@ export type CategoryCountResponse = RequiredSchema<ApiSchema['CategoryCountRespo
 /** 文件重命名请求（PATCH /api/files/{id}） */
 export type RenameFileRequest = ApiSchema['RenameFileRequest']
 
-/** 文件改分类请求（PUT /api/files/{id}/category） */
-export type ChangeCategoryRequest = RequiredSchema<ApiSchema['ChangeCategoryRequest']>
-
 /** 排序语义 token（服务端白名单映射） */
 export type FileSortToken = 'new' | 'old' | 'size' | 'name'
 

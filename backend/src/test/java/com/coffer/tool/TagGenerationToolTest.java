@@ -23,7 +23,7 @@ import static org.mockito.Mockito.when;
  * {@code generate_tags} 工具路径语义不受影响。
  */
 @SpringBootTest
-class TagGenerationToolTest {
+class TagGenerationToolTest extends com.coffer.auth.OwnerTestSupport {
 
     @Autowired
     private TagGenerationTool tagGenerationTool;

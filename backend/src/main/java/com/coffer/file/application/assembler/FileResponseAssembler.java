@@ -52,7 +52,6 @@ public class FileResponseAssembler {
                 .previewUrl(previewUrl)
                 .category(metadata.getCategory() == null ? null : metadata.getCategory().name())
                 .archived(metadata.isArchived())
-                .storagePath(metadata.getStoragePath())
                 .build();
     }
 }

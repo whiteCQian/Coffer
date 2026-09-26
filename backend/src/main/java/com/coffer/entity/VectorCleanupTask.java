@@ -10,7 +10,7 @@ import java.time.LocalDateTime;
         @Index(name = "idx_vector_cleanup_due", columnList = "status,next_attempt_at")
 })
 @Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
-public class VectorCleanupTask {
+public class VectorCleanupTask extends com.coffer.auth.domain.TenantOwnedEntity {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
     @Column(name = "file_id", nullable = false)

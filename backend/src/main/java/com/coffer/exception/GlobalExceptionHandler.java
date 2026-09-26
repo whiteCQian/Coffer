@@ -36,6 +36,25 @@ import java.security.InvalidKeyException;
 @Slf4j
 @ControllerAdvice
 public class GlobalExceptionHandler {
+    @ExceptionHandler(com.coffer.model.runtime.ModelConsentRequiredException.class)
+    public ResponseEntity<Result<?>> handleModelConsent(Exception exception) {
+        return build(428, "模型目标未确认或配置已变化，请重新确认本次任务");
+    }
+
+    @ExceptionHandler(com.coffer.service.FileVersionConflictException.class)
+    public ResponseEntity<Result<?>> handleStaleCitation(Exception exception) {
+        return build(409, "文件已变更，请重新检索");
+    }
+
+    @ExceptionHandler(com.coffer.auth.service.ResourceNotFoundException.class)
+    public ResponseEntity<Result<?>> handleResourceNotFound(Exception exception) {
+        return build(404, "资源不存在");
+    }
+
+    @ExceptionHandler(org.springframework.security.access.AccessDeniedException.class)
+    public ResponseEntity<Result<?>> handleAccessDenied(Exception exception) {
+        return build(403, "无权执行此操作");
+    }
 
     private static final String MSG_NO_SUCH_BUCKET = "存储桶不存在，请联系管理员";
     private static final String MSG_NO_SUCH_KEY = "文件不存在";
@@ -50,7 +69,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(ErrorResponseException.class)
     public ResponseEntity<Result<?>> handleErrorResponse(ErrorResponseException e) {
-        log.error("MinIO 操作异常: {}", e.getMessage(), e);
+        log.error("MinIO 操作失败，异常类型={}", e.getClass().getSimpleName());
         String code = e.errorResponse() == null ? null : e.errorResponse().code();
         if ("NoSuchBucket".equals(code)) {
             return build(404, MSG_NO_SUCH_BUCKET);
@@ -66,7 +85,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler({InsufficientDataException.class, InternalException.class, ServerException.class})
     public ResponseEntity<Result<?>> handleUnavailable(Exception e) {
-        log.error("MinIO 操作异常: {}", e.getMessage(), e);
+        log.error("MinIO 操作失败，异常类型={}", e.getClass().getSimpleName());
         return build(503, MSG_UNAVAILABLE);
     }
 
@@ -75,7 +94,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(InvalidKeyException.class)
     public ResponseEntity<Result<?>> handleInvalidKey(InvalidKeyException e) {
-        log.error("MinIO 操作异常: {}", e.getMessage(), e);
+        log.error("MinIO 操作失败，异常类型={}", e.getClass().getSimpleName());
         return build(401, MSG_AUTH_FAILED);
     }
 
@@ -84,7 +103,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(SocketTimeoutException.class)
     public ResponseEntity<Result<?>> handleSocketTimeout(SocketTimeoutException e) {
-        log.error("MinIO 操作异常: {}", e.getMessage(), e);
+        log.error("MinIO 操作失败，异常类型={}", e.getClass().getSimpleName());
         return build(504, MSG_TIMEOUT);
     }
 
@@ -93,7 +112,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(IOException.class)
     public ResponseEntity<Result<?>> handleIo(IOException e) {
-        log.error("MinIO 操作异常: {}", e.getMessage(), e);
+        log.error("MinIO 操作失败，异常类型={}", e.getClass().getSimpleName());
         return build(504, MSG_TIMEOUT);
     }
 
@@ -102,7 +121,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(MinioException.class)
     public ResponseEntity<Result<?>> handleOtherMinio(MinioException e) {
-        log.error("MinIO 操作异常: {}", e.getMessage(), e);
+        log.error("MinIO 操作失败，异常类型={}", e.getClass().getSimpleName());
         return build(503, MSG_UNAVAILABLE);
     }
 
@@ -112,7 +131,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     public ResponseEntity<Result<?>> handleMaxUploadSize(MaxUploadSizeExceededException e) {
-        log.warn("文件上传超限: {}", e.getMessage());
+        log.warn("文件上传超过大小限制");
         return build(400, MSG_UPLOAD_TOO_LARGE);
     }
 
@@ -121,7 +140,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Result<?>> handleIllegalArgument(IllegalArgumentException e) {
-        log.warn("参数校验失败: {}", e.getMessage());
+        log.warn("参数校验失败");
         return build(400, e.getMessage());
     }
 
@@ -135,7 +154,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<Result<?>> handleNotReadable(HttpMessageNotReadableException e) {
-        log.warn("请求体解析失败: {}", e.getMessage());
+        log.warn("请求体解析失败");
         return build(400, MSG_INVALID_BODY);
     }
 
@@ -149,7 +168,7 @@ public class GlobalExceptionHandler {
                 .map(fe -> fe.getField() + ": " + fe.getDefaultMessage())
                 .findFirst()
                 .orElse("参数校验失败");
-        log.warn("参数校验失败: {}", msg);
+        log.warn("请求字段校验失败");
         return build(400, msg);
     }
 
@@ -172,7 +191,7 @@ public class GlobalExceptionHandler {
             }
             if (cause instanceof InsufficientDataException || cause instanceof InternalException
                     || cause instanceof ServerException) {
-                log.error("MinIO 操作异常: {}", e.getMessage(), e);
+                log.error("MinIO 操作失败，异常类型={}", e.getClass().getSimpleName());
                 return build(503, MSG_UNAVAILABLE);
             }
             if (cause instanceof MinioException me) {
@@ -180,7 +199,7 @@ public class GlobalExceptionHandler {
             }
             cause = cause.getCause();
         }
-        log.error("系统内部异常: {}", e.getMessage(), e);
+        log.error("系统内部异常，类型={}", e.getClass().getSimpleName());
         return build(500, "系统内部错误，请稍后重试");
     }
 

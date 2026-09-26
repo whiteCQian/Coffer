@@ -40,6 +40,9 @@ docs/archive/legacy/*.docx
 
 # Locally generated launcher secrets; never commit these.
 *-local.cmd
+coffer-initial-admin-token.txt
+.coffer-encryption-key
+.coffer-runtime/
 
 # Local E2E input documents are not part of the repository.
 /backend/e2e-sample/

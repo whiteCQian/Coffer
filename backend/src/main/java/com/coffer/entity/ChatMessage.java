@@ -30,7 +30,8 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 @EqualsAndHashCode(callSuper = false)
-public class ChatMessage {
+public class ChatMessage extends com.coffer.auth.domain.TenantOwnedEntity {
+    @Column(name = "model_snapshot_id", length = 36) private String modelSnapshotId;
 
     /** 自增主键。 */
     @Id

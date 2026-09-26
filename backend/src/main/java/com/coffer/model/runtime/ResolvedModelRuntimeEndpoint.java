@@ -13,4 +13,5 @@ public record ResolvedModelRuntimeEndpoint(
         String source,
         boolean customConfigured,
         ModelProvider credentialProvider) {
+    @Override public String toString() { return "ResolvedModelRuntimeEndpoint[redacted]"; }
 }

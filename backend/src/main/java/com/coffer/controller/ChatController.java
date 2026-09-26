@@ -6,7 +6,6 @@ import com.coffer.dto.Result;
 import com.coffer.service.ConversationService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -17,7 +16,6 @@ import java.util.UUID;
 /**
  * 对话搜索接口。
  */
-@Slf4j
 @RestController
 @RequestMapping("/api/chat")
 @RequiredArgsConstructor
@@ -32,17 +30,12 @@ public class ChatController {
      * @return 统一响应，data 为回复内容 + 会话标识（前端续聊需回传 sessionId）
      */
     @PostMapping("/send")
+    @com.coffer.model.runtime.ModelSubmission("CHAT")
     public Result<ChatQueryResponse> chat(@RequestBody @Valid ChatRequest request) {
-        // 会话为空时在 Controller 层生成，保证能回传给前端续聊
-        String sessionId = (request.getSessionId() == null || request.getSessionId().isBlank())
-                ? UUID.randomUUID().toString()
-                : request.getSessionId();
-        log.info("对话请求 sessionId={}, message={}", sessionId, request.getMessage());
-
-        var conversation = conversationService.sendMessageWithSources(sessionId, request.getMessage());
+        var conversation = conversationService.sendMessageWithSources(request.getSessionId(), request.getMessage());
         return Result.success(ChatQueryResponse.builder()
                 .reply(conversation.reply())
-                .sessionId(sessionId)
+                .sessionId(conversation.sessionId())
                 .citations(conversation.citations())
                 .build());
     }

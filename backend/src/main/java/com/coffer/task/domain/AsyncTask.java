@@ -27,6 +27,8 @@ import java.time.LocalDateTime;
  */
 @Entity
 @Table(name = "async_task",
+        uniqueConstraints = @jakarta.persistence.UniqueConstraint(
+                name = "uk_async_task_task_id", columnNames = {"owner_id", "task_id"}),
         indexes = {
                 // task_id 已由 unique 约束提供唯一索引（可加速等值查询），无需重复建普通索引
                 @Index(name = "idx_async_task_status", columnList = "status")
@@ -36,7 +38,9 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 @EqualsAndHashCode(callSuper = false)
-public class AsyncTask {
+public class AsyncTask extends com.coffer.auth.domain.TenantOwnedEntity {
+    @Column(name = "model_snapshot_id", length = 36)
+    private String modelSnapshotId;
 
     /** 自增主键。 */
     @Id
@@ -45,7 +49,7 @@ public class AsyncTask {
     private Long id;
 
     /** 任务 ID，全局唯一，供前端通过任务 ID 轮询进度。 */
-    @Column(name = "task_id", unique = true, nullable = false, length = 64)
+    @Column(name = "task_id", nullable = false, length = 64)
     private String taskId;
 
     /** 文件名，用于显示当前处理哪个文件。 */

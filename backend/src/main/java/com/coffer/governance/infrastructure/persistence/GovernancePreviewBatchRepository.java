@@ -13,7 +13,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
-public interface GovernancePreviewBatchRepository extends JpaRepository<GovernancePreviewBatch, Long> {
+public interface GovernancePreviewBatchRepository extends com.coffer.auth.infrastructure.OwnedRepository<GovernancePreviewBatch, Long> {
 
     Optional<GovernancePreviewBatch> findByPreviewId(String previewId);
 

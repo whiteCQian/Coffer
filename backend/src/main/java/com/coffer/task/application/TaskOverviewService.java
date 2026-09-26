@@ -22,6 +22,7 @@ import java.util.List;
  * 「已处理完成且仍有待确认标签」的文件（见 {@link FileMetadataRepository#findPendingConfirmFiles()}）。
  */
 @Slf4j
+@com.coffer.auth.service.OwnerOnly
 @Service
 @RequiredArgsConstructor
 public class TaskOverviewService {

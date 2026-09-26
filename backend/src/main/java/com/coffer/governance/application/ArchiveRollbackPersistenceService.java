@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Objects;
 
 /** Short, locked database transactions for rollback orchestration. */
+@com.coffer.auth.service.OwnerOnly
 @Service
 @RequiredArgsConstructor
 public class ArchiveRollbackPersistenceService {
@@ -113,6 +114,7 @@ public class ArchiveRollbackPersistenceService {
             file.setArchived(false);
             file.setContentEtag(etag);
             file.setRevision(current + 1);
+            file.setVectorIndexedAt(null);
             fileMetadataRepository.save(file);
         }
         item.setRollbackStatus(ArchiveOperationItemRollbackStatus.CLEANUP_PENDING);
@@ -212,10 +214,10 @@ public class ArchiveRollbackPersistenceService {
     }
 
     private ArchiveOperationItem lockItem(Long id) {
-        return itemRepository.findByIdForUpdate(id).orElseThrow(() -> new IllegalArgumentException("归档操作明细不存在: " + id));
+        return itemRepository.findByIdForUpdate(id).orElseThrow(() -> new com.coffer.auth.service.ResourceNotFoundException());
     }
     private ArchiveOperationBatch lockBatch(String id) {
-        return batchRepository.findByBatchIdForUpdate(id).orElseThrow(() -> new IllegalArgumentException("归档操作批次不存在: " + id));
+        return batchRepository.findByBatchIdForUpdate(id).orElseThrow(() -> new com.coffer.auth.service.ResourceNotFoundException());
     }
     private boolean sameCategory(CategoryType category, String expected) { return Objects.equals(category == null ? null : category.name(), expected); }
     private long value(Long value) { return value == null ? 0L : value; }

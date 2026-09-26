@@ -48,6 +48,8 @@ public class ModelClientConfig {
         String baseUrl = provider == ModelProvider.DEEPSEEK ? deepSeekBaseUrl : qwenBaseUrl;
         String modelName = provider == ModelProvider.DEEPSEEK ? deepSeekModel : qwenModel;
         OpenAiChatModel delegate = OpenAiChatModel.builder()
+                .logRequests(false).logResponses(false).maxRetries(0)
+                .httpClientBuilder(SafeModelHttpClient.builder())
                 .baseUrl(baseUrl)
                 .apiKey(apiKey)
                 .modelName(modelName)

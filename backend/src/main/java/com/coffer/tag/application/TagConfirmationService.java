@@ -3,12 +3,10 @@ package com.coffer.tag.application;
 import com.coffer.tag.domain.ConfirmationStatus;
 import com.coffer.tag.domain.FileTagMapping;
 import com.coffer.tag.domain.Tag;
-import com.coffer.tag.application.event.TagConfirmedEvent;
 import com.coffer.tag.infrastructure.persistence.FileTagMappingRepository;
 import com.coffer.tag.infrastructure.persistence.TagRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,19 +20,24 @@ import java.time.LocalDateTime;
  * 再次以待确认（PENDING_CONFIRMATION）状态进入人工确认。
  */
 @Slf4j
+@com.coffer.auth.service.OwnerOnly
 @Service
 @RequiredArgsConstructor
 public class TagConfirmationService {
 
     private final FileTagMappingRepository fileTagMappingRepository;
     private final TagRepository tagRepository;
-    private final ApplicationEventPublisher applicationEventPublisher;
+    private final com.coffer.file.infrastructure.persistence.FileMetadataRepository files;
+
+    private void advanceRevision(Long fileId) {
+        var file = files.findById(fileId).orElseThrow(com.coffer.auth.service.ResourceNotFoundException::new);
+        file.setRevision(file.getRevision() + 1);
+        file.setVectorIndexedAt(null);
+        files.save(file);
+    }
 
     /**
      * 确认文件上的指定标签。
-     *
-     * <p>真实迁移（PENDING → CONFIRMED）后发布 {@link TagConfirmedEvent}，由监听器在事务
-     * {@code AFTER_COMMIT} 触发分类目录归档；幂等早退（已确认）分支不重复发布。
      *
      * @param fileId 文件 ID
      * @param tagId  标签 ID
@@ -47,7 +50,7 @@ public class TagConfirmationService {
         }
 
         FileTagMapping mapping = fileTagMappingRepository.findByFileIdAndTagId(fileId, tagId)
-                .orElseThrow(() -> new IllegalArgumentException("文件与标签的关联不存在"));
+                .orElseThrow(() -> new com.coffer.auth.service.ResourceNotFoundException());
 
         // 已确认则幂等返回，避免重复更新确认时间
         if (mapping.getConfirmationStatus() == ConfirmationStatus.CONFIRMED) {
@@ -58,10 +61,9 @@ public class TagConfirmationService {
         mapping.setConfirmationStatus(ConfirmationStatus.CONFIRMED);
         mapping.setConfirmedAt(LocalDateTime.now());
         fileTagMappingRepository.save(mapping);
+        advanceRevision(fileId);
         log.info("标签确认完成 fileId={}, tagId={}", fileId, tagId);
 
-        // 发布标签确认事件：事务提交后由监听器触发分类目录归档（移动 MinIO 在事务外，见 T4.3）
-        applicationEventPublisher.publishEvent(new TagConfirmedEvent(fileId));
     }
 
     /**
@@ -83,7 +85,7 @@ public class TagConfirmationService {
         }
 
         FileTagMapping mapping = fileTagMappingRepository.findByFileIdAndTagId(fileId, tagId)
-                .orElseThrow(() -> new IllegalArgumentException("文件与标签的关联不存在"));
+                .orElseThrow(() -> new com.coffer.auth.service.ResourceNotFoundException());
 
         // 已拒绝则幂等返回，避免重复更新确认时间与备注
         if (mapping.getConfirmationStatus() == ConfirmationStatus.REJECTED) {
@@ -97,6 +99,7 @@ public class TagConfirmationService {
         mapping.setConfirmedAt(LocalDateTime.now());
         mapping.setConfirmationNote(normalizedNewTag);
         fileTagMappingRepository.save(mapping);
+        advanceRevision(fileId);
 
         // 2. 携带修正标签：查找或创建 Tag，并建立待确认的新关联（重复关联则跳过）
         if (normalizedNewTag != null) {
@@ -109,12 +112,10 @@ public class TagConfirmationService {
                         .build();
                 correction.setConfirmationStatus(ConfirmationStatus.PENDING_CONFIRMATION);
                 fileTagMappingRepository.save(correction);
-                log.info("修正标签已挂回待确认 fileId={}, newTagId={}, newTagName={}",
-                        fileId, newTag.getId(), normalizedNewTag);
+                log.info("修正标签已挂回待确认 fileId={}, newTagId={}", fileId, newTag.getId());
             }
         }
 
-        log.info("标签已拒绝 fileId={}, 被拒标签 tagId={}, 修正标签={}",
-                fileId, tagId, normalizedNewTag == null ? "无" : normalizedNewTag);
+        log.info("标签已拒绝 fileId={}, tagId={}", fileId, tagId);
     }
 }

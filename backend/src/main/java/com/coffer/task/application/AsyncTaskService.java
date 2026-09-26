@@ -17,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 任务不存在时更新为静默忽略（仅告警日志），不抛异常。
  */
 @Slf4j
+@com.coffer.auth.service.OwnerOnly
 @Service
 @RequiredArgsConstructor
 public class AsyncTaskService {

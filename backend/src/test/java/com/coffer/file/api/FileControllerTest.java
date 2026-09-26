@@ -13,6 +13,8 @@ import com.coffer.tag.domain.FileTagMapping;
 import com.coffer.tag.domain.Tag;
 import com.coffer.task.infrastructure.persistence.AsyncTaskRepository;
 import com.coffer.file.infrastructure.persistence.FileMetadataRepository;
+import com.coffer.file.infrastructure.persistence.StorageDeletionTaskRepository;
+import com.coffer.file.domain.StorageDeletionStatus;
 import com.coffer.tag.infrastructure.persistence.FileTagMappingRepository;
 import com.coffer.tag.infrastructure.persistence.TagRepository;
 import com.coffer.file.application.FileService;
@@ -46,7 +48,6 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isA;
 import static org.mockito.ArgumentMatchers.nullable;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -63,9 +64,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 文件列表接口测试：验证端点、关键词透传与 {@code @PageableDefault} 默认分页。
  */
 @SpringBootTest
-@AutoConfigureMockMvc
+@AutoConfigureMockMvc(addFilters = false)
 @Transactional
-class FileControllerTest {
+class FileControllerTest extends com.coffer.auth.OwnerModelSubmissionTestSupport {
 
     @Autowired
     private MockMvc mockMvc;
@@ -93,6 +94,9 @@ class FileControllerTest {
 
     @Autowired
     private AsyncTaskRepository asyncTaskRepository;
+
+    @Autowired
+    private StorageDeletionTaskRepository storageDeletionTaskRepository;
 
     @Autowired
     private FileTagMappingRepository fileTagMappingRepository;
@@ -243,7 +247,7 @@ class FileControllerTest {
         FileMetadata fm = fileMetadataRepository.save(FileMetadata.builder()
                 .fileName("待删合同.pdf").fileSize(12L).fileType("pdf")
                 .status(FileStatus.COMPLETED).taskId(taskId).summary("摘要")
-                .storagePath("contracts/del-uuid.pdf").build());
+                .storagePath(ownerPath("archive/contracts/del-uuid.pdf")).build());
         asyncTaskRepository.save(AsyncTask.builder().taskId(taskId).fileName("待删合同.pdf")
                 .status(AsyncTaskStatus.COMPLETED).progress(100).result("摘要").build());
         Long tagId = tagRepository.save(Tag.builder().tagName("合同").build()).getId();
@@ -254,10 +258,12 @@ class FileControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0));
 
-        // MinIO 对象以 storagePath 删除；DB 三条记录均清空
-        ArgumentCaptor<String> objectCaptor = ArgumentCaptor.forClass(String.class);
-        verify(minioStorageService).deleteFile(nullable(String.class), objectCaptor.capture());
-        assertThat(objectCaptor.getValue()).isEqualTo("contracts/del-uuid.pdf");
+        // DB 与待清理意图同事务提交；对象存储由后台任务重试删除。
+        var cleanup = storageDeletionTaskRepository.findAll().stream()
+                .filter(task -> task.getFileId().equals(fm.getId())).findFirst().orElseThrow();
+        assertThat(cleanup.getObjectPath()).isEqualTo(ownerPath("archive/contracts/del-uuid.pdf"));
+        assertThat(cleanup.getStatus()).isEqualTo(StorageDeletionStatus.PENDING);
+        verify(minioStorageService, never()).deleteFile(anyString(), anyString());
         assertThat(fileMetadataRepository.findById(fm.getId())).isEmpty();
         assertThat(asyncTaskRepository.findByTaskId(taskId)).isEmpty();
         assertThat(fileTagMappingRepository.findByFileId(fm.getId())).isEmpty();
@@ -266,27 +272,29 @@ class FileControllerTest {
     @Test
     void deleteNonexistentFileReturns404() throws Exception {
         mockMvc.perform(delete("/api/files/999999"))
-                .andExpect(status().isOk())
+                .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value(404))
-                .andExpect(jsonPath("$.msg").value("文件不存在: 999999"));
+                .andExpect(jsonPath("$.msg").value("资源不存在"));
 
         verify(minioStorageService, never()).deleteFile(anyString(), anyString());
     }
 
     @Test
-    void deleteMinioFailureStillSucceedsLeavesOrphan() throws Exception {
+    void deleteRegistersDurableStorageCleanup() throws Exception {
         FileMetadata fm = fileMetadataRepository.save(FileMetadata.builder()
                 .fileName("孤儿源.pdf").fileSize(12L).fileType("pdf")
-                .status(FileStatus.FAILED).storagePath("files/orphan.pdf").build());
-        doThrow(new RuntimeException("MinIO 不可达"))
-                .when(minioStorageService).deleteFile(nullable(String.class), anyString());
-
+                .status(FileStatus.FAILED).storagePath(ownerPath("files/orphan.pdf")).build());
         mockMvc.perform(delete("/api/files/" + fm.getId()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0));
 
-        // DB 记录已删，MinIO 删除失败仅留孤儿（不向用户报错）
+        // 请求成功并写入 durable cleanup；外部对象删除由后台重试。
         assertThat(fileMetadataRepository.findById(fm.getId())).isEmpty();
+        assertThat(storageDeletionTaskRepository.findAll()).anySatisfy(task -> {
+            assertThat(task.getFileId()).isEqualTo(fm.getId());
+            assertThat(task.getStatus()).isEqualTo(StorageDeletionStatus.PENDING);
+        });
+        verify(minioStorageService, never()).deleteFile(anyString(), anyString());
     }
 
     @Test
@@ -389,82 +397,31 @@ class FileControllerTest {
     }
 
     @Test
-    void renameFileNotFoundReturns400() throws Exception {
+    void renameFileNotFoundReturns404() throws Exception {
         mockMvc.perform(patch("/api/files/999999")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"fileName\":\"不存在.pdf\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value(400))
-                .andExpect(jsonPath("$.msg").value("文件不存在: 999999"));
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value(404))
+                .andExpect(jsonPath("$.msg").value("资源不存在"));
     }
 
     @Test
-    void changeCategoryUpdatesDbAndReturnsDetail() throws Exception {
+    void directCategoryChangeIsRejectedAndLeavesFileUntouched() throws Exception {
         FileMetadata fm = fileMetadataRepository.save(FileMetadata.builder()
                 .fileName("合同.pdf").fileSize(12L).fileType("pdf")
                 .status(FileStatus.COMPLETED).category(CategoryType.OTHER).archived(false)
                 .build());
-        when(fileService.getFileDetail(fm.getId())).thenReturn(FileDetailResponse.builder()
-                .id(fm.getId()).fileName("合同.pdf").category("CONTRACT").archived(false).build());
 
         mockMvc.perform(put("/api/files/" + fm.getId() + "/category")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"category\":\"CONTRACT\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value(0))
-                .andExpect(jsonPath("$.data.category").value("CONTRACT"))
-                .andExpect(jsonPath("$.data.archived").value(false));
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value(409))
+                .andExpect(jsonPath("$.msg").value("分类变更必须通过整理预览确认"));
 
         FileMetadata reloaded = fileMetadataRepository.findById(fm.getId()).orElseThrow();
-        assertThat(reloaded.getCategory()).isEqualTo(CategoryType.CONTRACT);
+        assertThat(reloaded.getCategory()).isEqualTo(CategoryType.OTHER);
         assertThat(reloaded.isArchived()).isFalse();
-    }
-
-    @Test
-    void changeCategoryInvalidValueReturns400() throws Exception {
-        FileMetadata fm = fileMetadataRepository.save(FileMetadata.builder()
-                .fileName("合同.pdf").fileSize(12L).fileType("pdf")
-                .status(FileStatus.COMPLETED).build());
-
-        mockMvc.perform(put("/api/files/" + fm.getId() + "/category")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"category\":\"BOGUS\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value(400))
-                .andExpect(jsonPath("$.msg").value("非法分类参数: BOGUS"));
-    }
-
-    @Test
-    void changeCategoryNonCompletedReturns400() throws Exception {
-        FileMetadata fm = fileMetadataRepository.save(FileMetadata.builder()
-                .fileName("处理中.pdf").fileSize(12L).fileType("pdf")
-                .status(FileStatus.PROCESSING).build());
-
-        mockMvc.perform(put("/api/files/" + fm.getId() + "/category")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"category\":\"CONTRACT\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value(400))
-                .andExpect(jsonPath("$.msg").value("仅已完成文件可更改分类"));
-    }
-
-    @Test
-    void changeCategoryBlankCategoryReturnsBadRequest() throws Exception {
-        mockMvc.perform(put("/api/files/1/category")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"category\":\"\"}"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value(400))
-                .andExpect(jsonPath("$.msg").value("category: 分类不能为空"));
-    }
-
-    @Test
-    void changeCategoryNotFoundReturns400() throws Exception {
-        mockMvc.perform(put("/api/files/999999/category")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"category\":\"CONTRACT\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value(400))
-                .andExpect(jsonPath("$.msg").value("文件不存在: 999999"));
     }
 }

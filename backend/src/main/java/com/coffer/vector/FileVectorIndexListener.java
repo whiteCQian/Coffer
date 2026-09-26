@@ -17,6 +17,7 @@ public class FileVectorIndexListener {
     private final VectorIndexCoordinator coordinator;
 
     @Async("vectorIndexExecutor")
+    @com.coffer.auth.service.OwnedJob
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onRequested(FileVectorIndexRequested event) {
         FileMetadata metadata = repository.findById(event.fileId()).orElse(null);

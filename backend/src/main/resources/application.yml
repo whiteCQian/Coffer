@@ -13,6 +13,9 @@
 # ==================== 公共配置（所有环境共享） ====================
 server:
   port: 8080
+  servlet:
+    session:
+      timeout: 30m
 
 spring:
   application:
@@ -27,6 +30,11 @@ spring:
     hibernate:
       ddl-auto: validate
   open-in-view: false
+  session:
+    store-type: jdbc
+    timeout: 30m
+    jdbc:
+      initialize-schema: never
 
   flyway:
     enabled: true
@@ -87,10 +95,18 @@ minio:
 
 # ==================== Coffer 业务配置 ====================
 coffer:
+  auth:
+    # Set once before first startup. The setup endpoint closes permanently after
+    # the first administrator is created; there is no public registration.
+    initial-admin-token: ${COFFER_ADMIN_SETUP_TOKEN:}
+    cookie-secure: ${COFFER_COOKIE_SECURE:false}
+    trusted-proxies: ${COFFER_TRUSTED_PROXIES:}
   # 全局模型运行模式由数据库中的 model_runtime_setting 管理；LOCAL 的端点
   # 通过环境变量覆盖，默认指向 Ollama OpenAI-compatible API，不会回退到云端。
   runtime:
     local:
+      allowed-hosts: ${COFFER_LOCAL_MODEL_ALLOWED_HOSTS:localhost,127.0.0.1,::1}
+      allowed-ports: ${COFFER_LOCAL_MODEL_ALLOWED_PORTS:11434,1234,8000}
       chat:
         base-url: ${COFFER_LOCAL_CHAT_BASE_URL:http://127.0.0.1:11434/v1}
         model-name: ${COFFER_LOCAL_CHAT_MODEL:llama3.2}
@@ -105,6 +121,7 @@ coffer:
         api-key: ${COFFER_LOCAL_EMBEDDING_API_KEY:}
   # 模型密钥不放在配置文件中，由 /api/settings/models 管理并加密存入数据库。
   models:
+    allowed-api-hosts: ${COFFER_ALLOWED_MODEL_API_HOSTS:api.deepseek.com,dashscope.aliyuncs.com}
     deepseek:
       base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com/v1}
       model-name: ${DEEPSEEK_MODEL:deepseek-chat}
@@ -127,7 +144,7 @@ coffer:
     expiry-seconds: 3600       # 会话记忆过期时间（秒），自动清理历史会话
   # 模型调用日志（ModelCallLogger 切面通过 @Value 读取，false 时直接放行不记录）
   model-log:
-    enabled: true
+    enabled: ${COFFER_MODEL_LOG_ENABLED:false}
   # Embedding 默认关闭。启用后复用 QWEN_VL 的加密密钥，避免在配置文件中保存明文密钥。
   embedding:
     enabled: ${COFFER_EMBEDDING_ENABLED:false}
@@ -188,14 +205,14 @@ langchain4j:
       base-url: https://api.deepseek.com/v1
       temperature: 0.1           # 采样温度：越低越稳定，适合标签生成等确定性任务
       max-tokens: 2048           # 单次回复最大 token 数
-      log-requests: true
-      log-responses: true
+      log-requests: false
+      log-responses: false
     # 流式 Chat 模型（自动创建 OpenAiStreamingChatModel Bean）
     streaming-chat-model:
       model-name: deepseek-chat
       base-url: https://api.deepseek.com/v1
-      log-requests: true
-      log-responses: true
+      log-requests: false
+      log-responses: false
       # accumulateToolCallId 未暴露为配置项，后续手动 @Bean 设置 .accumulateToolCallId(false)
 
 # ==================== 开发环境 dev：本地文件 H2 数据库 ====================
@@ -250,3 +267,7 @@ spring:
     hibernate:
       # 表结构和 FULLTEXT 索引由 Flyway 迁移脚本维护，启动时校验实体结构
       ddl-auto: validate
+
+coffer:
+  auth:
+    cookie-secure: ${COFFER_COOKIE_SECURE:true}

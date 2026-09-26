@@ -7,7 +7,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class ChatCitationCollectorTest {
 
-    private final ChatCitationCollector collector = new ChatCitationCollector();
+    private final PrivateFileAccess access = org.mockito.Mockito.mock(PrivateFileAccess.class);
+    private final com.coffer.auth.service.OwnerAuthorization auth = org.mockito.Mockito.mock(com.coffer.auth.service.OwnerAuthorization.class);
+    private final ChatCitationCollector collector = new ChatCitationCollector(access, auth);
+
+    @org.junit.jupiter.api.BeforeEach void setup() {
+        org.mockito.Mockito.when(auth.requireOwner()).thenReturn(1L);
+        org.mockito.Mockito.when(access.current(org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong())).thenReturn(true);
+    }
 
     @Test
     void capturesRealFilesDeduplicatesAndKeepsBestScore() {
@@ -17,6 +24,7 @@ class ChatCitationCollectorTest {
                 .fileType("pdf")
                 .build();
 
+        org.mockito.Mockito.when(access.requireVersion(7L, 0L)).thenReturn(file);
         collector.begin();
         collector.capture(file, 0.10d, "KEYWORD", "合同摘要");
         collector.capture(file, 0.80d, "VECTOR", "合同摘要");

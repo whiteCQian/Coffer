@@ -23,7 +23,10 @@ import static org.mockito.Mockito.when;
  * 保证单测确定性），对话记录落库使用真实 H2。
  */
 @SpringBootTest
-class ConversationServiceTest {
+class ConversationServiceTest extends com.coffer.auth.OwnerTestSupport {
+    @Autowired private ChatSessionService sessions;
+    private String session;
+    @org.junit.jupiter.api.BeforeEach void openSession() { session = sessions.create(); }
 
     @Autowired
     private ConversationService conversationService;
@@ -36,9 +39,9 @@ class ConversationServiceTest {
 
     @Test
     void blankUserMessageReturnsErrorWithoutSaving() {
-        String result = conversationService.sendMessage("s-blank-1", "   ");
-        assertThat(result).isEqualTo("消息不能为空");
-        assertThat(chatMessageRepository.findBySessionIdOrderByTimestampAsc("s-blank-1")).isEmpty();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> conversationService.sendMessage(session, "   "))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("消息不能为空");
+        assertThat(chatMessageRepository.findBySessionIdOrderByTimestampAsc(session)).isEmpty();
     }
 
     @Test
@@ -63,12 +66,12 @@ class ConversationServiceTest {
 
     @Test
     void normalFlowPersistsMessage() {
-        when(aiAgentService.chat("帮我找合同文件", "s-save-1")).thenReturn("已为你找到 3 个合同文件");
+        when(aiAgentService.chat("帮我找合同文件", session)).thenReturn("已为你找到 3 个合同文件");
 
-        String reply = conversationService.sendMessage("s-save-1", "帮我找合同文件");
+        String reply = conversationService.sendMessage(session, "帮我找合同文件");
         assertThat(reply).isEqualTo("已为你找到 3 个合同文件");
 
-        List<ChatMessage> rows = chatMessageRepository.findBySessionIdOrderByTimestampAsc("s-save-1");
+        List<ChatMessage> rows = chatMessageRepository.findBySessionIdOrderByTimestampAsc(session);
         assertThat(rows).hasSize(1);
         assertThat(rows.get(0).getUserMessage()).isEqualTo("帮我找合同文件");
         assertThat(rows.get(0).getAiResponse()).isEqualTo("已为你找到 3 个合同文件");
@@ -79,8 +82,8 @@ class ConversationServiceTest {
     void chatFailureReturnsFriendlyAndDoesNotSave() {
         when(aiAgentService.chat(anyString(), anyString())).thenThrow(new RuntimeException("boom"));
 
-        String reply = conversationService.sendMessage("s-fail-1", "帮我找合同文件");
-        assertThat(reply).isEqualTo("对话处理失败，请稍后重试");
-        assertThat(chatMessageRepository.findBySessionIdOrderByTimestampAsc("s-fail-1")).isEmpty();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> conversationService.sendMessage(session, "帮我找合同文件"))
+                .isInstanceOf(RuntimeException.class).hasMessageContaining("boom");
+        assertThat(chatMessageRepository.findBySessionIdOrderByTimestampAsc(session)).isEmpty();
     }
 }

@@ -1,6 +1,7 @@
 package com.coffer.model.runtime;
 
 import com.coffer.entity.ModelRuntimeSetting;
+import com.coffer.auth.service.TenantContext;
 import com.coffer.governance.domain.GovernanceRunMode;
 import com.coffer.repository.ModelRuntimeSettingRepository;
 import com.coffer.model.runtime.api.ModelRuntimeModeStatusResponse;
@@ -17,6 +18,7 @@ import java.util.function.Supplier;
 
 /** Owns the singleton active mode, validation gate, and task mode snapshots. */
 @Service
+@com.coffer.auth.service.OwnerOnly
 @RequiredArgsConstructor
 public class ModelRuntimeModeService {
 
@@ -60,6 +62,7 @@ public class ModelRuntimeModeService {
     /** Returns the current validated mode for a new model task. */
     @Transactional(readOnly = true)
     public GovernanceRunMode requireActiveMode() {
+        if (ModelExecutionContext.current() != null) return ModelExecutionContext.current().mode();
         ModelRuntimeSetting setting = requireSetting();
         GovernanceRunMode mode = setting.getActiveMode() == null ? GovernanceRunMode.API : setting.getActiveMode();
         if (!isValidated(setting, mode)) {
@@ -73,7 +76,7 @@ public class ModelRuntimeModeService {
     public GovernanceRunMode resolveForTask(GovernanceRunMode requestedMode) {
         GovernanceRunMode active = requireActiveMode();
         if (requestedMode != null && requestedMode != active) {
-            throw new IllegalArgumentException("请求运行模式与当前全局运行模式不一致: " + active.name());
+            throw new IllegalArgumentException("请求运行模式与当前账号运行模式不一致: " + active.name());
         }
         return active;
     }
@@ -115,9 +118,10 @@ public class ModelRuntimeModeService {
     }
 
     private ModelRuntimeSetting requireSetting() {
-        return repository.findById(ModelRuntimeSetting.SINGLETON_ID)
+        Long ownerId = TenantContext.requireOwnerId();
+        return repository.findById(ownerId)
                 .orElseGet(() -> repository.save(ModelRuntimeSetting.builder()
-                        .id(ModelRuntimeSetting.SINGLETON_ID)
+                        .id(ownerId)
                         .activeMode(GovernanceRunMode.API)
                         .updatedAt(LocalDateTime.now())
                         .build()));

@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 @SpringBootTest
 @Transactional
-class AsyncTaskServiceTest {
+class AsyncTaskServiceTest extends com.coffer.auth.OwnerTestSupport {
 
     @Autowired
     private AsyncTaskService asyncTaskService;

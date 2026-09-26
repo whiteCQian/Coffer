@@ -22,7 +22,7 @@ import static org.mockito.Mockito.*;
         "minio.access-key=test-access-key", "minio.secret-key=test-secret-key",
         "coffer.governance.archive.compensation-interval-ms=3600000"
 })
-class GovernanceCompensationTest {
+class GovernanceCompensationTest extends com.coffer.auth.OwnerTestSupport {
     @Autowired ArchiveOperationService archiveService;
     @Autowired GovernanceCompensationProcessor processor;
     @Autowired GovernanceRecoveryCoordinator recoveryCoordinator;
@@ -41,7 +41,7 @@ class GovernanceCompensationTest {
     @Test void cleanupFailureCreatesDurableTaskAndRetryCompletesOperation() {
         ArchiveOperationItem item = seedPending("comp-cleanup");
         stubArchiveObjects();
-        doThrow(new RuntimeException("delete unavailable")).when(minio).deleteFile(null, "files/original.txt");
+        doThrow(new RuntimeException("delete unavailable")).when(minio).deleteFile(null, ownerPath("files/original.txt"));
 
         archiveService.executeBatch(item.getBatchId());
 
@@ -51,7 +51,7 @@ class GovernanceCompensationTest {
         assertThat(task.getAction()).isEqualTo(GovernanceCompensationAction.DELETE_ARCHIVE_SOURCE);
 
         reset(minio);
-        doNothing().when(minio).deleteFile(null, "files/original.txt");
+        doNothing().when(minio).deleteFile(null, ownerPath("files/original.txt"));
         processor.process(task.getId());
 
         assertThat(itemRepository.findById(item.getId()).orElseThrow().getExecutionStatus())
@@ -63,10 +63,10 @@ class GovernanceCompensationTest {
     @Test void repeatedExecutionDoesNotCopyOrCommitTwice() {
         ArchiveOperationItem item = seedPending("comp-idempotent");
         stubArchiveObjects();
-        doNothing().when(minio).deleteFile(null, "files/original.txt");
+        doNothing().when(minio).deleteFile(null, ownerPath("files/original.txt"));
         archiveService.executeBatch(item.getBatchId());
         archiveService.executeBatch(item.getBatchId());
-        verify(minio, times(1)).copyObject("files/original.txt", "contracts/archived.txt");
+        verify(minio, times(1)).copyObject(ownerPath("files/original.txt"), ownerPath("contracts/archived.txt"));
         assertThat(fileRepository.findById(item.getFileId()).orElseThrow().getRevision()).isEqualTo(1L);
     }
 
@@ -80,7 +80,7 @@ class GovernanceCompensationTest {
 
         FileMetadata file = fileRepository.findById(item.getFileId()).orElseThrow();
         GovernanceCompensationTask task = compensationRepository.findAll().get(0);
-        assertThat(file.getStoragePath()).isEqualTo("files/original.txt");
+        assertThat(file.getStoragePath()).isEqualTo(ownerPath("files/original.txt"));
         assertThat(file.getRevision()).isZero();
         assertThat(task.getAction()).isEqualTo(GovernanceCompensationAction.RESUME_ARCHIVE);
         assertThat(itemRepository.findById(item.getId()).orElseThrow().getExecutionStatus())
@@ -101,7 +101,7 @@ class GovernanceCompensationTest {
 
     private ArchiveOperationItem seedPending(String batchId) {
         FileMetadata file = fileRepository.saveAndFlush(FileMetadata.builder().fileName("original.txt")
-                .fileSize(12L).fileType("txt").storagePath("files/original.txt").status(FileStatus.COMPLETED)
+                .fileSize(12L).fileType("txt").storagePath(ownerPath("files/original.txt")).status(FileStatus.COMPLETED)
                 .category(CategoryType.REPORT).revision(0L).contentEtag("source-etag").build());
         batchRepository.saveAndFlush(ArchiveOperationBatch.builder().batchId(batchId)
                 .source(ArchiveOperationSource.PREVIEW_CONFIRMATION).runMode(GovernanceRunMode.LOCAL)
@@ -109,15 +109,15 @@ class GovernanceCompensationTest {
         return itemRepository.saveAndFlush(ArchiveOperationItem.builder().batchId(batchId).fileId(file.getId())
                 .itemKey(batchId + ":" + file.getId()).sourceFileName("original.txt")
                 .targetFileName("archived.txt").sourceCategory("REPORT").targetCategory("CONTRACT")
-                .sourcePath("files/original.txt").targetPath("contracts/archived.txt")
+                .sourcePath(ownerPath("files/original.txt")).targetPath(ownerPath("contracts/archived.txt"))
                 .sourceEtag("source-etag").sourceSize(12L).build());
     }
 
     private void stubArchiveObjects() {
-        when(minio.objectExists(null, "contracts/archived.txt")).thenReturn(false);
-        when(minio.statFile(isNull(), eq("files/original.txt")))
+        when(minio.objectExists(null, ownerPath("contracts/archived.txt"))).thenReturn(false);
+        when(minio.statFile(isNull(), eq(ownerPath("files/original.txt"))))
                 .thenReturn(new MinioStorageService.ObjectSnapshot("source-etag", 12));
-        when(minio.statFile(isNull(), eq("contracts/archived.txt")))
+        when(minio.statFile(isNull(), eq(ownerPath("contracts/archived.txt"))))
                 .thenReturn(new MinioStorageService.ObjectSnapshot("target-etag", 12));
         doNothing().when(minio).copyObject(anyString(), anyString());
     }

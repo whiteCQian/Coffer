@@ -14,14 +14,16 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 
-/** Persistent singleton containing the active model execution mode and validations. */
+/** Per-owner model execution mode and validation snapshot. */
 @Entity
-@Table(name = "model_runtime_setting")
+@Table(name = "user_model_runtime_setting")
 @Data
+@lombok.EqualsAndHashCode(callSuper = false)
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class ModelRuntimeSetting {
+public class ModelRuntimeSetting extends com.coffer.auth.domain.TenantOwnedEntity {
+    @Column(name = "inbox_snapshot_id", length = 36) private String inboxSnapshotId;
 
     public static final long SINGLETON_ID = 1L;
 

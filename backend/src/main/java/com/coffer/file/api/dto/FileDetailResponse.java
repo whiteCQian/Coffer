@@ -52,7 +52,7 @@ public class FileDetailResponse {
     /** 待确认（PENDING_CONFIRMATION）标签列表。 */
     private List<FileTagInfo> pendingTags;
 
-    /** 临时预览 URL（预签名，默认 7 天有效），供前端直接预览文件内容。 */
+    /** 通过登录会话读取的文件内容端点；不暴露对象存储 URL。 */
     private String previewUrl;
 
     /** 文件分类（受控词表，CONTRACT/INVOICE/REPORT/ID/IMAGE/VIDEO/OTHER）。 */
@@ -62,6 +62,4 @@ public class FileDetailResponse {
     /** 是否已归档（物理移动到分类目录）。 */
     private Boolean archived;
 
-    /** 对象存储路径（MinIO 对象键），归档后指向分类目录。 */
-    private String storagePath;
 }

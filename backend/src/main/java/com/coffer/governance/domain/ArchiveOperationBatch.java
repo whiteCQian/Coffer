@@ -24,8 +24,8 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "archive_operation_batch",
         uniqueConstraints = {
-                @UniqueConstraint(name = "uk_archive_operation_batch_batch_id", columnNames = "batch_id"),
-                @UniqueConstraint(name = "uk_archive_operation_batch_request_id", columnNames = "request_id")
+                @UniqueConstraint(name = "uk_archive_operation_batch_batch_id", columnNames = {"owner_id", "batch_id"}),
+                @UniqueConstraint(name = "uk_archive_operation_batch_request_id", columnNames = {"owner_id", "request_id"})
         },
         indexes = {
                 @Index(name = "idx_archive_operation_batch_status_created", columnList = "status,created_at"),
@@ -36,7 +36,7 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 @EqualsAndHashCode(callSuper = false)
-public class ArchiveOperationBatch {
+public class ArchiveOperationBatch extends com.coffer.auth.domain.TenantOwnedEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

@@ -15,7 +15,7 @@ import java.util.Optional;
 
 /** Persistence access for file-level archive operation audit items. */
 @Repository
-public interface ArchiveOperationItemRepository extends JpaRepository<ArchiveOperationItem, Long> {
+public interface ArchiveOperationItemRepository extends com.coffer.auth.infrastructure.OwnedRepository<ArchiveOperationItem, Long> {
 
     List<ArchiveOperationItem> findByBatchIdOrderByIdAsc(String batchId);
 

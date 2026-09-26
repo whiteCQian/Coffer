@@ -23,7 +23,7 @@ public class ModelCallService {
      * 调用当前 Chat Provider，返回回复文本。
      *
      * @param userMessage 用户消息
-     * @param sessionId   会话标识（用于日志）
+     * @param sessionId   保留用于调用链兼容；不写入日志或诊断记录
      * @return 模型回复
      */
     @LogModelCall
@@ -31,11 +31,11 @@ public class ModelCallService {
         long start = System.currentTimeMillis();
         try {
             String reply = chatProvider.chat(userMessage);
-            log.info("模型调用成功 sessionId={}, 耗时 {}ms", sessionId, System.currentTimeMillis() - start);
+            log.info("模型调用成功，耗时 {}ms", System.currentTimeMillis() - start);
             return reply;
         } catch (Exception e) {
-            log.warn("模型调用异常 sessionId={}: {}", sessionId, e.getMessage());
-            throw translateException(e, sessionId);
+            log.warn("模型调用异常，类型={}", e.getClass().getSimpleName());
+            throw translateException(e);
         }
     }
 
@@ -44,7 +44,7 @@ public class ModelCallService {
      * 429 -> {@link RateLimitException}；超时/连接 -> {@link TimeoutException}；
      * 其余异常原样透传（不触发重试）。
      */
-    private RuntimeException translateException(Exception e, String sessionId) {
+    private RuntimeException translateException(Exception e) {
         // 1) LangChain4j 已分类的限流 / 超时异常
         if (e instanceof dev.langchain4j.exception.RateLimitException) {
             return new RateLimitException("模型 API 限流(429)", e);
@@ -65,14 +65,15 @@ public class ModelCallService {
         // 3) 消息启发式（覆盖 SocketTimeout / Connect 等未被分类的异常）
         String message = e.getMessage() == null ? "" : e.getMessage().toLowerCase();
         if (message.contains("429") || message.contains("rate limit") || message.contains("too many requests")) {
-            return new RateLimitException("模型 API 限流: " + e.getMessage(), e);
+                return new RateLimitException("模型 API 限流(429)", e);
         }
         if (message.contains("timed out") || message.contains("timeout") || message.contains("connect")
                 || message.contains("refused") || message.contains("connection")) {
-            return new TimeoutException("模型 API 超时或连接异常: " + e.getMessage(), e);
+            return new TimeoutException("模型 API 超时或连接异常", e);
         }
         // 4) 其余异常不归类，原样透传（不触发重试）
-        log.warn("模型调用未归类异常 sessionId={}, type={}: {}", sessionId, e.getClass().getSimpleName(), e.getMessage());
-        return e instanceof RuntimeException runtimeException ? runtimeException : new RuntimeException(e.getMessage(), e);
+        log.warn("模型调用未归类异常，类型={}", e.getClass().getSimpleName());
+        return e instanceof RuntimeException runtimeException ? runtimeException
+                : new RuntimeException("模型调用失败", e);
     }
 }

@@ -15,6 +15,7 @@ public class FileUploadedEventListener {
 
     private final AsyncFileProcessor asyncFileProcessor;
 
+    @com.coffer.auth.service.OwnedJob
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onUploaded(FileUploadedEvent event) {
         log.info("上传事务已提交，触发异步文件处理 taskId={}", event.taskId());

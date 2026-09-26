@@ -19,6 +19,8 @@ public class ChatCitation {
 
     /** 可用于打开文件详情和后续定位原文件的数据库 ID。 */
     private Long fileId;
+    private Long revision;
+    private String contentUrl;
 
     /** 文件名。 */
     private String fileName;

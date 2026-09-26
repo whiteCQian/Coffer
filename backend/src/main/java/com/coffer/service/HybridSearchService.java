@@ -21,13 +21,15 @@ import java.util.*;
 import java.util.concurrent.*;
 
 /** Parallel lexical/vector retrieval with bounded vector waiting and file-level RRF. */
-@Slf4j @Service @RequiredArgsConstructor
+@Slf4j @com.coffer.auth.service.OwnerOnly
+@Service @RequiredArgsConstructor
 public class HybridSearchService {
     private final HybridSearchProperties properties;
     private final FileMetadataRepository fileMetadataRepository;
     private final FileTagMappingRepository fileTagMappingRepository;
     private final RedisVectorStore redisVectorStore;
     private final ObjectProvider<EmbeddingProvider> embeddingProvider;
+    private final com.coffer.auth.service.OwnerAuthorization authorization;
     @Autowired(required = false) @Qualifier("vectorSearchExecutor")
     private Executor vectorExecutor;
     @Autowired(required = false)
@@ -47,13 +49,25 @@ public class HybridSearchService {
      * 避免影响已有的非对话调用方。</p>
      */
     public List<SearchEvidence> searchWithEvidence(String keyword) {
-        CompletableFuture<List<FileMetadata>> lexical = CompletableFuture.supplyAsync(() -> lexicalSearch(keyword));
+        return searchWithEvidence(authorization.requireOwner(), keyword);
+    }
+
+    public List<SearchEvidence> searchWithEvidence(Long ownerId, String keyword) {
+        Long owner = authorization.requireOwner();
+        if (!owner.equals(ownerId)) throw new org.springframework.security.access.AccessDeniedException("无权执行此操作");
+        if (keyword == null || keyword.isBlank()) return List.of();
+        var modelSnapshot = com.coffer.model.runtime.ModelExecutionContext.current();
+        CompletableFuture<List<FileMetadata>> lexical = CompletableFuture.supplyAsync(
+                () -> com.coffer.auth.service.TenantContext.supplyAs(owner, () ->
+                        com.coffer.model.runtime.ModelExecutionContext.with(modelSnapshot, () -> lexicalSearch(owner, keyword))));
         CompletableFuture<List<VectorSearchResult>> vector;
         try {
             vector = CompletableFuture.supplyAsync(
-                    () -> vectorHits(keyword), vectorExecutor == null ? ForkJoinPool.commonPool() : vectorExecutor);
+                    () -> com.coffer.auth.service.TenantContext.supplyAs(owner, () ->
+                            com.coffer.model.runtime.ModelExecutionContext.with(modelSnapshot, () -> vectorHits(owner, keyword))),
+                    vectorExecutor == null ? ForkJoinPool.commonPool() : vectorExecutor);
         } catch (RejectedExecutionException e) {
-            log.warn("向量检索线程池繁忙，直接降级词法路 keyword={}", keyword);
+            log.warn("向量检索线程池繁忙，直接降级词法路");
             vector = CompletableFuture.completedFuture(List.of());
         }
         List<VectorSearchResult> vectorResult = await(vector, properties.getVectorTimeoutMs());
@@ -64,10 +78,12 @@ public class HybridSearchService {
         return fuse(lexicalResult, vectorResult);
     }
 
-    private List<FileMetadata> lexicalSearch(String keyword) {
+    private List<FileMetadata> lexicalSearch(Long owner, String keyword) {
+        if (!authorization.requireOwner().equals(owner)) throw new org.springframework.security.access.AccessDeniedException("无权执行此操作");
         List<FileMetadata> names;
-        try { names = fileMetadataRepository.fullTextSearch(keyword); }
-        catch (Exception e) { log.warn("全文路不可用，降级 LIKE keyword={}: {}", keyword, e.getMessage()); names = List.of(); }
+        try { names = fileMetadataRepository.fullTextSearch(keyword,
+                owner); }
+        catch (Exception e) { log.warn("全文路不可用，降级 LIKE，异常类型={}", e.getClass().getSimpleName()); names = List.of(); }
         if (names.isEmpty()) names = fileMetadataRepository.findByFileNameOrSummaryContainingIgnoreCase(keyword);
         List<Long> tagIds = fileTagMappingRepository.findFileIdsByTagNameAndStatus(keyword, ConfirmationStatus.CONFIRMED);
         List<FileMetadata> tags = tagIds.isEmpty() ? List.of() : fileMetadataRepository.findAllById(tagIds);
@@ -77,7 +93,9 @@ public class HybridSearchService {
         return new ArrayList<>(ordered.values());
     }
 
-    private List<VectorSearchResult> vectorHits(String keyword) {
+    private List<VectorSearchResult> vectorHits(Long owner, String keyword) {
+        if (!authorization.requireOwner().equals(owner)) throw new org.springframework.security.access.AccessDeniedException("无权执行此操作");
+        if (!properties.isEnabled()) return List.of();
         boolean locked = false;
         if (coordinator != null) {
             locked = coordinator.tryRead(properties.getVectorTimeoutMs());
@@ -88,14 +106,13 @@ public class HybridSearchService {
             if (model == null) return List.of();
             return redisVectorStore.searchSimilar(model.embed(keyword).content().vector(), properties.getTopK());
         } catch (Exception e) {
-            log.warn("向量路失败，降级词法路 keyword={}: {}", keyword, e.getMessage());
+            log.warn("向量路失败，降级词法路，异常类型={}", e.getClass().getSimpleName());
             return List.of();
         } finally { if (locked) coordinator.unlockRead(); }
     }
 
     private List<SearchEvidence> fuse(List<FileMetadata> lexical, List<VectorSearchResult> hits) {
         Map<Long, FileMetadata> files = new HashMap<>();
-        lexical.forEach(f -> files.put(f.getId(), f));
         Set<Long> lexicalIds = new HashSet<>();
         lexical.forEach(f -> lexicalIds.add(f.getId()));
         Map<Long, List<RankedChunk>> chunks = new HashMap<>();
@@ -103,16 +120,18 @@ public class HybridSearchService {
         for (VectorSearchResult hit : hits) {
             Long id = parseFileId(hit.documentId());
             if (id != null) chunks.computeIfAbsent(id, ignored -> new ArrayList<>())
-                    .add(new RankedChunk(rank + 1, hit.score()));
+                    .add(new RankedChunk(rank + 1, hit.score(), parseRevision(hit.documentId())));
             rank++;
         }
-        if (!chunks.isEmpty()) fileMetadataRepository.findAllById(chunks.keySet()).forEach(f -> {
-            // Real uploaded records always have storagePath and must be COMPLETED.
-            // The storagePath-null branch keeps the existing pure unit-test fixtures
-            // (which predate the lifecycle field) compatible without exposing pending uploads.
-            if (f.getStatus() == FileStatus.COMPLETED
-                    || (f.getStatus() == FileStatus.PENDING && f.getStoragePath() == null)) files.put(f.getId(), f);
+        Long owner = authorization.requireOwner();
+        Set<Long> candidates = new HashSet<>(lexicalIds);
+        candidates.addAll(chunks.keySet());
+        if (!candidates.isEmpty()) fileMetadataRepository.findAllById(candidates).forEach(f -> {
+            if (chunks.containsKey(f.getId())) chunks.get(f.getId()).removeIf(c -> !Objects.equals(c.revision(), f.getRevision()));
+            if (owner.equals(f.getOwnerId()) && (lexicalIds.contains(f.getId()) || f.getStatus() == FileStatus.COMPLETED))
+                files.put(f.getId(), f);
         });
+        chunks.entrySet().removeIf(e -> e.getValue().isEmpty() || !files.containsKey(e.getKey()));
         Map<Long, Double> scores = new HashMap<>();
         Map<Long, Integer> firstSeen = new HashMap<>();
         Map<Long, Double> bestSimilarity = new HashMap<>();
@@ -140,8 +159,15 @@ public class HybridSearchService {
         scores.merge(id, 1.0 / (properties.getRrfK() + rank), Double::sum);
     }
     private Long parseFileId(String documentId) {
-        try { return Long.valueOf(documentId.substring(0, documentId.indexOf(':'))); }
+        try {
+            if (!documentId.matches("[1-9][0-9]*:[0-9]+:[0-9]+")) return null;
+            return Long.valueOf(documentId.substring(0, documentId.indexOf(':')));
+        }
         catch (Exception e) { return null; }
+    }
+    private Long parseRevision(String documentId) {
+        try { return Long.valueOf(documentId.split(":")[1]); }
+        catch (Exception ignored) { return null; }
     }
     private <T> List<T> await(CompletableFuture<List<T>> f, long timeoutMs) {
         try { return timeoutMs <= 0 ? f.get() : f.get(timeoutMs, TimeUnit.MILLISECONDS); }
@@ -152,5 +178,5 @@ public class HybridSearchService {
     public record SearchEvidence(FileMetadata file, double score, String retrievalType) {
     }
 
-    private record RankedChunk(int rank, double similarity) {}
+    private record RankedChunk(int rank, double similarity, Long revision) {}
 }

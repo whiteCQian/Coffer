@@ -32,6 +32,7 @@ import java.util.stream.Collectors;
  * </ul>
  */
 @Slf4j
+@com.coffer.auth.service.OwnerOnly
 @Service
 @RequiredArgsConstructor
 public class TagSuggestionService {
@@ -61,6 +62,10 @@ public class TagSuggestionService {
     /** Returns the confirmed tag pool used by both the HTTP API and semantic suggestions. */
     public List<TagCandidateResponse> listCandidates() {
         return toCandidates();
+    }
+
+    public List<TagCandidateResponse> suggestLocal(String query) {
+        return query == null || query.isBlank() ? List.of() : literalMatch(query.trim(), listCandidates());
     }
 
     /**
@@ -184,7 +189,7 @@ public class TagSuggestionService {
             }
             return tags;
         } catch (Exception e) {
-            log.warn("标签联想 JSON 解析失败，返回空列表: {}", raw, e);
+            log.warn("标签联想 JSON 解析失败，返回空列表，异常类型={}", e.getClass().getSimpleName());
             return List.of();
         }
     }

@@ -19,6 +19,7 @@ import java.util.Objects;
 
 /** Safely restores archived files without overwriting paths or changed metadata. */
 @Slf4j
+@com.coffer.auth.service.OwnerOnly
 @Service
 @RequiredArgsConstructor
 public class ArchiveRollbackService {
@@ -44,6 +45,7 @@ public class ArchiveRollbackService {
     }
 
     @Async("taskExecutor")
+    @com.coffer.auth.service.OwnedJob
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onRequested(ArchiveRollbackRequested event) {
         if (event.itemId() == null) executeBatch(event.batchId());
@@ -93,9 +95,9 @@ public class ArchiveRollbackService {
             }
             persistenceService.markSucceeded(itemId);
         } catch (ArchiveRollbackConflictException e) {
-            persistenceService.markConflicted(itemId, "ROLLBACK_CONFLICT", e.getMessage());
+            persistenceService.markConflicted(itemId, "ROLLBACK_CONFLICT", "文件状态或对象指纹已变化，无法安全撤销");
         } catch (ArchiveRollbackNotReversibleException e) {
-            persistenceService.markNotReversible(itemId, "ROLLBACK_NOT_REVERSIBLE", e.getMessage());
+            persistenceService.markNotReversible(itemId, "ROLLBACK_NOT_REVERSIBLE", "当前操作缺少可恢复的数据或对象");
         } catch (Exception e) {
             if (readyForDatabase) {
                 compensationRegistry.register(item.getBatchId(), itemId,
@@ -126,6 +128,15 @@ public class ArchiveRollbackService {
     }
 
     private String safeMessage(Exception e) {
-        return e.getMessage() == null || e.getMessage().isBlank() ? e.getClass().getSimpleName() : e.getMessage();
+        if (e instanceof ArchiveRollbackConflictException) {
+            return "文件状态或对象指纹已变化，无法安全撤销";
+        }
+        if (e instanceof ArchiveRollbackNotReversibleException) {
+            return "当前操作缺少可恢复的数据或对象";
+        }
+        if (e instanceof IllegalArgumentException) {
+            return "撤销请求无效，请检查操作台账后重试";
+        }
+        return "撤销操作失败，请稍后重试";
     }
 }

@@ -33,7 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         "minio.access-key=test-access-key",
         "minio.secret-key=test-secret-key"
 })
-class ArchiveOperationQueryTest {
+class ArchiveOperationQueryTest extends com.coffer.auth.OwnerTestSupport {
 
     @Autowired
     private ArchiveOperationQueryService queryService;

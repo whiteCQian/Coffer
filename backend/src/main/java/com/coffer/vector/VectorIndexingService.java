@@ -22,6 +22,7 @@ import java.util.List;
 /** Creates Redis Vector Set entries for parsed text without affecting file availability on failure. */
 @Slf4j
 @Service
+@com.coffer.auth.service.OwnerOnly
 @RequiredArgsConstructor
 public class VectorIndexingService {
 
@@ -34,6 +35,8 @@ public class VectorIndexingService {
     private final RetryableModelService retryableModelService;
     private final MinioStorageService minioStorageService;
     private final DocumentParseService documentParseService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.coffer.model.runtime.ModelExecutionSnapshotService snapshots;
 
     /**
      * Indexes an already parsed document. All chunks must reach Redis before the
@@ -66,7 +69,7 @@ public class VectorIndexingService {
                         throw new EmbeddingRetryException("Embedding 调用失败", e);
                     }
                 });
-                String documentId = metadata.getId() + ":" + index;
+                String documentId = metadata.getId() + ":" + metadata.getRevision() + ":" + index;
                 VectorRecord record = new VectorRecord(documentId, metadata.getId(), index, chunk,
                         embeddingProperties.getModelName(), vector, null);
                 if (generation == null) redisVectorStore.save(record);
@@ -80,7 +83,7 @@ public class VectorIndexingService {
             log.info("文件向量索引完成 fileId={}, chunks={}", metadata.getId(), chunks.size());
             return true;
         } catch (Exception e) {
-            log.warn("文件向量索引失败，将由后台补偿 fileId={}: {}", metadata.getId(), e.getMessage());
+            log.warn("文件向量索引失败，将由后台补偿，异常类型={}", e.getClass().getSimpleName());
             return false;
         }
     }
@@ -91,6 +94,10 @@ public class VectorIndexingService {
     }
 
     public boolean reindex(FileMetadata metadata, String generation) {
+        if (snapshots != null && com.coffer.model.runtime.ModelExecutionContext.current() == null) {
+            if (metadata.getModelSnapshotId() == null) return false;
+            return snapshots.with(metadata.getModelSnapshotId(), () -> reindex(metadata, generation));
+        }
         try (InputStream input = minioStorageService.getFileStream(null, metadata.getStoragePath())) {
             ParseResult result = documentParseService.extractTextFromFile(metadata.getFileName(), input);
             if (result.getStatus() != ParseStatus.SUCCESS) {
@@ -99,7 +106,7 @@ public class VectorIndexingService {
             }
             return indexParsedText(metadata, result.getContent(), generation);
         } catch (Exception e) {
-            log.warn("向量补偿读取文件失败 fileId={}: {}", metadata.getId(), e.getMessage());
+            log.warn("向量补偿读取文件失败，异常类型={}", e.getClass().getSimpleName());
             return false;
         }
     }

@@ -37,6 +37,19 @@ class SecretCryptoServiceTest {
 
         assertThatThrownBy(() -> service.decrypt(tampered))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Unable to decrypt");
+                .hasMessageContaining("无法解密");
+    }
+
+    @Test void rotatesMasterKeyWithoutChangingUserCredentialAndRetiresOldKey() {
+        String oldCipher = service.encrypt("ROTATION_PRIVATE_KEY");
+        var rotating = new SecretCryptoService("new-master-key", new MockEnvironment().withProperty("COFFER_SECRET_PREVIOUS_KEY", "test-master-key"));
+        rotating.initialize();
+        assertThat(rotating.decrypt(oldCipher)).isEqualTo("ROTATION_PRIVATE_KEY");
+        String newCipher = rotating.rewrap(oldCipher);
+        var retired = new SecretCryptoService("new-master-key", new MockEnvironment()); retired.initialize();
+        assertThat(retired.decrypt(newCipher)).isEqualTo("ROTATION_PRIVATE_KEY");
+        assertThatThrownBy(() -> retired.decrypt(oldCipher)).isInstanceOf(IllegalStateException.class).hasNoCause();
+        assertThatThrownBy(() -> service.decrypt(newCipher)).isInstanceOf(IllegalStateException.class);
+        assertThat(newCipher).doesNotContain("ROTATION_PRIVATE_KEY", "new-master-key");
     }
 }

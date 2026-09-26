@@ -1,6 +1,7 @@
 package com.coffer.inbox.application;
 
 import com.coffer.config.InboxImportProperties;
+import com.coffer.auth.service.TenantContext;
 import com.coffer.file.application.FileUploadApplicationService;
 import com.coffer.file.domain.FileMetadata;
 import com.coffer.file.infrastructure.persistence.FileMetadataRepository;
@@ -38,6 +39,7 @@ import java.util.stream.Stream;
  * snapshots through the normal upload/analysis pipeline.
  */
 @Slf4j
+@com.coffer.auth.service.OwnerOnly
 @Service
 @RequiredArgsConstructor
 public class InboxImportScanner {
@@ -53,11 +55,14 @@ public class InboxImportScanner {
     private final InboxImportRecordRepository recordRepository;
     private final FileUploadApplicationService fileUploadApplicationService;
     private final FileMetadataRepository fileMetadataRepository;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.coffer.model.runtime.ModelExecutionSnapshotService modelSnapshots;
 
     private final ReentrantLock scanLock = new ReentrantLock();
     private final AtomicReference<LocalDateTime> lastScanAt = new AtomicReference<>();
 
     /** Scheduler entry point. The feature is a no-op until explicitly enabled. */
+    @com.coffer.auth.service.OwnerScheduled
     @Scheduled(fixedDelayString = "${coffer.import.inbox.fixed-delay-ms:30000}")
     public void scanScheduled() {
         scanOnce();
@@ -65,8 +70,13 @@ public class InboxImportScanner {
 
     /** Runs one scan, primarily exposed for deterministic tests and diagnostics. */
     public ScanSummary scanOnce() {
-        if (!properties.isEnabled() || properties.getDirectory() == null
-                || properties.getDirectory().isBlank()) {
+        if (modelSnapshots != null && com.coffer.model.runtime.ModelExecutionContext.current() == null) {
+            String snapshotId = modelSnapshots.inboxSnapshotId();
+            if (snapshotId == null) return ScanSummary.empty();
+            return modelSnapshots.with(snapshotId, this::scanOnce);
+        }
+        Path directory = resolveOwnerDirectory();
+        if (!properties.isEnabled() || directory == null) {
             return ScanSummary.empty();
         }
         if (!scanLock.tryLock()) {
@@ -83,9 +93,8 @@ public class InboxImportScanner {
         int failed = 0;
         int unsupported = 0;
         try {
-            Path directory = Path.of(properties.getDirectory()).toAbsolutePath().normalize();
             if (!Files.isDirectory(directory)) {
-                log.warn("收件箱目录不存在或不是目录，跳过扫描: {}", directory);
+                log.warn("收件箱目录不存在或不是目录，跳过扫描");
                 return ScanSummary.empty();
             }
 
@@ -109,11 +118,11 @@ public class InboxImportScanner {
                     unsupported += result.unsupported() ? 1 : 0;
                 } catch (Exception e) {
                     // One unreadable/vanishing file must not prevent the rest of the batch.
-                    log.warn("收件箱文件处理跳过 path={}, reason={}", candidate, e.getMessage());
+                    log.warn("收件箱文件处理跳过，类型={}", e.getClass().getSimpleName());
                 }
             }
         } catch (IOException | RuntimeException e) {
-            log.warn("收件箱扫描失败 directory={}, reason={}", properties.getDirectory(), e.getMessage());
+            log.warn("收件箱扫描失败，类型={}", e.getClass().getSimpleName());
         } finally {
             scanLock.unlock();
         }
@@ -144,8 +153,9 @@ public class InboxImportScanner {
                 .toList();
 
         return InboxImportProgressResponse.builder()
-                .enabled(properties.isEnabled())
-                .directory(properties.getDirectory())
+                .awaitingModelConsent(modelSnapshots != null && modelSnapshots.inboxSnapshotId() == null)
+                .enabled(isOwnerScopedInboxEnabled())
+                .directory(resolveOwnerDirectory() == null ? "" : resolveOwnerDirectory().toString())
                 .lastScanAt(lastScanAt.get())
                 .totalCount(total)
                 .discoveredCount(discovered)
@@ -157,6 +167,26 @@ public class InboxImportScanner {
                 .unsupportedCount(unsupported)
                 .items(items)
                 .build();
+    }
+
+    private Path resolveOwnerDirectory() {
+        String template = properties.getDirectory();
+        if (!isOwnerScopedInboxEnabled()) {
+            return null;
+        }
+        Long ownerId;
+        try {
+            ownerId = TenantContext.requireOwnerId();
+        } catch (IllegalStateException missingOwner) {
+            return null;
+        }
+        return Path.of(template.replace("{ownerId}", ownerId.toString())).toAbsolutePath().normalize();
+    }
+
+    private boolean isOwnerScopedInboxEnabled() {
+        String template = properties.getDirectory();
+        return properties.isEnabled() && template != null && !template.isBlank()
+                && template.contains("{ownerId}");
     }
 
     private ProcessResult processCandidate(Path candidate, LocalDateTime now) throws IOException {
@@ -207,7 +237,7 @@ public class InboxImportScanner {
         }
 
         int claimed = recordRepository.claimForImport(
-                record.getId(), InboxImportStatus.IMPORTING, CLAIMABLE_STATUSES, now);
+                record.getId(), TenantContext.requireOwnerId(), InboxImportStatus.IMPORTING, CLAIMABLE_STATUSES, now);
         if (claimed != 1) {
             return ProcessResult.empty();
         }
@@ -237,7 +267,7 @@ public class InboxImportScanner {
             record.setLastError(messageOf(e));
             record.setUpdatedAt(LocalDateTime.now());
             recordRepository.save(record);
-            log.warn("收件箱文件导入失败，将稍后重试 path={}, reason={}", candidate, e.getMessage());
+            log.warn("收件箱文件导入失败，将稍后重试，类型={}", e.getClass().getSimpleName());
             return ProcessResult.failedOnly();
         }
     }
@@ -358,8 +388,7 @@ public class InboxImportScanner {
     }
 
     private String messageOf(Exception exception) {
-        String message = exception.getMessage();
-        return message == null || message.isBlank() ? exception.getClass().getSimpleName() : message;
+        return "文件导入失败，将自动重试";
     }
 
     private record FileSnapshot(String sourcePath, String fileName, long size, long modifiedMillis) {

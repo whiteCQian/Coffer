@@ -17,13 +17,32 @@ import java.util.Map;
  * 的内部状态。没有显式开启采集时，工具调用不会留下线程本地数据。</p>
  */
 @Component
+@lombok.RequiredArgsConstructor
 public class ChatCitationCollector {
+
+    private final PrivateFileAccess access;
+    private final com.coffer.auth.service.OwnerAuthorization authorization;
+    private final ThreadLocal<Long> owner = new ThreadLocal<>();
 
     private final ThreadLocal<LinkedHashMap<Long, ChatCitation>> current = new ThreadLocal<>();
 
     /** 开始收集一轮对话的引用。 */
     public void begin() {
+        owner.set(authorization.requireOwner());
         current.set(new LinkedHashMap<>());
+    }
+
+    public boolean active() { return current.get() != null; }
+    public Map<Long, Long> revisions() {
+        checkOwner();
+        Map<Long, Long> revisions = new LinkedHashMap<>();
+        if (current.get() != null) current.get().values().forEach(c -> revisions.put(c.getFileId(), c.getRevision()));
+        return revisions;
+    }
+    private void checkOwner() {
+        Long caller = authorization.requireOwner();
+        if (owner.get() != null && !owner.get().equals(caller))
+            throw new org.springframework.security.access.AccessDeniedException("无权执行此操作");
     }
 
     /**
@@ -36,8 +55,12 @@ public class ChatCitationCollector {
         if (file == null || file.getId() == null || current.get() == null) {
             return;
         }
+        checkOwner();
+        file = access.requireVersion(file.getId(), file.getRevision());
         ChatCitation incoming = ChatCitation.builder()
                 .fileId(file.getId())
+                .revision(file.getRevision())
+                .contentUrl("/api/files/" + file.getId() + "/content?revision=" + file.getRevision())
                 .fileName(file.getFileName())
                 .fileType(file.getFileType())
                 .snippet(snippet)
@@ -49,14 +72,18 @@ public class ChatCitationCollector {
 
     /** 返回本轮引用并清理线程本地状态。 */
     public List<ChatCitation> finish() {
-        Map<Long, ChatCitation> captured = current.get();
-        current.remove();
-        return captured == null ? List.of() : List.copyOf(new ArrayList<>(captured.values()));
+        try {
+            checkOwner();
+            Map<Long, ChatCitation> captured = current.get();
+            return captured == null ? List.of() : captured.values().stream()
+                    .filter(c -> access.current(c.getFileId(), c.getRevision())).toList();
+        } finally { clear(); }
     }
 
     /** 异常或短路时清理本轮采集状态。 */
     public void clear() {
         current.remove();
+        owner.remove();
     }
 
     private ChatCitation merge(ChatCitation previous, ChatCitation incoming) {

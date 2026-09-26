@@ -19,6 +19,8 @@ import static org.mockito.Mockito.when;
 
 class ModelRuntimeModeServiceTest {
 
+    @org.junit.jupiter.api.AfterEach void clearOwner() { com.coffer.auth.service.TenantContext.clear(); }
+
     private ModelRuntimeSettingRepository repository;
     private ModelRuntimeProviderFactory providerFactory;
     private ModelRuntimeModeService service;
@@ -26,14 +28,15 @@ class ModelRuntimeModeServiceTest {
 
     @BeforeEach
     void setUp() {
+        com.coffer.auth.service.TenantContext.set(1L);
         repository = mock(ModelRuntimeSettingRepository.class);
         providerFactory = mock(ModelRuntimeProviderFactory.class);
         setting = ModelRuntimeSetting.builder()
-                .id(ModelRuntimeSetting.SINGLETON_ID)
+                .id(1L)
                 .activeMode(GovernanceRunMode.API)
                 .updatedAt(LocalDateTime.now())
                 .build();
-        when(repository.findById(ModelRuntimeSetting.SINGLETON_ID)).thenReturn(Optional.of(setting));
+        when(repository.findById(1L)).thenReturn(Optional.of(setting));
         when(repository.save(any(ModelRuntimeSetting.class))).thenAnswer(invocation -> invocation.getArgument(0));
         service = new ModelRuntimeModeService(repository, providerFactory);
     }

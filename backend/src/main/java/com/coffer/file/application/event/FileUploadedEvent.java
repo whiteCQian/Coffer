@@ -1,5 +1,7 @@
 package com.coffer.file.application.event;
 
-/** Published inside the upload transaction and handled after that transaction commits. */
-public record FileUploadedEvent(String taskId) {
+public record FileUploadedEvent(Long ownerId, String taskId) implements com.coffer.auth.service.OwnedWork {
+    public FileUploadedEvent(String taskId) {
+        this(com.coffer.auth.service.TenantContext.requireOwnerId(), taskId);
+    }
 }

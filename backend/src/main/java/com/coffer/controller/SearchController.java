@@ -39,8 +39,7 @@ public class SearchController {
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String tag,
             @PageableDefault(size = 10) Pageable pageable) {
-        log.info("搜索文件 keyword={}, tag={}, page={}, size={}",
-                keyword, tag, pageable.getPageNumber(), pageable.getPageSize());
+        log.info("执行文件搜索 page={}, size={}", pageable.getPageNumber(), pageable.getPageSize());
         return Result.success(fileService.searchFiles(keyword, tag, pageable));
     }
 }

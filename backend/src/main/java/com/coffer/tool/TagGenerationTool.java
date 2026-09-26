@@ -36,6 +36,7 @@ import java.util.stream.Collectors;
  */
 @Slf4j
 @Component
+@com.coffer.auth.service.OwnerOnly
 @RequiredArgsConstructor
 public class TagGenerationTool {
 
@@ -89,7 +90,7 @@ public class TagGenerationTool {
                     .toList();
             return tags.isEmpty() ? "标签生成失败，请稍后重试" : String.join("，", tags);
         } catch (Exception e) {
-            log.error("标签生成失败: {}", e.getMessage(), e);
+            log.error("标签生成失败，异常类型={}", e.getClass().getSimpleName());
             return "标签生成失败，请稍后重试";
         }
     }
@@ -162,7 +163,7 @@ public class TagGenerationTool {
             }
             return new TagAndCategoryResult(category, tags);
         } catch (Exception e) {
-            log.warn("分类标签 JSON 解析失败，降级为 OTHER: {}", raw, e);
+            log.warn("分类标签 JSON 解析失败，降级为 OTHER，异常类型={}", e.getClass().getSimpleName());
             return new TagAndCategoryResult(CategoryType.OTHER, extractFallbackTags(raw));
         }
     }

@@ -15,6 +15,7 @@ import java.util.EnumMap;
 import java.util.Map;
 
 /** Stores and reads model API keys without exposing plaintext outside the service. */
+@com.coffer.auth.service.OwnerOnly
 @Service
 @RequiredArgsConstructor
 public class ModelCredentialService {
@@ -53,11 +54,11 @@ public class ModelCredentialService {
         if (apiKey == null || apiKey.isBlank()) {
             throw new IllegalArgumentException("模型密钥不能为空");
         }
-        repository.save(ModelCredential.builder()
-                .provider(provider)
-                .encryptedApiKey(cryptoService.encrypt(apiKey.trim()))
-                .updatedAt(LocalDateTime.now())
-                .build());
+        ModelCredential credential = repository.findById(provider)
+                .orElseGet(() -> ModelCredential.builder().provider(provider).build());
+        credential.setEncryptedApiKey(cryptoService.encrypt(apiKey.trim()));
+        credential.setUpdatedAt(LocalDateTime.now());
+        repository.save(credential);
         if (eventPublisher != null) {
             eventPublisher.publishEvent(new ModelCredentialChangedEvent(provider));
         }

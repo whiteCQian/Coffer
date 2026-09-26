@@ -39,9 +39,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 标签候选池直接走真实 Repository（纯读投影），种子数据以 {@link Transactional} 回滚。
  */
 @SpringBootTest
-@AutoConfigureMockMvc
+@AutoConfigureMockMvc(addFilters = false)
 @Transactional
-class FileTagControllerTest {
+class FileTagControllerTest extends com.coffer.auth.OwnerModelSubmissionTestSupport {
 
     @Autowired
     private MockMvc mockMvc;

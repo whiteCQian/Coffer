@@ -54,6 +54,7 @@ import java.util.UUID;
  * deliberately avoiding writes to formal file metadata, tags, or MinIO objects.
  */
 @Slf4j
+@com.coffer.auth.service.OwnerOnly
 @Service
 @RequiredArgsConstructor
 public class GovernancePreviewService {
@@ -190,7 +191,7 @@ public class GovernancePreviewService {
             throw new IllegalArgumentException("至少保留一个建议标签");
         }
         FileMetadata metadata = fileMetadataRepository.findById(item.getFileId())
-                .orElseThrow(() -> new IllegalArgumentException("正式文件不存在，无法编辑预览项"));
+                .orElseThrow(() -> new com.coffer.auth.service.ResourceNotFoundException());
         CategoryType category = request.getSuggestedCategory() == null
                 ? CategoryType.OTHER : request.getSuggestedCategory();
         String suggestedPath = archiveObjectNameService.generateArchivePath(
@@ -342,7 +343,7 @@ public class GovernancePreviewService {
             throw new IllegalArgumentException("预览项 ID 不能为空");
         }
         GovernancePreviewItem item = itemRepository.findById(itemId)
-                .orElseThrow(() -> new IllegalArgumentException("预览项不存在: " + itemId));
+                .orElseThrow(() -> new com.coffer.auth.service.ResourceNotFoundException());
         if (!Objects.equals(previewId, item.getPreviewId())) {
             throw new IllegalArgumentException("预览项不属于当前预览批次");
         }
@@ -485,6 +486,7 @@ public class GovernancePreviewService {
 
     /** Expire preview batches and their still-actionable items without touching formal file data. */
     @Transactional
+    @com.coffer.auth.service.OwnerScheduled
     @Scheduled(fixedDelayString = "${coffer.governance.preview.expiry-scan-delay-ms:60000}")
     public void expireDuePreviews() {
         LocalDateTime now = LocalDateTime.now();
@@ -503,6 +505,7 @@ public class GovernancePreviewService {
                 .previewId(UUID.randomUUID().toString())
                 .source(source)
                 .runMode(mode)
+                .modelSnapshotId(com.coffer.model.runtime.ModelExecutionContext.currentId())
                 .requestId(requestId)
                 .createdBy("LOCAL_USER")
                 .status(GovernancePreviewBatchStatus.ANALYZING)
@@ -521,7 +524,7 @@ public class GovernancePreviewService {
             FileMetadata metadata = fileMetadataRepository.findById(fileId).orElse(null);
             if (metadata == null) {
                 item = failedItem(batch.getPreviewId(), fileId, null,
-                        "FILE_NOT_FOUND", "文件不存在: " + fileId, mode);
+                        "FILE_NOT_FOUND", "文件不存在", mode);
             } else {
                 item = analyzeOne(batch, metadata, mode);
             }
@@ -584,8 +587,7 @@ public class GovernancePreviewService {
             item.setErrorCode(e.code);
             item.setErrorMessage(e.getMessage());
         } catch (Exception e) {
-            log.warn("Dry-run 预览项分析失败 previewId={}, fileId={}: {}",
-                    batch.getPreviewId(), metadata.getId(), e.getMessage());
+            log.warn("Dry-run 预览项分析失败，异常类型={}", e.getClass().getSimpleName());
             item.setStatus(GovernancePreviewItemStatus.FAILED);
             item.setErrorCode("ANALYSIS_FAILED");
             item.setErrorMessage(safeMessage(e));
@@ -598,8 +600,7 @@ public class GovernancePreviewService {
             ParseResult parseResult = documentParseService.extractTextWithFallback(metadata.getFileName(), stream);
             if (parseResult.getStatus() != ParseStatus.SUCCESS) {
                 throw new PreviewAnalysisException("PARSE_" + parseResult.getStatus().name(),
-                        "文件解析失败: " + parseResult.getStatus()
-                                + (parseResult.getErrorMessage() == null ? "" : ", " + parseResult.getErrorMessage()));
+                        "文件解析失败，请检查文件格式");
             }
             String content = parseResult.getContent();
             TagAndCategoryResult tagResult = tagGenerationTool.generateTagAndCategory(content);
@@ -754,14 +755,14 @@ public class GovernancePreviewService {
             throw new IllegalArgumentException("previewId 不能为空");
         }
         return batchRepository.findByPreviewId(previewId)
-                .orElseThrow(() -> new IllegalArgumentException("预览批次不存在: " + previewId));
+                .orElseThrow(() -> new com.coffer.auth.service.ResourceNotFoundException());
     }
 
     private GovernancePreviewBatch requireBatchForUpdate(String previewId) {
         if (previewId == null || previewId.isBlank()) throw new IllegalArgumentException("previewId 不能为空");
         return batchRepository.findByPreviewIdForUpdate(previewId)
                 .or(() -> batchRepository.findByPreviewId(previewId))
-                .orElseThrow(() -> new IllegalArgumentException("预览批次不存在: " + previewId));
+                .orElseThrow(() -> new com.coffer.auth.service.ResourceNotFoundException());
     }
 
     private GovernancePreviewResponse toResponse(GovernancePreviewBatch batch) {
@@ -849,7 +850,7 @@ public class GovernancePreviewService {
         try {
             return objectMapper.readValue(json, new TypeReference<List<String>>() { });
         } catch (JsonProcessingException e) {
-            log.warn("预览建议标签 JSON 读取失败: {}", e.getMessage());
+            log.warn("预览建议标签 JSON 读取失败");
             return List.of();
         }
     }
@@ -874,8 +875,22 @@ public class GovernancePreviewService {
     }
 
     private String safeMessage(Exception e) {
-        String message = e.getMessage();
-        return message == null || message.isBlank() ? e.getClass().getSimpleName() : message;
+        if (e instanceof PreviewAnalysisException analysisError) {
+            if (analysisError.code.startsWith("PARSE_")) {
+                return "文件解析失败，请检查文件格式或内容";
+            }
+            return switch (analysisError.code) {
+                case "NO_TAGS" -> "AI 未生成有效标签";
+                case "AI_RESULT_EMPTY" -> "AI 未返回有效分析结果";
+                case "SOURCE_PATH_MISSING" -> "文件没有可读取的对象路径";
+                case "SOURCE_OBJECT_UNAVAILABLE" -> "无法读取文件对象，请检查存储状态";
+                default -> "文件分析失败，请稍后重试";
+            };
+        }
+        if (e instanceof IllegalArgumentException) {
+            return "预览请求无效，请检查输入后重试";
+        }
+        return "文件分析失败，请稍后重试";
     }
 
     private boolean isImage(String fileType) {

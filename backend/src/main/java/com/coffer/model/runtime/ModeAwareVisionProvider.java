@@ -12,6 +12,6 @@ public final class ModeAwareVisionProvider extends ModeAwareChatProvider impleme
 
     @Override
     protected com.coffer.model.provider.ChatProvider delegate() {
-        return providerFactory.vision(modeService.providerMode());
+        return providerFactory.vision(ModelExecutionContext.require().mode());
     }
 }

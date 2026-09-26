@@ -14,24 +14,31 @@ import org.springframework.stereotype.Service;
  * 由独立线程执行 {@link UploadPipelineService#processUploadPipeline(String)} 全流程。
  */
 @Slf4j
+@com.coffer.auth.service.OwnerOnly
 @Service
 @RequiredArgsConstructor
 public class AsyncFileProcessor {
 
     private final UploadPipelineService uploadPipelineService;
+    private final com.coffer.task.infrastructure.persistence.AsyncTaskRepository tasks;
+    @org.springframework.beans.factory.annotation.Autowired
+    @org.springframework.beans.factory.annotation.Qualifier("taskExecutor")
+    private java.util.concurrent.Executor executor;
 
     /**
      * 异步触发上传分析管道。
      *
      * @param taskId 异步任务 ID（FileMetadata.taskId）
      */
-    @Async("taskExecutor")
     public void processFileAsync(String taskId) {
-        try {
-            uploadPipelineService.processUploadPipeline(taskId);
-        } catch (Exception e) {
-            // 管道内部已吞掉业务异常，此处兜底确保任何异常不向外传播
-            log.error("异步处理文件失败，taskId: {}", taskId, e);
-        }
+        var task = tasks.findByTaskId(taskId)
+                .orElseThrow(com.coffer.auth.service.ResourceNotFoundException::new);
+        Long ownerId = task.getOwnerId();
+        executor.execute(() -> com.coffer.auth.service.TenantContext.runAs(ownerId, () -> {
+            try { uploadPipelineService.processUploadPipeline(taskId); }
+            catch (Exception failure) {
+                log.warn("文件处理任务未执行，异常类型={}", failure.getClass().getSimpleName());
+            }
+        }));
     }
 }

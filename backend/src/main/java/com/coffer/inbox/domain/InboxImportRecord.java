@@ -9,6 +9,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -24,23 +25,25 @@ import java.time.LocalDateTime;
  * copy is never treated as a successfully imported file.</p>
  */
 @Entity
-@Table(name = "inbox_import_record", indexes = {
+@Table(name = "inbox_import_record", uniqueConstraints = @UniqueConstraint(
+        name = "uk_inbox_import_record_snapshot_key", columnNames = {"owner_id", "snapshot_key"}), indexes = {
         @Index(name = "idx_inbox_import_record_status_seen", columnList = "status,last_seen_at"),
         @Index(name = "idx_inbox_import_record_content_sha256", columnList = "content_sha256"),
         @Index(name = "idx_inbox_import_record_source_path", columnList = "source_path")
 })
 @Data
+@lombok.EqualsAndHashCode(callSuper = false)
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class InboxImportRecord {
+public class InboxImportRecord extends com.coffer.auth.domain.TenantOwnedEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "id")
     private Long id;
 
-    @Column(name = "snapshot_key", nullable = false, unique = true, length = 64)
+    @Column(name = "snapshot_key", nullable = false, length = 64)
     private String snapshotKey;
 
     @Column(name = "source_path", nullable = false, length = 1000)

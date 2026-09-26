@@ -16,7 +16,7 @@ import java.util.Optional;
  * 文件-标签关联 Repository。
  */
 @Repository
-public interface FileTagMappingRepository extends JpaRepository<FileTagMapping, Long> {
+public interface FileTagMappingRepository extends com.coffer.auth.infrastructure.OwnedRepository<FileTagMapping, Long> {
 
     /**
      * 获取某个文件的所有标签关联。
@@ -34,8 +34,8 @@ public interface FileTagMappingRepository extends JpaRepository<FileTagMapping, 
      * @return number of removed associations
      */
     @Modifying(flushAutomatically = true, clearAutomatically = true)
-    @Query(value = "DELETE FROM file_tag_mapping WHERE file_id = :fileId", nativeQuery = true)
-    int deleteByFileId(@Param("fileId") Long fileId);
+    @Query(value = "DELETE FROM file_tag_mapping WHERE file_id = :fileId AND owner_id = :ownerId", nativeQuery = true)
+    int deleteByFileId(@Param("fileId") Long fileId, @Param("ownerId") Long ownerId);
 
     /**
      * 获取某个文件下指定确认状态的关联记录。

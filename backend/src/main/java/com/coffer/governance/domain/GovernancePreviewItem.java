@@ -24,7 +24,7 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "governance_preview_item",
         uniqueConstraints = {
-                @UniqueConstraint(name = "uk_governance_preview_item_preview_file", columnNames = {"preview_id", "file_id"})
+                @UniqueConstraint(name = "uk_governance_preview_item_preview_file", columnNames = {"owner_id", "preview_id", "file_id"})
         },
         indexes = {
                 @Index(name = "idx_governance_preview_item_preview_status", columnList = "preview_id,status"),
@@ -35,7 +35,7 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 @EqualsAndHashCode(callSuper = false)
-public class GovernancePreviewItem {
+public class GovernancePreviewItem extends com.coffer.auth.domain.TenantOwnedEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

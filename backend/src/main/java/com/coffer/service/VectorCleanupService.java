@@ -13,7 +13,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 
-@Slf4j @Service @RequiredArgsConstructor
+@Slf4j @com.coffer.auth.service.OwnerOnly
+@Service @RequiredArgsConstructor
 public class VectorCleanupService {
     private final VectorCleanupTaskRepository repository;
     private final VectorIndexCoordinator coordinator;
@@ -28,6 +29,7 @@ public class VectorCleanupService {
         }
     }
 
+    @com.coffer.auth.service.OwnerScheduled
     @Scheduled(fixedDelayString = "${coffer.vector-store.cleanup.fixed-delay-ms:60000}")
     public void processDueTasks() {
         var tasks = repository.findByStatusAndNextAttemptAtLessThanEqualOrderByIdAsc(
@@ -39,7 +41,7 @@ public class VectorCleanupService {
                 task.setLastError(null);
             } catch (Exception e) {
                 task.setAttempts(task.getAttempts() + 1);
-                task.setLastError(e.getMessage());
+                task.setLastError("向量索引清理失败，请稍后重试");
                 long delay = Math.min(maxBackoffMs, 1_000L << Math.min(task.getAttempts(), 30));
                 task.setNextAttemptAt(LocalDateTime.now().plusNanos(delay * 1_000_000L));
             }

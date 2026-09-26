@@ -1,8 +1,6 @@
 package com.coffer.file.application;
 
-import com.coffer.file.application.archive.StorageArchiveService;
 import com.coffer.task.application.TaskRegistrationService;
-import com.coffer.file.domain.CategoryType;
 import com.coffer.file.domain.FileMetadata;
 import com.coffer.file.domain.FileStatus;
 import com.coffer.file.infrastructure.persistence.FileMetadataRepository;
@@ -16,11 +14,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.UUID;
 
 /**
- * 文件操作服务：重命名、改分类、失败文件重试、删除等改动文件元数据/生命周期状态的操作。
+ * 文件操作服务：重命名、失败文件重试、删除等改动文件元数据/生命周期状态的操作。
  *
- * <p>纯 DB 字段改动（重命名、改分类的非归档场景）走本服务事务内 {@code save}；
- * 归档文件改分类会牵动 MinIO 对象从旧分类目录搬到新分类目录，故遵循「DB 更新先提交、
- * 归档在事务外触发」的编排（见 {@code changeCategory}），与标签确认触发归档同构。
+ * <p>正式分类和存储位置变更只由治理预览、归档台账及其补偿流程管理；本服务不执行对象移动。
  *
  * <p>重试仅登记状态（事务内），异步重新解析由 Controller 在事务提交后调用
  * {@code AsyncFileProcessor.processFileAsync(newTaskId)} 触发——与上传链路同构，
@@ -30,6 +26,7 @@ import java.util.UUID;
  * 失败留孤儿可 GC」的归档哲学。
  */
 @Slf4j
+@com.coffer.auth.service.OwnerOnly
 @Service
 @RequiredArgsConstructor
 public class FileOperationService {
@@ -37,8 +34,8 @@ public class FileOperationService {
     private final FileMetadataRepository fileMetadataRepository;
     private final TaskRegistrationService taskRegistrationService;
     private final FileTagMappingRepository fileTagMappingRepository;
-    private final StorageArchiveService storageArchiveService;
     private final VectorCleanupService vectorCleanupService;
+    private final StorageDeletionTaskService storageDeletionTaskService;
 
     /**
      * 失败文件重试：仅 {@code FileStatus.FAILED} 可重试，事务内重建 PENDING 任务并回退文件状态。
@@ -60,7 +57,7 @@ public class FileOperationService {
     @Transactional
     public String retryFile(Long id) {
         FileMetadata fm = fileMetadataRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("文件不存在: " + id));
+                .orElseThrow(() -> new com.coffer.auth.service.ResourceNotFoundException());
         if (fm.getStatus() != FileStatus.FAILED) {
             throw new IllegalArgumentException("仅失败文件可重试");
         }
@@ -78,10 +75,12 @@ public class FileOperationService {
         fm.setTaskId(newTaskId);
         fm.setStatus(FileStatus.PENDING);
         fm.setSummary(null);
+        fm.setModelSnapshotId(com.coffer.model.runtime.ModelExecutionContext.currentId());
+        fm.setRevision(fm.getRevision() + 1);
+        fm.setVectorIndexedAt(null);
         fileMetadataRepository.save(fm);
 
-        log.info("文件重试登记完成 fileId={}, fileName={}, oldTaskId={}, newTaskId={}",
-                id, fm.getFileName(), oldTaskId, newTaskId);
+        log.info("文件重试登记完成 fileId={}, oldTaskId={}, newTaskId={}", id, oldTaskId, newTaskId);
         return newTaskId;
     }
 
@@ -100,13 +99,14 @@ public class FileOperationService {
     @Transactional
     public String deleteFile(Long id) {
         FileMetadata fm = fileMetadataRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("文件不存在: " + id));
+                .orElseThrow(() -> new com.coffer.auth.service.ResourceNotFoundException());
         String storagePath = fm.getStoragePath();
         String taskId = fm.getTaskId();
 
         // Persist the cleanup intent in the same transaction as the DB deletion.
         // Redis is deliberately not required for user-visible deletion.
         vectorCleanupService.enqueue(id);
+        storageDeletionTaskService.enqueue(id, storagePath);
 
         // 1) 删文件-标签关联
         fileTagMappingRepository.deleteAll(fileTagMappingRepository.findByFileId(fm.getId()));
@@ -117,8 +117,7 @@ public class FileOperationService {
         // 3) 删文件元数据
         fileMetadataRepository.delete(fm);
 
-        log.info("文件删除登记完成 fileId={}, fileName={}, taskId={}, storagePath={}",
-                id, fm.getFileName(), taskId, storagePath);
+        log.info("文件删除登记完成 fileId={}, taskId={}", id, taskId);
         return storagePath;
     }
 
@@ -143,7 +142,7 @@ public class FileOperationService {
         }
 
         FileMetadata fm = fileMetadataRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("文件不存在: " + id));
+                .orElseThrow(() -> new com.coffer.auth.service.ResourceNotFoundException());
 
         // 同名幂等：不做无谓更新直接返回
         if (normalized.equals(fm.getFileName())) {
@@ -152,68 +151,11 @@ public class FileOperationService {
         }
 
         fm.setFileName(normalized);
+        fm.setRevision(fm.getRevision() + 1);
+        fm.setVectorIndexedAt(null);
         fileMetadataRepository.save(fm);
-        log.info("文件重命名完成 fileId={}, old={}, new={}", id, fm.getFileName(), normalized);
+        log.info("文件重命名完成 fileId={}", id);
         return fm.getId();
     }
 
-    /**
-     * 文件改分类：仅 {@code FileStatus.COMPLETED} 可改，目标分类严格解析自受控枚举
-     * （非法值抛 400）。仅改 {@code category}；标签、摘要、确认状态均保留，不触发 AI 重跑。
-     *
-     * <p><b>本方法不标注 {@code @Transactional}</b>：仓库 {@code save} 各自开启事务立即提交
-     * （无外层事务时），提交后若原文件已归档（{@code archived=true}）再于事务外调用
-     * {@link StorageArchiveService#archive(Long)} 把 MinIO 对象从旧分类目录搬到新分类目录。
-     * 归档内部按「copyObject → REQUIRES_NEW 更新 storagePath+archived → delete 旧对象」三步，
-     * 与标签确认触发归档同一套实现，复用其幂等与失败留孤儿语义。
-     *
-     * <p>换分类必然解除归档态（{@code archived=false}）：若先置 {@code archived=false} 再调
-     * {@code archive}，因归档内部有「已归档跳过」守卫，必须把「原文件已归档」先记下来——
-     * 目标分类目录里的新路径会由归档逻辑重新生成，语义为「物理移动到新分类目录」。
-     *
-     * <p>同分类请求幂等直接返回（不解除归档、不触发移动）。
-     *
-     * @param id       文件 ID
-     * @param category 目标分类（受控枚举名，大小写不敏感去空白）
-     * @return 文件 ID
-     * @throws IllegalArgumentException 分类参数非法、文件不存在或状态非 COMPLETED
-     */
-    public Long changeCategory(Long id, String category) {
-        if (category == null || category.isBlank()) {
-            throw new IllegalArgumentException("分类不能为空");
-        }
-        String normalized = category.trim();
-        CategoryType target;
-        try {
-            target = CategoryType.valueOf(normalized);
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("非法分类参数: " + normalized);
-        }
-
-        FileMetadata fm = fileMetadataRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("文件不存在: " + id));
-        if (fm.getStatus() != FileStatus.COMPLETED) {
-            throw new IllegalArgumentException("仅已完成文件可更改分类");
-        }
-
-        // 同分类幂等：不做无谓更新/移动直接返回
-        if (fm.getCategory() == target) {
-            log.info("文件改分类幂等跳过 fileId={}，分类未变化 category={}", id, target);
-            return fm.getId();
-        }
-
-        // 记下归档态后再解除并落库（save 无外层事务时立即提交，供事务外归档读到新分类）
-        boolean wasArchived = fm.isArchived();
-        fm.setCategory(target);
-        fm.setArchived(false);
-        fileMetadataRepository.save(fm);
-        log.info("文件改分类落库完成 fileId={}, category={}, wasArchived={}", id, target, wasArchived);
-
-        // 原已归档 → 事务外归档到新分类目录（copy → REQUIRES_NEW 更新路径 → delete 旧对象）
-        if (wasArchived) {
-            storageArchiveService.archive(id);
-            log.info("文件改分类已触发重新归档 fileId={}, category={}", id, target);
-        }
-        return fm.getId();
-    }
 }

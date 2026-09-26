@@ -117,3 +117,5 @@ body {
 button {
   transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
+/* The consent dialog lists each actual model destination on a separate line. */
+.model-consent-dialog .el-message-box__message { white-space: pre-line; overflow-wrap: anywhere; }

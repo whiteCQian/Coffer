@@ -2,6 +2,7 @@ package com.coffer.service;
 
 import com.coffer.entity.*;
 import com.coffer.config.EmbeddingProperties;
+import com.coffer.auth.service.TenantJobRunner;
 import com.coffer.file.domain.FileMetadata;
 import com.coffer.file.domain.FileStatus;
 import com.coffer.file.infrastructure.persistence.FileMetadataRepository;
@@ -33,13 +34,16 @@ public class VectorReindexService {
     private final VectorReindexJobRepository jobs;
     private final FileMetadataRepository files;
     private final VectorIndexingService indexing;
+    private final TenantJobRunner tenantJobRunner;
     private final RedisVectorStore store;
     private final VectorIndexCoordinator coordinator;
     private final EmbeddingProperties embeddingProperties;
     @Value("${coffer.vector-store.reindex.page-size:100}") private int pageSize;
     @Autowired @Qualifier("vectorIndexExecutor") private Executor vectorExecutor;
+    @Autowired(required = false) private com.coffer.model.runtime.ModelExecutionSnapshotService snapshots;
 
     @Transactional
+    @com.coffer.auth.service.OwnerOnly
     public VectorReindexJob start() {
         if (!embeddingProperties.isEnabled()) {
             throw new IllegalStateException("Embedding 未启用，无法执行向量重建");
@@ -48,10 +52,14 @@ public class VectorReindexService {
         if (!running.isEmpty()) return running.get(0);
         String id = UUID.randomUUID().toString();
         VectorReindexJob job = VectorReindexJob.builder().jobId(id).status(VectorReindexStatus.RUNNING)
+                .modelSnapshotId(com.coffer.model.runtime.ModelExecutionContext.currentId())
                 .totalCount((int) files.countByStatus(FileStatus.COMPLETED)).startedAt(LocalDateTime.now()).build();
         jobs.save(job);
+        Long ownerId = com.coffer.auth.service.TenantContext.requireOwnerId();
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override public void afterCommit() { runAsync(id); }
+            @Override public void afterCommit() {
+                vectorExecutor.execute(() -> com.coffer.auth.service.TenantContext.runAs(ownerId, () -> runAsync(id)));
+            }
         });
         return job;
     }
@@ -59,16 +67,23 @@ public class VectorReindexService {
     /** Recover a persisted job after a process restart. */
     @EventListener(ApplicationReadyEvent.class)
     public void resumeRunningJobs() {
-        jobs.findByStatus(VectorReindexStatus.RUNNING).forEach(job -> {
-            job.setStatus(VectorReindexStatus.FAILED);
-            job.setFinishedAt(LocalDateTime.now());
-            job.setErrorSummary("应用重启导致任务中断，请重新发起重建");
-            jobs.save(job);
+        tenantJobRunner.runForEnabledOwners(ownerId -> {
+            jobs.findByStatus(VectorReindexStatus.RUNNING).forEach(job -> {
+                job.setStatus(VectorReindexStatus.FAILED);
+                job.setFinishedAt(LocalDateTime.now());
+                job.setErrorSummary("应用重启导致任务中断，请重新发起重建");
+                jobs.save(job);
+            });
         });
     }
 
-    @Async("vectorIndexExecutor")
+    @com.coffer.auth.service.OwnerOnly
     public void runAsync(String jobId) {
+        if (snapshots != null) {
+            var job = jobs.findById(jobId).orElseThrow(com.coffer.auth.service.ResourceNotFoundException::new);
+            snapshots.with(job.getModelSnapshotId(), () -> coordinator.withRebuildLock(() -> { run(jobId); return null; }));
+            return;
+        }
         coordinator.withRebuildLock(() -> { run(jobId); return null; });
     }
 
@@ -103,6 +118,7 @@ public class VectorReindexService {
                 store.setActiveGeneration(generation);
                 indexedFiles.forEach(file -> {
                     file.setVectorIndexGeneration(generation);
+                    file.setModelSnapshotId(job.getModelSnapshotId());
                     file.setVectorIndexedAt(LocalDateTime.now());
                     files.save(file);
                 });
@@ -121,23 +137,26 @@ public class VectorReindexService {
             }
         } catch (Exception e) {
             job.setStatus(VectorReindexStatus.FAILED);
-            job.setErrorSummary(e.getMessage());
+            job.setErrorSummary("向量索引重建失败，请稍后重试");
             cleanupAsync(generation);
-            log.error("向量全量重建失败 jobId={}: {}", jobId, e.getMessage(), e);
+            log.error("向量全量重建失败，异常类型={}", e.getClass().getSimpleName());
         } finally {
             job.setFinishedAt(LocalDateTime.now());
             jobs.save(job);
         }
     }
 
+    @com.coffer.auth.service.OwnerOnly
     public void cleanupAsync(String generation) {
-        vectorExecutor.execute(() -> {
+        Long owner = com.coffer.auth.service.TenantContext.requireOwnerId();
+        vectorExecutor.execute(() -> com.coffer.auth.service.TenantContext.runAs(owner, () -> {
             try { store.deleteGeneration(generation); }
-            catch (Exception e) { log.warn("旧向量 generation 清理失败 generation={}: {}", generation, e.getMessage()); }
-        });
+            catch (Exception e) { log.warn("旧向量 generation 清理失败，异常类型={}", e.getClass().getSimpleName()); }
+        }));
     }
 
     @Transactional(readOnly = true)
+    @com.coffer.auth.service.OwnerOnly
     public VectorReindexJob get(String jobId) { return jobs.findById(jobId).orElse(null); }
 
     private boolean isImage(String type) {

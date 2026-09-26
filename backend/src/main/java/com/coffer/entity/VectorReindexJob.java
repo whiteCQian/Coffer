@@ -6,7 +6,8 @@ import java.time.LocalDateTime;
 
 @Entity @Table(name = "vector_reindex_job")
 @Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
-public class VectorReindexJob {
+public class VectorReindexJob extends com.coffer.auth.domain.TenantOwnedEntity {
+    @Column(name = "model_snapshot_id", length = 36) private String modelSnapshotId;
     @Id @Column(name = "job_id", length = 64) private String jobId;
     @Enumerated(EnumType.STRING) @Column(nullable = false, length = 20) private VectorReindexStatus status;
     @Column(name = "total_count", nullable = false) @Builder.Default private int totalCount = 0;

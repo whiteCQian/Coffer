@@ -25,7 +25,8 @@ import java.time.LocalDateTime;
  * <p>表名 {@code tag}，标签名列 {@code tag_name} 建唯一索引。
  */
 @Entity
-@Table(name = "tag")
+@Table(name = "tag", uniqueConstraints = @jakarta.persistence.UniqueConstraint(
+        name = "uk_tag_owner_name", columnNames = {"owner_id", "tag_name"}))
 @Data
 @Builder
 @NoArgsConstructor
@@ -33,7 +34,7 @@ import java.time.LocalDateTime;
 // 本实体无父类，callSuper 参数无实际影响（@Data 已隐含 @EqualsAndHashCode 且默认 callSuper=false）；
 // 显式声明仅为表达意图，若未来引入带字段的基类（如 BaseEntity）需改为 callSuper=true
 @EqualsAndHashCode(callSuper = false)
-public class Tag {
+public class Tag extends com.coffer.auth.domain.TenantOwnedEntity {
 
     /** 自增主键。 */
     @Id
@@ -43,7 +44,7 @@ public class Tag {
 
     /** 标签名，全局唯一。 */
     @NotBlank
-    @Column(name = "tag_name", unique = true, nullable = false, length = 255)
+    @Column(name = "tag_name", nullable = false, length = 255)
     private String tagName;
 
     /** 标签分类，如「项目名称」「文档类型」「日期」「人员」等。 */

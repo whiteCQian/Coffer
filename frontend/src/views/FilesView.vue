@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Search, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import * as fileApi from '@/api/files'
@@ -32,6 +32,17 @@ const tagCandidates = ref<TagCandidate[]>([])
 /** 输入联想：AI/字面从真实标签中挑出的候选 */
 const suggestions = ref<TagCandidate[]>([])
 const suggesting = ref(false)
+async function suggestWithModel() {
+  const q = keyword.value.trim()
+  if (!q) return
+  const seq = ++sugSeq
+  suggesting.value = true
+  try {
+    const { data } = await suggestTags(q, true)
+    if (seq === sugSeq && keyword.value.trim() === q) suggestions.value = data.data ?? []
+  } catch { /* 请求拦截器处理错误和取消。 */ }
+  finally { if (seq === sugSeq) suggesting.value = false }
+}
 
 const SORT_OPTIONS = [
   { value: 'new', label: '最新上传' },
@@ -86,6 +97,7 @@ const gridRows = computed(() =>
 let kwTimer: ReturnType<typeof setTimeout> | undefined
 let sugTimer: ReturnType<typeof setTimeout> | undefined
 let sugSeq = 0
+onUnmounted(() => { clearTimeout(kwTimer); clearTimeout(sugTimer); sugSeq += 1 })
 watch(keyword, (v) => {
   const q = v.trim()
   // (a) 输入联想：AI/字面映射到真实标签（不打断列表搜索）
@@ -333,6 +345,7 @@ onMounted(() => {
         <select v-model="sortMode" class="sort-select" title="排序">
           <option v-for="o in SORT_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
         </select>
+        <el-button :disabled="!keyword.trim() || suggesting" @click="suggestWithModel">AI 标签联想</el-button>
       </div>
 
       <!-- 标签智能条：输入联想 / 常用标签 / 正在查看的标签（标签为主要组织维度） -->
@@ -340,7 +353,7 @@ onMounted(() => {
         <template
           v-if="keyword.trim() && !activeTag && (suggesting || suggestions.length)"
         >
-          <span class="tagline-label">{{ suggesting ? 'AI 正在猜测…' : '猜你想搜标签：' }}</span>
+          <span class="tagline-label">{{ suggesting ? '正在查找标签…' : '相关标签：' }}</span>
           <button
             v-for="s in suggestions"
             :key="s.name"

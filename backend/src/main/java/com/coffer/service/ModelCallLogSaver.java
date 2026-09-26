@@ -28,9 +28,14 @@ public class ModelCallLogSaver {
     @Async("modelLogExecutor")
     public void saveAsync(ModelCallLog modelCallLog) {
         try {
+            modelCallLog.setUserMessage(null);
+            modelCallLog.setAiResponse(null);
+            modelCallLog.setSessionId(null);
+            modelCallLog.setModelName(null);
+            if (modelCallLog.getErrorMessage() != null) modelCallLog.setErrorMessage("MODEL_FAILURE");
             modelCallLogRepository.save(modelCallLog);
         } catch (Exception e) {
-            log.error("模型调用日志保存失败 sessionId={}: {}", modelCallLog.getSessionId(), e.getMessage(), e);
+            log.error("模型调用诊断记录保存失败，异常类型={}", e.getClass().getSimpleName());
         }
     }
 }

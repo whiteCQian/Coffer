@@ -52,7 +52,6 @@ class FileResponseAssemblerTest {
 
         assertThat(response.getCategory()).isEqualTo("OTHER");
         assertThat(response.getStatus()).isEqualTo("PENDING");
-        assertThat(response.getStoragePath()).isEqualTo("files/note.txt");
         assertThat(response.getPreviewUrl()).isEqualTo("https://preview");
     }
 }

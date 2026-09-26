@@ -157,12 +157,12 @@ class FlywayMigrationTest {
         assertThat(previewMigration).isEqualTo(1);
         assertThat(revisionColumns).isEqualTo(2);
         assertThat(runtimeSettingTables).isEqualTo(1);
-        assertThat(runtimeSettingRows).isEqualTo(1);
+        assertThat(runtimeSettingRows).isEqualTo(1); // Preserved legacy row is never read by per-user settings.
         assertThat(taskRunModeColumns).isEqualTo(1);
         assertThat(runtimeMigration).isEqualTo(1);
         assertThat(runtimeEndpointTables).isEqualTo(1);
         assertThat(runtimeEndpointColumns).isEqualTo(5);
-        assertThat(runtimeEndpointUniqueConstraints).isEqualTo(1);
+        assertThat(runtimeEndpointUniqueConstraints).isZero(); // Replaced by owner-scoped uniqueness in V16.
         assertThat(runtimeEndpointMigration).isEqualTo(1);
         assertThat(archiveNameLockTables).isEqualTo(1);
         assertThat(archiveNameReservationTables).isEqualTo(1);

@@ -22,7 +22,8 @@ import static org.mockito.Mockito.when;
  * 独立上下文，不与使用真实 Repository 的其它测试共享。
  */
 @SpringBootTest
-class ConversationServiceSaveFailureTest {
+class ConversationServiceSaveFailureTest extends com.coffer.auth.OwnerTestSupport {
+    @Autowired private ChatSessionService sessions;
 
     @Autowired
     private ConversationService conversationService;
@@ -35,12 +36,12 @@ class ConversationServiceSaveFailureTest {
 
     @Test
     void saveFailureReturnsHintAndDoesNotThrow() {
-        when(aiAgentService.chat("帮我找合同文件", "s-savefail-1")).thenReturn("已为你找到 3 个合同文件");
+        String session = sessions.create();
+        when(aiAgentService.chat("帮我找合同文件", session)).thenReturn("已为你找到 3 个合同文件");
         when(chatMessageRepository.save(any(ChatMessage.class))).thenThrow(new RuntimeException("db down"));
 
-        String result = conversationService.sendMessage("s-savefail-1", "帮我找合同文件");
-
-        assertThat(result).isEqualTo("对话记录保存失败，但响应已生成");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> conversationService.sendMessage(session, "帮我找合同文件"))
+                .isInstanceOf(RuntimeException.class).hasMessageContaining("db down");
         // Agent 已被调用且返回了回复；失败仅发生在落库环节
         verify(aiAgentService).chat(anyString(), anyString());
     }

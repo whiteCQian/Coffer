@@ -37,10 +37,13 @@ import java.time.LocalDateTime;
                 @Index(name = "idx_file_metadata_upload_time", columnList = "upload_time")
         })
 @Data
+@lombok.EqualsAndHashCode(callSuper = false)
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class FileMetadata {
+public class FileMetadata extends com.coffer.auth.domain.TenantOwnedEntity {
+    @Column(name = "model_snapshot_id", length = 36)
+    private String modelSnapshotId;
 
     /** 自增主键。 */
     @Id
@@ -125,6 +128,7 @@ public class FileMetadata {
      * @param summary AI 生成的摘要内容
      */
     public void markAsCompleted(String summary) {
+        this.revision = (this.revision == null ? 0L : this.revision) + 1;
         this.status = FileStatus.COMPLETED;
         this.summary = summary;
     }

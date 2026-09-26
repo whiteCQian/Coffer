@@ -18,6 +18,7 @@ import java.util.Locale;
 /**
  * 为归档对象分配“同一天、同名文件”的三位十六进制序号。
  */
+@com.coffer.auth.service.OwnerOnly
 @Service
 @RequiredArgsConstructor
 public class ArchiveObjectNameService {

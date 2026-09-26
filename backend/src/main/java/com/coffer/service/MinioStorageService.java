@@ -36,6 +36,7 @@ import java.util.UUID;
  * 生成，供上传接口落库 storagePath）或自动生成（{@code files/{uuid}/unnamed}）。
  */
 @Slf4j
+@com.coffer.auth.service.OwnerOnly
 @Service
 @RequiredArgsConstructor
 public class MinioStorageService {
@@ -57,7 +58,7 @@ public class MinioStorageService {
      */
     public ObjectWriteResponse uploadFile(String bucketName,
                                           InputStream inputStream, String contentType, long size) {
-        String objectName = "files/" + UUID.randomUUID().toString() + "/unnamed";
+        String objectName = "users/" + com.coffer.auth.service.TenantContext.requireOwnerId() + "/files/" + UUID.randomUUID().toString() + "/unnamed";
         return uploadFile(bucketName, objectName, inputStream, contentType, size);
     }
 
@@ -80,6 +81,7 @@ public class MinioStorageService {
         if (objectName == null || objectName.isBlank()) {
             throw new IllegalArgumentException("objectName 不能为空");
         }
+        requireOwnedPath(objectName);
         bucketName = resolveBucketName(bucketName);
         try {
             ObjectWriteResponse response = minioClient.putObject(PutObjectArgs.builder()
@@ -88,15 +90,13 @@ public class MinioStorageService {
                     .stream(inputStream, size, -1)
                     .contentType(contentType)
                     .build());
-            log.info("MinIO 文件上传成功: bucket={}, object={}, size={}B",
-                    bucketName, objectName, size);
+            log.info("MinIO 文件上传成功，大小={}B", size);
             return response;
         } catch (ErrorResponseException | InsufficientDataException | InternalException
                  | InvalidKeyException | InvalidResponseException | IOException
                  | NoSuchAlgorithmException | ServerException | XmlParserException e) {
-            log.error("MinIO 文件上传失败: bucket={}, object={}, 原因: {}",
-                    bucketName, objectName, e.getMessage(), e);
-            throw new RuntimeException("MinIO 文件上传失败: " + objectName, e);
+            log.error("MinIO 文件上传失败，异常类型={}", e.getClass().getSimpleName());
+            throw new RuntimeException("MinIO 文件上传失败", e);
         }
     }
 
@@ -108,6 +108,7 @@ public class MinioStorageService {
      * @return 文件输入流，调用方负责关闭
      */
     public InputStream getFileStream(String bucketName, String objectName) {
+        requireOwnedPath(objectName);
         bucketName = resolveBucketName(bucketName);
         try {
             return minioClient.getObject(GetObjectArgs.builder()
@@ -117,9 +118,8 @@ public class MinioStorageService {
         } catch (ErrorResponseException | InsufficientDataException | InternalException
                  | InvalidKeyException | InvalidResponseException | IOException
                  | NoSuchAlgorithmException | ServerException | XmlParserException e) {
-            log.error("MinIO 文件获取失败: bucket={}, object={}, 原因: {}",
-                    bucketName, objectName, e.getMessage(), e);
-            throw new RuntimeException("MinIO 文件获取失败: " + objectName, e);
+            log.error("MinIO 文件获取失败，异常类型={}", e.getClass().getSimpleName());
+            throw new RuntimeException("MinIO 文件获取失败", e);
         }
     }
 
@@ -134,6 +134,7 @@ public class MinioStorageService {
         if (objectName == null || objectName.isBlank()) {
             throw new IllegalArgumentException("objectName 不能为空");
         }
+        requireOwnedPath(objectName);
         bucketName = resolveBucketName(bucketName);
         try {
             StatObjectResponse response = minioClient.statObject(StatObjectArgs.builder()
@@ -144,9 +145,8 @@ public class MinioStorageService {
         } catch (ErrorResponseException | InsufficientDataException | InternalException
                  | InvalidKeyException | InvalidResponseException | IOException
                  | NoSuchAlgorithmException | ServerException | XmlParserException e) {
-            log.error("MinIO 对象元数据读取失败: bucket={}, object={}, 原因: {}",
-                    bucketName, objectName, e.getMessage(), e);
-            throw new RuntimeException("MinIO 对象元数据读取失败: " + objectName, e);
+            log.error("MinIO 对象元数据读取失败，异常类型={}", e.getClass().getSimpleName());
+            throw new RuntimeException("MinIO 对象元数据读取失败", e);
         }
     }
 
@@ -193,6 +193,7 @@ public class MinioStorageService {
         if (objectName == null || objectName.isBlank()) {
             throw new IllegalArgumentException("objectName 不能为空");
         }
+        requireOwnedPath(objectName);
         bucketName = resolveBucketName(bucketName);
         Duration effectiveDuration = (duration == null) ? Duration.ofDays(7) : duration;
         int expirySeconds = Math.toIntExact(effectiveDuration.getSeconds());
@@ -203,15 +204,13 @@ public class MinioStorageService {
                     .object(objectName)
                     .expiry(expirySeconds)
                     .build());
-            log.info("生成 MinIO 临时预览 URL: bucket={}, object={}, expiry={}s",
-                    bucketName, objectName, expirySeconds);
+            log.info("生成 MinIO 临时预览 URL，有效期={}s", expirySeconds);
             return url;
         } catch (ErrorResponseException | InsufficientDataException | InternalException
                  | InvalidKeyException | InvalidResponseException | IOException
                  | NoSuchAlgorithmException | ServerException | XmlParserException e) {
-            log.error("生成 MinIO 临时预览 URL 失败: bucket={}, object={}, 原因: {}",
-                    bucketName, objectName, e.getMessage(), e);
-            throw new RuntimeException("生成 MinIO 临时预览 URL 失败: " + objectName, e);
+            log.error("生成 MinIO 临时预览 URL 失败，异常类型={}", e.getClass().getSimpleName());
+            throw new RuntimeException("生成 MinIO 临时预览 URL 失败", e);
         }
     }
 
@@ -226,27 +225,27 @@ public class MinioStorageService {
         if (objectName == null || objectName.isBlank()) {
             throw new IllegalArgumentException("objectName 不能为空");
         }
+        requireOwnedPath(objectName);
         bucketName = resolveBucketName(bucketName);
         try {
             minioClient.removeObject(RemoveObjectArgs.builder()
                     .bucket(bucketName)
                     .object(objectName)
                     .build());
-            log.info("MinIO 文件删除成功: bucket={}, object={}", bucketName, objectName);
+            log.info("MinIO 文件删除成功");
         } catch (ErrorResponseException | InsufficientDataException | InternalException
                  | InvalidKeyException | InvalidResponseException | IOException
                  | NoSuchAlgorithmException | ServerException | XmlParserException e) {
-            log.error("MinIO 文件删除失败: bucket={}, object={}, 原因: {}",
-                    bucketName, objectName, e.getMessage(), e);
-            throw new RuntimeException("MinIO 文件删除失败: " + objectName, e);
+            log.error("MinIO 文件删除失败，异常类型={}", e.getClass().getSimpleName());
+            throw new RuntimeException("MinIO 文件删除失败", e);
         }
     }
 
     /**
-     * 复制对象（服务端拷贝，不经应用内存），供归档「copy → DB 更新 → delete」三步中的第一步使用。
+     * 复制对象（服务端拷贝，不经应用内存），供持久化治理归档操作使用。
      *
-     * <p>MinIO 无原生 rename，移动 = 先复制到新路径、再删除旧路径（顺序由调用方 {@code StorageArchiveService}
-     * 编排）。目标与源相同时幂等直接返回。
+     * <p>MinIO 无原生 rename，移动 = 先复制到新路径、再删除旧路径；步骤由治理操作台账协调。
+     * 目标与源相同时幂等直接返回。
      *
      * @param sourceObject 源对象名称（存储路径）
      * @param targetObject 目标对象名称（存储路径）
@@ -259,9 +258,11 @@ public class MinioStorageService {
         if (targetObject == null || targetObject.isBlank()) {
             throw new IllegalArgumentException("目标对象名不能为空");
         }
+        requireOwnedPath(sourceObject);
+        requireOwnedPath(targetObject);
         String bucketName = resolveBucketName(null);
         if (sourceObject.equals(targetObject)) {
-            log.info("MinIO 复制目标与源相同，幂等跳过: object={}", sourceObject);
+            log.info("MinIO 复制目标与源相同，幂等跳过");
             return;
         }
         try {
@@ -273,14 +274,12 @@ public class MinioStorageService {
                             .object(sourceObject)
                             .build())
                     .build());
-            log.info("MinIO 对象复制成功: bucket={}, source={}, target={}",
-                    bucketName, sourceObject, targetObject);
+            log.info("MinIO 对象复制成功");
         } catch (ErrorResponseException | InsufficientDataException | InternalException
                  | InvalidKeyException | InvalidResponseException | IOException
                  | NoSuchAlgorithmException | ServerException | XmlParserException e) {
-            log.error("MinIO 对象复制失败: bucket={}, source={}, target={}, 原因: {}",
-                    bucketName, sourceObject, targetObject, e.getMessage(), e);
-            throw new RuntimeException("MinIO 对象复制失败: " + sourceObject + " → " + targetObject, e);
+            log.error("MinIO 对象复制失败，类型={}", e.getClass().getSimpleName());
+            throw new RuntimeException("MinIO 对象复制失败", e);
         }
     }
 
@@ -290,9 +289,21 @@ public class MinioStorageService {
      * @param bucketName 传入的存储桶名
      * @return 实际使用的存储桶名
      */
+    public static void requireOwnedPath(String path) {
+        String prefix = "users/" + com.coffer.auth.service.TenantContext.requireOwnerId() + "/";
+        if (path == null || !path.startsWith(prefix) || path.length() == prefix.length()
+                || path.contains("\\") || path.chars().anyMatch(c -> c < 32)
+                || java.util.Arrays.stream(path.split("/", -1)).anyMatch(p -> p.isEmpty() || p.equals(".") || p.equals(".."))) {
+            throw new com.coffer.auth.service.ResourceNotFoundException();
+        }
+    }
+
     private String resolveBucketName(String bucketName) {
         if (bucketName == null || bucketName.isBlank()) {
             return minioProperties.getBucketName();
+        }
+        if (!bucketName.equals(minioProperties.getBucketName())) {
+            throw new com.coffer.auth.service.ResourceNotFoundException();
         }
         return bucketName;
     }

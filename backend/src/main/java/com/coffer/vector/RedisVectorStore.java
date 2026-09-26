@@ -1,6 +1,7 @@
 package com.coffer.vector;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.coffer.auth.service.TenantContext;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -34,6 +35,7 @@ import java.util.Set;
  */
 @Slf4j
 @Component
+@com.coffer.auth.service.OwnerOnly
 @RequiredArgsConstructor
 public class RedisVectorStore {
 
@@ -72,7 +74,7 @@ public class RedisVectorStore {
         try {
             return Optional.of(objectMapper.readValue(json, VectorRecord.class));
         } catch (JsonProcessingException e) {
-            log.warn("Redis 向量记录反序列化失败 documentId={}: {}", documentId, e.getMessage());
+            log.warn("Redis 向量记录反序列化失败，异常类型={}", e.getClass().getSimpleName());
             return Optional.empty();
         }
     }
@@ -154,15 +156,24 @@ public class RedisVectorStore {
     }
 
     public String activeGeneration() {
-        String generation = redisTemplate.opsForValue().get(keyPrefix + "active-generation");
+        String generation = redisTemplate.opsForValue().get(ownerPrefix() + "active-generation");
         return generation == null || generation.isBlank() ? null : generation;
     }
 
-    public void setActiveGeneration(String generation) { redisTemplate.opsForValue().set(keyPrefix + "active-generation", generation); }
+    public void setActiveGeneration(String generation) {
+        generationPrefix(generation);
+        if (generation == null) throw new IllegalArgumentException("generation 不能为空");
+        redisTemplate.opsForValue().set(ownerPrefix() + "active-generation", generation);
+    }
 
     public void deleteGeneration(String generation) {
         Set<String> documents = redisTemplate.opsForSet().members(generationDocumentsKey(generation));
-        if (documents != null) documents.forEach(id -> delete(id, generation));
+        if (documents != null) documents.forEach(id -> {
+            delete(id, generation);
+            String first = id.split(":")[0];
+            if (first.matches("[1-9][0-9]*")) redisTemplate.delete(fileChunksKey(Long.valueOf(first), generation));
+        });
+        redisTemplate.delete(indexKey(generation));
         redisTemplate.delete(generationDocumentsKey(generation));
     }
 
@@ -218,7 +229,14 @@ public class RedisVectorStore {
 
     private String generationDocumentsKey(String generation) { return generationPrefix(generation) + "documents"; }
     private String generationPrefix(String generation) {
-        return generation == null || generation.isBlank() ? keyPrefix : keyPrefix + "generation:" + generation + ":";
+        if (generation != null && !generation.matches("[A-Za-z0-9_-]{1,100}"))
+            throw new IllegalArgumentException("generation 格式非法");
+        return generation == null || generation.isBlank()
+                ? ownerPrefix() : ownerPrefix() + "generation:" + generation + ":";
+    }
+
+    private String ownerPrefix() {
+        return keyPrefix + "owner:" + TenantContext.requireOwnerId() + ":";
     }
 
     private byte[] bytes(String value) {

@@ -31,7 +31,7 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 @EqualsAndHashCode(callSuper = false)
-public class ModelCallLog {
+public class ModelCallLog extends com.coffer.auth.domain.TenantOwnedEntity {
 
     /** 自增主键。 */
     @Id
@@ -39,15 +39,15 @@ public class ModelCallLog {
     @Column(name = "id")
     private Long id;
 
-    /** 会话标识，用于区分不同会话的调用记录。 */
+    /** Legacy field. New diagnostics omit session identifiers. */
     @Column(name = "session_id", length = 128)
     private String sessionId;
 
-    /** 用户消息（请求内容），可能较长，使用 TEXT 存储。 */
+    /** Legacy content field. New diagnostics never populate it; scheduled cleanup redacts old values. */
     @Column(name = "user_message", columnDefinition = "TEXT")
     private String userMessage;
 
-    /** AI 响应内容，可能较长，使用 TEXT 存储。 */
+    /** Legacy content field. New diagnostics never populate it; scheduled cleanup redacts old values. */
     @Column(name = "ai_response", columnDefinition = "TEXT")
     private String aiResponse;
 
@@ -83,7 +83,7 @@ public class ModelCallLog {
     @Column(name = "status", length = 20)
     private String status;
 
-    /** 错误信息，调用失败时记录。 */
+    /** Sanitized exception category only; never store provider error text or request details. */
     @Column(name = "error_message", columnDefinition = "TEXT")
     private String errorMessage;
 }

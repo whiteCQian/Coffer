@@ -25,8 +25,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 搜索接口测试：验证 keyword/tag 参数透传与默认分页。
  */
 @SpringBootTest
-@AutoConfigureMockMvc
-class SearchControllerTest {
+@AutoConfigureMockMvc(addFilters = false)
+class SearchControllerTest extends com.coffer.auth.OwnerTestSupport {
 
     @Autowired
     private MockMvc mockMvc;

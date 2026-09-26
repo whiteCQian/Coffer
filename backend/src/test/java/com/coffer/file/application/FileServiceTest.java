@@ -41,7 +41,7 @@ import static org.mockito.Mockito.when;
  */
 @SpringBootTest
 @Transactional
-class FileServiceTest {
+class FileServiceTest extends com.coffer.auth.OwnerTestSupport {
 
     @Autowired
     private FileService fileService;
@@ -348,6 +348,8 @@ class FileServiceTest {
     @Test
     void getFileDetailReturnsConfirmedAndPendingTags() {
         FileMetadata fm = saveFile("详情文档.pdf");
+        fm.setStoragePath(ownerPath("files/详情文档.pdf"));
+        fm = fileMetadataRepository.save(fm);
         Long tagId1 = saveTag("标签A");
         Long tagId2 = saveTag("标签B");
         Long tagId3 = saveTag("标签C");
@@ -363,7 +365,7 @@ class FileServiceTest {
         assertThat(detail.getFileName()).isEqualTo("详情文档.pdf");
         assertThat(detail.getStatus()).isEqualTo("COMPLETED");
         assertThat(detail.getTagStatus()).isEqualTo("PENDING"); // 存在待确认
-        assertThat(detail.getPreviewUrl()).isEqualTo("http://preview/url");
+        assertThat(detail.getPreviewUrl()).isEqualTo("/api/files/" + fm.getId() + "/content");
         // 标签按确认状态分组，已拒绝的不返回
         assertThat(detail.getConfirmedTags()).hasSize(1);
         assertThat(detail.getConfirmedTags().get(0).getTagName()).isEqualTo("标签A");
@@ -374,8 +376,7 @@ class FileServiceTest {
     @Test
     void getFileDetailNotFoundThrows() {
         assertThatThrownBy(() -> fileService.getFileDetail(999999L))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("文件不存在");
+                .isInstanceOf(com.coffer.auth.service.ResourceNotFoundException.class);
     }
 
     @Test
@@ -394,7 +395,6 @@ class FileServiceTest {
 
         assertThat(detail.getCategory()).isEqualTo("CONTRACT");
         assertThat(detail.getArchived()).isTrue();
-        assertThat(detail.getStoragePath()).isEqualTo("contracts/2025/08/29/uuid.pdf");
     }
 
     @Test

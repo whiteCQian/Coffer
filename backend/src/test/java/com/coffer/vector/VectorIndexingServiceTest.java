@@ -68,7 +68,7 @@ class VectorIndexingServiceTest {
         verify(redisVectorStore, times(2)).save(records.capture());
         assertThat(records.getAllValues())
                 .extracting(VectorRecord::documentId)
-                .containsExactly("42:0", "42:1");
+                .containsExactly("42:0:0", "42:0:1");
         assertThat(records.getAllValues())
                 .extracting(VectorRecord::fileId)
                 .containsOnly(42L);
@@ -77,7 +77,7 @@ class VectorIndexingServiceTest {
                 .containsExactly(0, 1);
         assertThat(records.getAllValues().get(0).content()).hasSize(800);
         assertThat(records.getAllValues().get(1).content()).hasSize(800);
-        verify(redisVectorStore).finishFileIndex(42L, java.util.List.of("42:0", "42:1"));
+        verify(redisVectorStore).finishFileIndex(42L, java.util.List.of("42:0:0", "42:0:1"));
     }
 
     @Test

@@ -21,6 +21,7 @@ import java.nio.charset.Charset;
  * 将任意解析失败统一收敛为 {@link ParseResult} 错误状态，不向上抛出。
  */
 @Slf4j
+@com.coffer.auth.service.OwnerOnly
 @Service
 @RequiredArgsConstructor
 public class DocumentParseService {
@@ -57,7 +58,7 @@ public class DocumentParseService {
             try {
                 content = parser.parseToString(inputStream);
             } catch (RuntimeException e) {
-                log.warn("文档解析异常 fileName={}: {}", fileName, e.getMessage());
+                log.warn("文档解析异常，类型={}", e.getClass().getSimpleName());
                 return classifyParseError(e);
             }
 
@@ -67,8 +68,8 @@ public class DocumentParseService {
 
             TextTruncator.TruncationStats stats = textTruncator.truncateWithStats(content);
             if (stats.truncated()) {
-                log.info("文本过长已截断 fileName={}, 原始 {} 字符 -> 截断 {} 字符",
-                        fileName, stats.originalCharCount(), stats.text().length());
+                log.info("文本过长已截断，原始 {} 字符 -> 截断 {} 字符",
+                        stats.originalCharCount(), stats.text().length());
             }
             return ParseResult.builder()
                     .content(stats.text())
@@ -76,8 +77,8 @@ public class DocumentParseService {
                     .status(ParseStatus.SUCCESS)
                     .build();
         } catch (Exception e) {
-            log.error("文件文本提取失败 fileName={}: {}", fileName, e.getMessage(), e);
-            return ParseResult.error(ParseStatus.FAILED, e.getMessage());
+            log.error("文件文本提取失败，类型={}", e.getClass().getSimpleName());
+            return ParseResult.error(ParseStatus.FAILED, "文件解析失败");
         }
     }
 
@@ -94,8 +95,8 @@ public class DocumentParseService {
         try {
             data = inputStream.readAllBytes();
         } catch (IOException e) {
-            log.error("读取文件流失败 fileName={}: {}", fileName, e.getMessage());
-            return ParseResult.error(ParseStatus.FAILED, e.getMessage());
+            log.error("读取文件流失败，类型={}", e.getClass().getSimpleName());
+            return ParseResult.error(ParseStatus.FAILED, "文件流读取失败");
         }
 
         ParseResult result = extractTextFromFile(fileName, new ByteArrayInputStream(data));
@@ -112,7 +113,7 @@ public class DocumentParseService {
         for (String encoding : new String[]{"GBK", "UTF-8"}) {
             ParseResult retry = parseTextWithEncoding(data, encoding);
             if (retry != null) {
-                log.info("备选编码解析成功 fileName={}, charset={}", fileName, encoding);
+                log.info("备选编码解析成功 charset={}", encoding);
                 return retry;
             }
         }
@@ -135,7 +136,7 @@ public class DocumentParseService {
                     .status(ParseStatus.SUCCESS)
                     .build();
         } catch (Exception e) {
-            log.debug("备选编码解析失败 charset={}: {}", charsetName, e.getMessage());
+            log.debug("备选编码解析失败 charset={}, 类型={}", charsetName, e.getClass().getSimpleName());
             return null;
         }
     }
@@ -146,12 +147,12 @@ public class DocumentParseService {
     private ParseResult classifyParseError(RuntimeException e) {
         String msg = e.getMessage() == null ? "" : e.getMessage();
         if (msg.contains("加密")) {
-            return ParseResult.error(ParseStatus.ENCRYPTED, e.getMessage());
+            return ParseResult.error(ParseStatus.ENCRYPTED, "文档已加密，无法解析");
         }
         if (msg.contains("损坏") || msg.contains("解析失败")) {
-            return ParseResult.error(ParseStatus.CORRUPTED, e.getMessage());
+            return ParseResult.error(ParseStatus.CORRUPTED, "文档损坏或格式不受支持");
         }
-        return ParseResult.error(ParseStatus.FAILED, e.getMessage());
+        return ParseResult.error(ParseStatus.FAILED, "文件解析失败");
     }
 
     /**

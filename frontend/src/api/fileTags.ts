@@ -17,6 +17,7 @@ export function listTagCandidates() {
 }
 
 /** 智能标签联想：把自然语言描述映射为库中真实存在的候选标签（可为空） */
-export function suggestTags(q: string) {
+export function suggestTags(q: string, withModel = false) {
+  if (withModel) return http.post<Result<TagCandidate[]>>('/files/tags/suggest', { query: q })
   return http.get<Result<TagCandidate[]>>('/files/tags/suggest', { params: { q } })
 }

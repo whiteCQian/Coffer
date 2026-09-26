@@ -16,7 +16,7 @@ import java.util.Optional;
 
 /** Persistence operations for durable inbox scan/import state. */
 @Repository
-public interface InboxImportRecordRepository extends JpaRepository<InboxImportRecord, Long> {
+public interface InboxImportRecordRepository extends com.coffer.auth.infrastructure.OwnedRepository<InboxImportRecord, Long> {
 
     Optional<InboxImportRecord> findBySnapshotKey(String snapshotKey);
 
@@ -36,8 +36,9 @@ public interface InboxImportRecordRepository extends JpaRepository<InboxImportRe
     @Query("UPDATE InboxImportRecord r SET r.status = :targetStatus, "
             + "r.importStartedAt = :now, r.importFinishedAt = null, "
             + "r.attemptCount = r.attemptCount + 1, r.updatedAt = :now "
-            + "WHERE r.id = :id AND r.status IN :claimableStatuses")
+            + "WHERE r.id = :id AND r.ownerId = :ownerId AND r.status IN :claimableStatuses")
     int claimForImport(@Param("id") Long id,
+                       @Param("ownerId") Long ownerId,
                        @Param("targetStatus") InboxImportStatus targetStatus,
                        @Param("claimableStatuses") Collection<InboxImportStatus> claimableStatuses,
                        @Param("now") LocalDateTime now);

@@ -43,8 +43,10 @@ const aiStatusLabel = computed(() => {
 const expanded = ref(false)
 /** 当前点击的引用文件；详情抽屉按 ID 重新读取真实文件状态。 */
 const citationFileId = ref<number | null>(null)
+const citationRevision = ref<number | undefined>(undefined)
 /** 文件删除或详情加载失败后保留在对话卡片上的失效提示。 */
-const invalidCitationIds = ref<Set<number>>(new Set())
+const invalidCitationIds = ref<Set<string>>(new Set())
+const citationKey = (citation: ChatCitation) => `${citation.fileId}:${citation.revision}`
 
 /** 读取当前对话模型的配置状态；配置存在不等于网络连接成功。 */
 async function loadAiStatus() {
@@ -62,17 +64,18 @@ function toggleExpand() {
 }
 
 function openCitation(citation: ChatCitation) {
-  if (!citation.fileId || invalidCitationIds.value.has(citation.fileId)) return
+  if (citationIsUnavailable(citation)) return
+  citationRevision.value = citation.revision
   citationFileId.value = citation.fileId
 }
 
 function markCitationUnavailable(fileId: number) {
-  invalidCitationIds.value = new Set(invalidCitationIds.value).add(fileId)
+  invalidCitationIds.value = new Set(invalidCitationIds.value).add(`${fileId}:${citationRevision.value}`)
   if (citationFileId.value === fileId) citationFileId.value = null
 }
 
 function citationIsUnavailable(citation: ChatCitation) {
-  return !citation.fileId || invalidCitationIds.value.has(citation.fileId)
+  return !citation.fileId || !Number.isInteger(citation.revision) || invalidCitationIds.value.has(citationKey(citation))
 }
 
 function citationTypeLabel(type: string) {
@@ -173,7 +176,7 @@ function onQuick(p: string) {
             <div class="citation-list">
               <button
                 v-for="citation in m.citations"
-                :key="`${citation.fileId}-${citation.fileName}`"
+                :key="citationKey(citation)"
                 class="citation-card"
                 :class="{ 'is-unavailable': citationIsUnavailable(citation) }"
                 :disabled="citationIsUnavailable(citation)"
@@ -237,6 +240,7 @@ function onQuick(p: string) {
 
     <FileDetailDrawer
       v-model="citationFileId"
+      :revision="citationRevision"
       :elevated="expanded"
       @unavailable="markCitationUnavailable"
     />

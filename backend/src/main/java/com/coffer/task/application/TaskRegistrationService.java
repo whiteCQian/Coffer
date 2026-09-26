@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Public task-boundary service for creating, replacing, validating, and deleting task records.
  */
+@com.coffer.auth.service.OwnerOnly
 @Service
 @RequiredArgsConstructor
 public class TaskRegistrationService {
@@ -28,6 +29,7 @@ public class TaskRegistrationService {
                 .taskId(taskId)
                 .fileName(fileName)
                 .runMode(captureMode())
+                .modelSnapshotId(com.coffer.model.runtime.ModelExecutionContext.currentId())
                 .status(AsyncTaskStatus.PENDING)
                 .progress(0)
                 .build());
@@ -50,7 +52,7 @@ public class TaskRegistrationService {
     @Transactional(readOnly = true)
     public void requireExistingTask(String taskId) {
         if (asyncTaskRepository.findByTaskId(taskId).isEmpty()) {
-            throw new IllegalArgumentException("任务不存在: " + taskId);
+            throw new com.coffer.auth.service.ResourceNotFoundException();
         }
     }
 
@@ -62,5 +64,9 @@ public class TaskRegistrationService {
 
     private GovernanceRunMode captureMode() {
         return runtimeModeService == null ? GovernanceRunMode.API : runtimeModeService.requireActiveMode();
+    }
+
+    public String findSnapshotId(String taskId) {
+        return asyncTaskRepository.findByTaskId(taskId).orElseThrow(com.coffer.auth.service.ResourceNotFoundException::new).getModelSnapshotId();
     }
 }

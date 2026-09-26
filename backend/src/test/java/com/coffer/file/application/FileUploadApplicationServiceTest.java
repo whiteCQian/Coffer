@@ -35,8 +35,10 @@ class FileUploadApplicationServiceTest {
     private ApplicationEventPublisher eventPublisher;
     private FileUploadApplicationService service;
 
+    @org.junit.jupiter.api.AfterEach void clearOwner() { com.coffer.auth.service.TenantContext.clear(); }
     @BeforeEach
     void setUp() {
+        com.coffer.auth.service.TenantContext.set(7L);
         minioStorageService = mock(MinioStorageService.class);
         fileTypeResolver = new FileTypeResolver();
         pathGenerator = mock(PathGenerator.class);

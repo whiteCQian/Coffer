@@ -25,7 +25,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
         "minio.secret-key=test-secret-key"
 })
 @ActiveProfiles("dev")
-class ArchiveOperationLedgerTest {
+class ArchiveOperationLedgerTest extends com.coffer.auth.OwnerTestSupport {
 
     @Autowired
     private ArchiveOperationBatchRepository batchRepository;

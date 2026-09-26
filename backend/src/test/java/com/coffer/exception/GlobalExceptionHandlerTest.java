@@ -21,8 +21,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 实际应为 400「请求体格式错误」。本测试用非法 UTF-8 字节体触发该场景，验证分类正确。
  */
 @SpringBootTest
-@AutoConfigureMockMvc
-class GlobalExceptionHandlerTest {
+@AutoConfigureMockMvc(addFilters = false)
+class GlobalExceptionHandlerTest extends com.coffer.auth.OwnerTestSupport {
 
     @Autowired
     private MockMvc mockMvc;

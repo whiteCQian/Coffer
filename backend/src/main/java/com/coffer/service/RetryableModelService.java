@@ -23,7 +23,7 @@ public class RetryableModelService {
 
     /**
      * 带重试的模型调用：限流/超时异常自动重试 2 次（共 3 次尝试），
-     * 全部失败后返回包含错误信息的降级响应，不向上抛出。
+     * 全部失败后返回固定的安全降级提示，不向上抛出。
      *
      * @param userMessage 用户消息
      * @param sessionId   会话标识
@@ -34,7 +34,7 @@ public class RetryableModelService {
                 // RetryCallback：实际模型调用逻辑
                 context -> {
                     int attempt = context.getRetryCount() + 1;
-                    log.info("模型调用第 {} 次尝试 sessionId={}", attempt, sessionId);
+                    log.info("模型调用第 {} 次尝试", attempt);
                     return modelCallService.callModel(userMessage, sessionId);
                 },
                 // RecoveryCallback：所有重试失败后的最终降级
@@ -51,7 +51,7 @@ public class RetryableModelService {
     }
 
     /**
-     * 构建降级响应：根据最终异常类型返回包含错误信息的默认响应。
+     * 构建降级响应：根据最终异常类型返回不含底层错误详情的默认提示。
      */
     private String buildFallbackResponse(Throwable lastThrowable) {
         if (lastThrowable instanceof RateLimitException) {
@@ -60,8 +60,6 @@ public class RetryableModelService {
         if (lastThrowable instanceof TimeoutException) {
             return "（模型服务响应超时，请稍后重试）";
         }
-        String detail = lastThrowable != null && lastThrowable.getMessage() != null
-                ? lastThrowable.getMessage() : "未知错误";
-        return "（模型调用失败：" + detail + "）";
+        return "（模型调用失败，请检查模型设置和网络连接）";
     }
 }

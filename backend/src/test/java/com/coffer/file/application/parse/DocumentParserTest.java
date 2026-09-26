@@ -24,7 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @SpringBootTest
 @ExtendWith(MockitoExtension.class)
-class DocumentParserTest {
+class DocumentParserTest extends com.coffer.auth.OwnerTestSupport {
 
     @Autowired
     private TxtParser txtParser;

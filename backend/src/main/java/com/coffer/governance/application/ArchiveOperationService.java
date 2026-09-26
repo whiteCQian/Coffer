@@ -34,6 +34,7 @@ import java.util.UUID;
 
 /** Creates and executes durable archive operations produced by C06 confirmation. */
 @Slf4j
+@com.coffer.auth.service.OwnerOnly
 @Service
 @RequiredArgsConstructor
 public class ArchiveOperationService {
@@ -119,6 +120,7 @@ public class ArchiveOperationService {
 
     /** Runs after the confirmation transaction has committed. */
     @Async("taskExecutor")
+    @com.coffer.auth.service.OwnedJob
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onRequested(ArchiveOperationRequested event) {
         executeBatch(event.batchId());
@@ -136,14 +138,13 @@ public class ArchiveOperationService {
                 try {
                     executeItem(itemId);
                 } catch (Exception e) {
-                    log.error("归档明细执行未处理异常 batchId={}, itemId={}: {}", batchId, itemId,
-                            e.getMessage(), e);
+                    log.error("归档明细执行未处理异常，异常类型={}", e.getClass().getSimpleName());
                     safeMarkFailure(itemId, "EXECUTION_UNEXPECTED", safeMessage(e));
                 }
             }
             persistenceService.recomputeBatch(batchId);
         } catch (Exception e) {
-            log.error("归档批次执行失败 batchId={}: {}", batchId, e.getMessage(), e);
+            log.error("归档批次执行失败，异常类型={}", e.getClass().getSimpleName());
         }
     }
 
@@ -202,7 +203,8 @@ public class ArchiveOperationService {
             }
             persistenceService.markSucceeded(itemId);
         } catch (ArchiveExecutionConflictException e) {
-            persistenceService.markConflicted(itemId, "EXECUTION_CONFLICT", e.getMessage());
+            persistenceService.markConflicted(itemId, "EXECUTION_CONFLICT",
+                    "文件状态或对象指纹已变化，请重新生成整理预览");
         } catch (Exception e) {
             if (readyForDatabase) {
                 compensationRegistry.register(item.getBatchId(), itemId,
@@ -253,7 +255,7 @@ public class ArchiveOperationService {
             throw new IllegalArgumentException("batchId 不能为空");
         }
         return batchRepository.findByBatchId(batchId)
-                .orElseThrow(() -> new IllegalArgumentException("归档操作批次不存在: " + batchId));
+                .orElseThrow(() -> new com.coffer.auth.service.ResourceNotFoundException());
     }
 
     private ArchiveOperationBatchResponse toResponse(ArchiveOperationBatch batch) {
@@ -308,7 +310,7 @@ public class ArchiveOperationService {
         try {
             return objectMapper.readValue(json, new TypeReference<List<String>>() { });
         } catch (Exception e) {
-            log.warn("归档读取预览标签失败，将跳过正式标签写入: {}", e.getMessage());
+            log.warn("归档读取预览标签失败，将跳过正式标签写入");
             return List.of();
         }
     }
@@ -319,7 +321,7 @@ public class ArchiveOperationService {
             persistenceService.markFailed(itemId, code, message,
                     LocalDateTime.now().plusSeconds(delay));
         } catch (Exception persistError) {
-            log.error("归档失败状态写回失败 itemId={}: {}", itemId, persistError.getMessage(), persistError);
+            log.error("归档失败状态写回失败，异常类型={}", persistError.getClass().getSimpleName());
         }
     }
 
@@ -332,8 +334,16 @@ public class ArchiveOperationService {
     }
 
     private String safeMessage(Exception e) {
-        return e.getMessage() == null || e.getMessage().isBlank()
-                ? e.getClass().getSimpleName() : e.getMessage();
+        if (e instanceof ArchiveExecutionConflictException) {
+            return "文件状态或对象指纹已变化，请重新生成整理预览";
+        }
+        if (e instanceof IllegalArgumentException) {
+            return "归档请求无效，请检查整理预览后重试";
+        }
+        if (e instanceof RuntimeException runtime && runtime.getCause() != null) {
+            return "对象存储操作失败，请稍后重试";
+        }
+        return "归档操作失败，请稍后重试";
     }
 
 }

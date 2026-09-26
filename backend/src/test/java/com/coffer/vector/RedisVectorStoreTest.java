@@ -3,6 +3,7 @@ package com.coffer.vector;
 import io.lettuce.core.codec.ByteArrayCodec;
 import io.lettuce.core.output.BooleanOutput;
 import io.lettuce.core.output.IntegerOutput;
+import com.coffer.auth.service.TenantContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,9 +27,11 @@ import static org.assertj.core.api.Assertions.assertThat;
         "minio.access-key=test-access-key",
         "minio.secret-key=test-secret-key"
 })
-class RedisVectorStoreTest {
+class RedisVectorStoreTest extends com.coffer.auth.OwnerTestSupport {
 
     private static final String DOCUMENT_ID = "vector-store-test";
+
+    private String vectorPrefix() { return "coffer:vector:owner:" + TenantContext.requireOwnerId() + ":"; }
 
     @Autowired
     private RedisVectorStore store;
@@ -38,11 +41,11 @@ class RedisVectorStoreTest {
 
     @AfterEach
     void cleanup() {
-        redisTemplate.delete("coffer:vector:metadata:" + DOCUMENT_ID);
+        redisTemplate.delete(vectorPrefix() + "metadata:" + DOCUMENT_ID);
         redisTemplate.execute((RedisCallback<Boolean>) connection -> {
             LettuceConnection lettuceConnection = unwrap(connection);
             return (Boolean) lettuceConnection.execute("VREM", new BooleanOutput<>(ByteArrayCodec.INSTANCE),
-                    "coffer:vector:index".getBytes(StandardCharsets.UTF_8),
+                    (vectorPrefix() + "index").getBytes(StandardCharsets.UTF_8),
                     DOCUMENT_ID.getBytes(StandardCharsets.UTF_8));
         });
     }
@@ -63,7 +66,7 @@ class RedisVectorStoreTest {
         Long dimension = redisTemplate.execute((RedisCallback<Long>) connection -> {
             LettuceConnection lettuceConnection = unwrap(connection);
             return (Long) lettuceConnection.execute("VDIM", new IntegerOutput<>(ByteArrayCodec.INSTANCE),
-                    "coffer:vector:index".getBytes(StandardCharsets.UTF_8));
+                    (vectorPrefix() + "index").getBytes(StandardCharsets.UTF_8));
         });
         assertThat(dimension).isEqualTo(3L);
     }
@@ -90,11 +93,11 @@ class RedisVectorStoreTest {
     }
 
     private void deleteVector(String documentId) {
-        redisTemplate.delete("coffer:vector:metadata:" + documentId);
+        redisTemplate.delete(vectorPrefix() + "metadata:" + documentId);
         redisTemplate.execute((RedisCallback<Boolean>) connection -> {
             LettuceConnection lettuceConnection = unwrap(connection);
             return (Boolean) lettuceConnection.execute("VREM", new BooleanOutput<>(ByteArrayCodec.INSTANCE),
-                    "coffer:vector:index".getBytes(StandardCharsets.UTF_8),
+                    (vectorPrefix() + "index").getBytes(StandardCharsets.UTF_8),
                     documentId.getBytes(StandardCharsets.UTF_8));
         });
     }

@@ -14,6 +14,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 @Slf4j
+@com.coffer.auth.service.OwnerOnly
 @Service
 @RequiredArgsConstructor
 public class GovernanceCompensationProcessor {
@@ -26,6 +27,7 @@ public class GovernanceCompensationProcessor {
     private final MinioStorageService minioStorageService;
     private final ArchiveOperationItemRepository itemRepository;
 
+    @com.coffer.auth.service.OwnerScheduled
     @Scheduled(fixedDelayString = "${coffer.governance.archive.compensation-interval-ms:30000}")
     public void processDue() {
         repository.findDue(List.of(GovernanceCompensationStatus.PENDING, GovernanceCompensationStatus.FAILED),
@@ -66,12 +68,12 @@ public class GovernanceCompensationProcessor {
             }
             registry.succeeded(id);
         } catch (Exception e) {
-            log.warn("治理补偿失败 taskId={}, action={}: {}", id, task.getAction(), e.getMessage());
-            registry.failed(id, e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+            log.warn("治理补偿失败，操作类型={}，异常类型={}", task.getAction(), e.getClass().getSimpleName());
+            registry.failed(id, "治理补偿失败，请稍后重试");
         }
     }
 
     private ArchiveOperationItem requireItem(Long id) {
-        return itemRepository.findById(id).orElseThrow(() -> new IllegalArgumentException("归档操作明细不存在: " + id));
+        return itemRepository.findById(id).orElseThrow(() -> new com.coffer.auth.service.ResourceNotFoundException());
     }
 }

@@ -32,6 +32,7 @@ import java.util.stream.Collectors;
  * 文件列表/查询服务：支持分页、按文件名或标签模糊搜索，并汇总标签确认状态。
  */
 @Slf4j
+@com.coffer.auth.service.OwnerOnly
 @Service
 @RequiredArgsConstructor
 public class FileService {
@@ -170,8 +171,8 @@ public class FileService {
     /**
      * 查询文件详情：基础信息 + 已确认/待确认标签列表 + 标签汇总状态 + 临时预览 URL。
      *
-     * <p>标签按确认状态拆分为两组（已拒绝的标签视为作废，不返回）；预览 URL 通过
-     * {@link MinioStorageService#generatePresignedUrl} 生成（默认 7 天有效期）。
+     * <p>标签按确认状态拆分为两组（已拒绝的标签视为作废，不返回）；预览地址指向
+     * 登录会话保护的文件代理端点，不签发可转发的对象存储链接。
      *
      * @param id 文件 ID
      * @return 文件详情响应
@@ -179,7 +180,7 @@ public class FileService {
      */
     public FileDetailResponse getFileDetail(Long id) {
         FileMetadata fm = fileMetadataRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("文件不存在: " + id));
+                .orElseThrow(() -> new com.coffer.auth.service.ResourceNotFoundException());
         List<FileTagMapping> mappings = fileTagMappingRepository.findByFileId(id);
 
         Map<Long, String> tagNameById = resolveTagNames(mappings);
@@ -188,10 +189,17 @@ public class FileService {
         List<FileTagInfo> pendingTags = toTagInfos(mappings, tagNameById,
                 m -> m.getConfirmationStatus() == ConfirmationStatus.PENDING_CONFIRMATION);
 
-        String previewUrl = minioStorageService.generatePresignedUrl(null, fm.getStoragePath(), null);
+        String previewUrl = fm.getStoragePath() == null || fm.getStoragePath().isBlank()
+                ? null : "/api/files/" + fm.getId() + "/content";
 
         return fileResponseAssembler.toDetailResponse(fm, computeTagStatus(mappings),
                 confirmedTags, pendingTags, previewUrl);
+    }
+
+    /** Resolve content only after the owner-filtered metadata lookup succeeds. */
+    public FileMetadata requireFileForContent(Long id) {
+        return fileMetadataRepository.findById(id)
+                .orElseThrow(() -> new com.coffer.auth.service.ResourceNotFoundException());
     }
 
     /**

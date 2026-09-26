@@ -45,7 +45,7 @@ import static org.mockito.Mockito.when;
         "minio.access-key=test-access-key",
         "minio.secret-key=test-secret-key"
 })
-class ArchiveOperationExecutionTest {
+class ArchiveOperationExecutionTest extends com.coffer.auth.OwnerTestSupport {
 
     @Autowired
     private ArchiveOperationService archiveOperationService;

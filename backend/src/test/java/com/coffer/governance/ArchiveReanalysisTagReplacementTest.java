@@ -39,7 +39,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         "minio.secret-key=test-secret-key"
 })
 @ActiveProfiles("dev")
-class ArchiveReanalysisTagReplacementTest {
+class ArchiveReanalysisTagReplacementTest extends com.coffer.auth.OwnerTestSupport {
 
     @Autowired
     private ArchiveOperationPersistenceService persistenceService;

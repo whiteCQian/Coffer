@@ -1,6 +1,6 @@
 # Coffer · AI 智能文件管家
 
-> **状态说明：**本 README 的启动步骤描述当前工作区的单用户开发/演示实现，当前仍依赖 MinIO；它不代表最终产品合同。最终交付要求 Windows 桌面、服务器 Web、飞牛 OS NAS 三种形态、多账号隔离和独立数据，并将从最终应用移除 MinIO。请以[最终落地计划](docs/plans/AgentFS最终落地执行计划.md)、[ADR-001](docs/decisions/ADR-001-最终产品合同与存储架构.md)和[需求追踪矩阵](docs/plans/需求追踪矩阵.md)作为目标口径。
+> **状态说明：**本 README 描述当前工作区的本机 Web 启动方式；它不代表最终产品合同。最终交付要求 Windows 桌面、服务器 Web、飞牛 OS NAS 三种形态、多账号隔离和独立数据。目标架构是桌面版使用本地文件库且不依赖 MinIO，Web/NAS 保留各自独立的 MinIO 对象存储。请以[最终落地计划](docs/plans/AgentFS最终落地执行计划.md)、[ADR-001](docs/decisions/ADR-001-最终产品合同与存储架构.md)和[需求追踪矩阵](docs/plans/需求追踪矩阵.md)作为目标口径。
 >
 基于 AI Agent 的智能文件存储管理系统。核心闭环：**文件上传 → 异步 AI 解析/打标/摘要 → 标签人工确认 → 自然语言对话搜索（工具调用 + 会话记忆）**。附带多模态图片理解（Qwen-VL）与文件分类归档。
 
@@ -22,16 +22,18 @@ Coffer/
 
 ## 一键启动（推荐）
 
-> 依赖前置：本机已装好 JDK 17+、Node 20+，常驻/可被拉起的 **MySQL(3306)**、**Redis(6379)** 与 **MinIO(9000/9001)**。请通过环境变量提供 MinIO/MySQL 凭据。首次运行时，启动脚本会自动生成本地 `COFFER_SECRET_KEY`。MySQL 请预先建好库 `coffer`；已有安装若使用旧库，可在不入 Git 的 `coffer-local.cmd` 中设置 `COFFER_DB_URL` 指向原库（详见下方「数据持久化说明」）。
+> 依赖前置：JDK 17+、Node 20+；当后端 jar 需要重建时，还需 Maven 3.9.x 和可用的 Maven 依赖缓存/网络。脚本会复用或启动 MySQL(3306)、Redis 8(6379) 与 MinIO(9000/9001)。MySQL、Redis、MinIO 的凭据从环境变量或本地忽略文件读取。
 
 在 `Coffer` 根目录**双击**：
 
 | 脚本 | 作用 |
 |---|---|
-| `start-all.bat` | 检测并拉起本地 Redis + MinIO → 以 **prod 配置启动后端 jar**（8080，连接 MySQL `coffer`（旧安装可由 `COFFER_DB_URL` 指向原库），数据持久化）→ 轮询 `/actuator/health` 至 UP → 启动前端 Vite（5173）→ 自动打开浏览器。首次若 `frontend/node_modules` 缺失会自动 `npm install`（需联网）。 |
-| `stop-all.bat` | 停止后端与前端进程（**保留**共享的 MySQL / Redis / MinIO）。 |
+| `start-all.bat` | 检查 JDK/Node，jar 过期时自动构建；复用或启动 Redis 8 与 MinIO；以 **prod 配置**启动后端并等待 `/actuator/health` 为 UP；启动前端 Vite 并检查首页；最后打开浏览器。服务仅监听 `127.0.0.1`。 |
+| `stop-all.bat` | 只停止当前工作区记录的后端/前端 PID，并校验进程路径和启动时间；**保留** MySQL、Redis 与 MinIO。 |
 
-脚本为纯 ASCII / CRLF 批处理，任意中文代码页均可运行；JDK、Redis、MinIO、jar、前端目录等路径在 `start-all.bat` 顶部可配置。若本机默认 `java`/`mvn` 版本不对，脚本直接用内置的绝对路径 `JAVA_EXE` 启动 jar，不受 PATH 影响。
+批处理入口调用 `scripts/start-coffer.ps1` 与 `scripts/stop-coffer.ps1`。启动脚本会从 `JAVA_HOME`、`COFFER_JAVA_HOME` 和已安装 JDK 中选择 Java 17+；本机 Java 版本低于要求时不会误用。Redis、MinIO 的非默认路径可通过本地 `coffer-local.cmd` 设置 `COFFER_REDIS_EXE`、`COFFER_MINIO_EXE`、`COFFER_MINIO_DATA` 和 `COFFER_MINIO_CONFIG_DIR`。
+
+首次启动会生成 AES-GCM 主密钥文件 `.coffer-encryption-key`（若 `COFFER_SECRET_KEY` 已配置则沿用），以及一次性管理员初始化令牌 `coffer-initial-admin-token.txt`。在登录页完成管理员初始化后，下一次启动会清除令牌文件。请备份并妥善保管主密钥；丢失后无法解密已保存的模型凭据。运行日志在 `logs/`，受管进程状态在 `.coffer-runtime/`，这些本地文件均已排除在 Git 外。
 
 启动成功后访问：
 
@@ -40,9 +42,9 @@ Coffer/
 
 ### 模型密钥配置
 
-首次启动后进入前端「设置」页面，在「Chat / RAG」配置中填写对话模型和可选的 Embedding 模型；如果两者由同一个 OpenAI 兼容服务提供，可勾选共用 Base URL 和 API Key。Vision 仍单独配置。可先点击对应的「测试」按钮，再点击保存。密钥只会提交到后端，后端使用 AES-GCM 加密后保存到数据库，前端不会回显密钥；保存后需要重新测试当前运行模式。
+首次启动时，从 `coffer-initial-admin-token.txt` 复制令牌并在前端完成管理员初始化；管理员创建普通用户后，普通用户可登录并进入「设置」页面配置模型目标。密钥只会提交到后端，后端使用 AES-GCM 加密后保存到数据库，前端不会回显密钥。
 
-生产模式需要基础设施凭据。首次运行 `start-all.bat` 时，会创建不纳入 Git 的 `coffer-local.cmd`，其中保存模型密钥数据库的 AES-GCM 主密钥。该文件丢失后无法解密已保存的模型密钥，请妥善备份，且不要替换其中的值：
+本地启动需要基础设施凭据。可在不纳入 Git 的 `coffer-local.cmd` 中配置，或设置为当前用户/机器环境变量：
 
 ```powershell
 $env:MYSQL_PASSWORD = "replace-with-mysql-password"
@@ -50,11 +52,11 @@ $env:MINIO_ROOT_USER = "replace-with-minio-user"
 $env:MINIO_ROOT_PASSWORD = "replace-with-minio-password"
 ```
 
-启动脚本会检查基础设施变量并自动加载本地主密钥；开发环境未设置该主密钥时仍使用仅限本地开发的临时回退值。
+启动脚本只读取 `coffer-local.cmd`，不会覆盖该文件；若没有其他来源的 `COFFER_SECRET_KEY`，会在项目根目录单独创建 `.coffer-encryption-key`。本机 loopback 运行默认将 `COFFER_COOKIE_SECURE` 设为 `false`，生产部署必须使用 HTTPS 并启用 Secure Cookie。
 
-> 说明：`start-all.bat` 检测到端口已被占用会跳过对应服务（例如你已经手动跑着 Redis/MinIO），不会重复启动。前端 `node_modules/` 可删除以缩小包体积，下次双击会自动重装。
+> 说明：端口已被占用时，脚本会复用已运行的 Redis/MinIO；8080 和 5173 则分别做健康/API 与前端首页检查。缺少前端依赖时会使用 `npm ci` 或 `pnpm install`，完成后直接用 Node 启动 Vite。脚本不会按进程名批量杀进程。
 
-> **数据持久化说明（重要）**：`start-all.bat` 以后端 `prod` 配置启动，业务数据持久化到 **MySQL 库 `coffer`**；旧安装的 `coffer-local.cmd` 保留原库地址、MinIO bucket 与加密主密钥。数据库结构、索引和升级记录由 Flyway 管理，首次启动新库会自动执行迁移；已有数据库需按文档建立基线。开发环境使用 H2 本地文件库，后端重启后数据保留；测试环境使用独立内存 H2。旧 `docs/archive/sql/fulltext_search.sql` 仅作为历史参考，不再作为正式迁移入口。
+> **数据持久化说明（重要）**：`start-all.bat` 以后端 `prod` 配置启动，优先使用 `COFFER_DB_URL` 指定的 MySQL 库；未设置时使用本机 `coffer` 库。Flyway 会在启动时运行数据库迁移，旧的无 owner 数据不会分配给新账号，也不会被启动脚本删除。正式迁移前仍需遵循[最终落地计划](docs/plans/AgentFS最终落地执行计划.md)完成快照和旧数据清理审批。测试环境使用独立内存 H2。旧 `docs/archive/sql/fulltext_search.sql` 仅作为历史参考，不再作为正式迁移入口。
 
 ## 技术栈
 
@@ -77,8 +79,8 @@ Hybrid 检索默认关闭；启用时设置 `COFFER_EMBEDDING_ENABLED=true` 和
 超时会直接返回词法召回结果。
 
 文件删除后的向量清理由数据库任务表持久化并自动重试。Redis 丢失或需要全量恢复时，
-调用 `POST /api/admin/vector/reindex` 创建异步重建任务，再用
-`GET /api/admin/vector/reindex/{jobId}` 查询进度；重建写入临时 generation，校验后切换活动
+调用 `POST /api/vector/reindex` 创建异步重建任务，再用
+`GET /api/vector/reindex/{jobId}` 查询进度；重建写入临时 generation，校验后切换活动
 generation，不会先清空当前可用索引。
 
 ## 手动启动（备用）

@@ -1,6 +1,7 @@
 package com.coffer.file.infrastructure.storage;
 
 import com.coffer.file.domain.CategoryType;
+import com.coffer.auth.service.TenantContext;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -38,10 +39,11 @@ public class PathGenerator {
             type = "other";
         }
         String sanitized = sanitizeFilename(originalFilename);
-        String path = String.format("files/%04d/%02d/%02d/%s/%s_%s",
+        String path = String.format("users/%d/files/%04d/%02d/%02d/%s/%s_%s",
+                TenantContext.requireOwnerId(),
                 now.getYear(), now.getMonthValue(), now.getDayOfMonth(),
                 type, UUID.randomUUID().toString(), sanitized);
-        log.debug("生成存储路径: {}", path);
+        log.debug("生成存储路径");
         return path;
     }
 
@@ -76,9 +78,9 @@ public class PathGenerator {
         }
         String fileName = String.format(Locale.ROOT, "%03X-%s", sequenceNumber,
                 sanitizeArchiveFilename(originalFilename));
-        String path = String.format("%s/%04d/%02d/%02d/%s",
-                resolved.getSlug(), time.getYear(), time.getMonthValue(), time.getDayOfMonth(), fileName);
-        log.debug("生成归档路径: {}", path);
+        String path = String.format("users/%d/archive/%s/%04d/%02d/%02d/%s",
+                TenantContext.requireOwnerId(), resolved.getSlug(), time.getYear(), time.getMonthValue(), time.getDayOfMonth(), fileName);
+        log.debug("生成归档路径");
         return path;
     }
 

@@ -2,7 +2,6 @@ import http from './http'
 import type {
   Category,
   CategoryCountResponse,
-  ChangeCategoryRequest,
   FileDetailResponse,
   FileListResponse,
   FileSortToken,
@@ -34,8 +33,8 @@ export function listFiles(params: ListFilesParams = {}) {
 }
 
 /** 文件详情：基础信息 + 已确认/待确认标签 + 预览 URL */
-export function getFileDetail(id: number) {
-  return http.get<Result<FileDetailResponse>>(`/files/${id}`)
+export function getFileDetail(id: number, revision?: number) {
+  return http.get<Result<FileDetailResponse>>(`/files/${id}`, { params: { revision } })
 }
 
 /** 分类计数：count>0 的分类按数量倒序，供「全部文件」顶部 tab 徽标 */
@@ -51,11 +50,6 @@ export function searchFiles(params: { keyword?: string; tag?: string; page?: num
 /** 文件重命名（返回更新后详情，前端直接刷新当前行/抽屉） */
 export function renameFile(id: number, payload: RenameFileRequest) {
   return http.patch<Result<FileDetailResponse>>(`/files/${id}`, payload)
-}
-
-/** 文件改分类（归档文件自动触发物理搬移到新分类目录） */
-export function changeCategory(id: number, payload: ChangeCategoryRequest) {
-  return http.put<Result<FileDetailResponse>>(`/files/${id}/category`, payload)
 }
 
 /** 删除文件：允许任意状态，级联清理标签/任务/MinIO 对象 */

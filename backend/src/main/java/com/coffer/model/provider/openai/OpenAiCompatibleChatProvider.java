@@ -45,17 +45,17 @@ public class OpenAiCompatibleChatProvider implements ChatProvider {
 
     @Override
     public ChatResponse chat(ChatRequest request) {
-        return delegate.chat(request);
+        return com.coffer.model.provider.ModelInvocationException.safely(() -> delegate.chat(request));
     }
 
     @Override
     public ChatResponse chat(ChatRequest request, ChatRequestOptions options) {
-        return delegate.chat(request, options);
+        return com.coffer.model.provider.ModelInvocationException.safely(() -> delegate.chat(request, options));
     }
 
     @Override
     public ChatResponse doChat(ChatRequest request) {
-        return delegate.doChat(request);
+        return com.coffer.model.provider.ModelInvocationException.safely(() -> delegate.doChat(request));
     }
 
     @Override
@@ -75,17 +75,17 @@ public class OpenAiCompatibleChatProvider implements ChatProvider {
 
     @Override
     public String chat(String userMessage) {
-        return delegate.chat(userMessage);
+        return com.coffer.model.provider.ModelInvocationException.safely(() -> delegate.chat(userMessage));
     }
 
     @Override
     public ChatResponse chat(ChatMessage... messages) {
-        return delegate.chat(messages);
+        return com.coffer.model.provider.ModelInvocationException.safely(() -> delegate.chat(messages));
     }
 
     @Override
     public ChatResponse chat(List<ChatMessage> messages) {
-        return delegate.chat(messages);
+        return com.coffer.model.provider.ModelInvocationException.safely(() -> delegate.chat(messages));
     }
 
     @Override

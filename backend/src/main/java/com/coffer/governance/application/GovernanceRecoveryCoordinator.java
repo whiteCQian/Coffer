@@ -2,6 +2,7 @@ package com.coffer.governance.application;
 
 import com.coffer.governance.domain.*;
 import com.coffer.governance.infrastructure.persistence.ArchiveOperationItemRepository;
+import com.coffer.auth.service.TenantJobRunner;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -20,9 +21,14 @@ public class GovernanceRecoveryCoordinator {
     private final GovernanceCompensationRegistry registry;
     private final ArchiveOperationPersistenceService archivePersistence;
     private final ArchiveRollbackPersistenceService rollbackPersistence;
+    private final TenantJobRunner tenantJobRunner;
 
     @EventListener(ApplicationReadyEvent.class)
     public void recover() {
+        tenantJobRunner.runForEnabledOwners(ownerId -> recoverForOwner());
+    }
+
+    private void recoverForOwner() {
         registry.recoverInterruptedTasks();
         recoverArchiveItems();
         recoverRollbackItems();

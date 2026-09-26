@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.List;
 
+@com.coffer.auth.service.OwnerOnly
 @Service
 @RequiredArgsConstructor
 public class GovernanceCompensationRegistry {
@@ -20,6 +21,7 @@ public class GovernanceCompensationRegistry {
     public synchronized GovernanceCompensationTask register(String batchId, Long itemId,
                                                 GovernanceCompensationAction action,
                                                 String objectPath, String error) {
+        com.coffer.service.MinioStorageService.requireOwnedPath(objectPath);
         String key = itemId + ":" + action;
         GovernanceCompensationTask task = repository.findByTaskKey(key).orElse(null);
         if (task == null) {
@@ -97,7 +99,7 @@ public class GovernanceCompensationRegistry {
     }
 
     private GovernanceCompensationTask lock(Long id) {
-        return repository.findByIdForUpdate(id).orElseThrow(() -> new IllegalArgumentException("补偿任务不存在: " + id));
+        return repository.findByIdForUpdate(id).orElseThrow(() -> new com.coffer.auth.service.ResourceNotFoundException());
     }
     private GovernanceCompensationTaskResponse toResponse(GovernanceCompensationTask t) {
         return new GovernanceCompensationTaskResponse(t.getId(), t.getBatchId(), t.getItemId(), t.getAction(),

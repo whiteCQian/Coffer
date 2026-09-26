@@ -44,10 +44,10 @@ public class FileTagController {
             return Result.success();
         } catch (IllegalArgumentException e) {
             // 业务异常（关联不存在、参数非法）：返回 400 + 明确错误信息
-            log.warn("标签确认业务异常: {}", e.getMessage());
+            log.warn("标签确认业务异常");
             return Result.error(400, e.getMessage());
         } catch (Exception e) {
-            log.error("确认标签失败 fileId={}, tagId={}: {}", request.getFileId(), request.getTagId(), e.getMessage(), e);
+            log.error("确认标签失败，异常类型={}", e.getClass().getSimpleName());
             return Result.error(500, "确认标签失败");
         }
     }
@@ -62,14 +62,14 @@ public class FileTagController {
     public Result<Void> rejectTag(@RequestBody @Valid RejectTagRequest request) {
         try {
             tagConfirmationService.rejectTag(request.getFileId(), request.getTagId(), request.getNewTagName());
-            log.info("标签拒绝成功 fileId={}, tagId={}, newTagName={}", request.getFileId(), request.getTagId(), request.getNewTagName());
+            log.info("标签拒绝成功 fileId={}, tagId={}", request.getFileId(), request.getTagId());
             return Result.success();
         } catch (IllegalArgumentException e) {
             // 业务异常（关联不存在、参数非法）：返回 400 + 明确错误信息
-            log.warn("拒绝标签业务异常: {}", e.getMessage());
+            log.warn("拒绝标签业务异常");
             return Result.error(400, e.getMessage());
         } catch (Exception e) {
-            log.error("拒绝标签失败 fileId={}, tagId={}: {}", request.getFileId(), request.getTagId(), e.getMessage(), e);
+            log.error("拒绝标签失败，异常类型={}", e.getClass().getSimpleName());
             return Result.error(500, "拒绝标签失败");
         }
     }
@@ -100,8 +100,17 @@ public class FileTagController {
      */
     @GetMapping("/suggest")
     public Result<List<TagCandidateResponse>> suggestTags(@RequestParam String q) {
+        return Result.success(tagSuggestionService.suggestLocal(q));
+    }
+
+    @PostMapping("/suggest")
+    @com.coffer.model.runtime.ModelSubmission("TAG_SUGGEST")
+    public Result<List<TagCandidateResponse>> suggestTagsWithModel(@RequestBody SuggestRequest request) {
+        String q = request.query();
         List<TagCandidateResponse> suggestions = tagSuggestionService.suggest(q);
-        log.info("标签联想完成 q={}, 共 {} 个建议", q, suggestions.size());
+        log.info("标签联想完成，共 {} 个建议", suggestions.size());
         return Result.success(suggestions);
     }
+
+    public record SuggestRequest(String query) {}
 }

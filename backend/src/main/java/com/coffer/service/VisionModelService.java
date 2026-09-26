@@ -121,7 +121,7 @@ public class VisionModelService {
             String description = descriptionNode.isTextual() ? descriptionNode.asText().trim() : "";
             return new VisionResult(category, tags, description);
         } catch (Exception e) {
-            log.warn("视觉识别 JSON 解析失败，降级为 OTHER: {}", raw, e);
+            log.warn("视觉识别 JSON 解析失败，降级为 OTHER，异常类型={}", e.getClass().getSimpleName());
             return new VisionResult(CategoryType.OTHER, List.of(), "");
         }
     }

@@ -17,7 +17,7 @@ public final class ModeAwareEmbeddingProvider implements EmbeddingProvider {
     }
 
     private EmbeddingProvider delegate() {
-        return providerFactory.embedding(modeService.providerMode());
+        return providerFactory.embedding(ModelExecutionContext.require().mode());
     }
 
     @Override

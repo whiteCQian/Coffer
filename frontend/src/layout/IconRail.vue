@@ -4,6 +4,8 @@ import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { getTheme, toggleTheme } from '@/theme'
+import { useAuthStore } from '@/stores/auth'
+import { useFileViewStore } from '@/stores/fileView'
 
 /** 导航表：点击 push，激活态按 path 前缀匹配 */
 const NAV = [
@@ -16,6 +18,9 @@ const NAV = [
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
+const visibleNav = computed(() => auth.isAdmin ? [{ path: '/admin', label: '管理控制台', icon: Setting, exact: true }] : NAV)
+const fileView = useFileViewStore()
 
 const current = computed(() => route.path)
 function isActive(nav: (typeof NAV)[number]) {
@@ -28,6 +33,15 @@ const isDark = computed(() => theme.value === 'dark')
 function onToggleTheme() {
   theme.value = toggleTheme()
 }
+
+async function signOut() {
+  try {
+    await auth.signOut()
+  } finally {
+    fileView.clearTag()
+    await router.replace({ name: 'login' })
+  }
+}
 </script>
 
 <template>
@@ -35,7 +49,7 @@ function onToggleTheme() {
     <div class="rail-top">
       <div class="rail-logo" title="Coffer">智</div>
       <button
-        v-for="n in NAV"
+        v-for="n in visibleNav"
         :key="n.path"
         class="rail-icon"
         :class="{ 'is-active': isActive(n) }"
@@ -53,7 +67,9 @@ function onToggleTheme() {
       >
         <el-icon><component :is="isDark ? Sunny : Moon" /></el-icon>
       </button>
-      <div class="rail-avatar" title="用户">Q</div>
+      <button class="rail-avatar" :title="`${auth.user?.username || '用户'} · 退出登录`" @click="signOut">
+        {{ auth.user?.username?.slice(0, 1).toUpperCase() || 'Q' }}
+      </button>
     </div>
   </nav>
 </template>
@@ -147,5 +163,6 @@ function onToggleTheme() {
   color: var(--text-2);
   font-size: 15px;
   cursor: pointer;
+  font: inherit;
 }
 </style>

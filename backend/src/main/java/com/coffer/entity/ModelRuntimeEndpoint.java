@@ -21,13 +21,14 @@ import java.time.LocalDateTime;
 /** User-managed endpoint overrides for each runtime mode and model capability. */
 @Entity
 @Table(name = "model_runtime_endpoint", uniqueConstraints = @UniqueConstraint(
-        name = "uk_model_runtime_endpoint_mode_capability",
-        columnNames = {"run_mode", "capability"}))
+        name = "uk_model_runtime_endpoint_owner_mode_capability",
+        columnNames = {"owner_id", "run_mode", "capability"}))
 @Data
+@lombok.EqualsAndHashCode(callSuper = false)
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class ModelRuntimeEndpoint {
+public class ModelRuntimeEndpoint extends com.coffer.auth.domain.TenantOwnedEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

@@ -24,6 +24,7 @@ import java.util.UUID;
 
 /** Application use case for uploading a file and registering its processing task. */
 @Slf4j
+@com.coffer.auth.service.OwnerOnly
 @Service
 @RequiredArgsConstructor
 public class FileUploadApplicationService {
@@ -43,7 +44,7 @@ public class FileUploadApplicationService {
         try (InputStream inputStream = file.getInputStream()) {
             return uploadStream(fileName, file.getContentType(), file.getSize(), inputStream, null);
         } catch (IOException e) {
-            log.error("读取上传文件失败 fileName={}: {}", fileName, e.getMessage(), e);
+            log.error("读取上传文件失败，类型={}", e.getClass().getSimpleName());
             throw new RuntimeException("文件上传失败", e);
         }
     }
@@ -76,8 +77,7 @@ public class FileUploadApplicationService {
                         () -> verifyStableSnapshotUnchecked(sourcePath, expectedSize, expectedModifiedMillis));
             }
         } catch (IOException e) {
-            log.warn("读取收件箱文件失败 fileName={}, path={}: {}",
-                    fileName, sourcePath, e.getMessage());
+            log.warn("读取收件箱文件失败，类型={}", e.getClass().getSimpleName());
             throw new RuntimeException("收件箱文件读取失败: " + fileName, e);
         }
     }
@@ -103,8 +103,7 @@ public class FileUploadApplicationService {
                 afterUploadCheck.run();
             }
 
-            log.info("文件写入并登记成功 taskId={}, fileName={}, size={}B, storagePath={}",
-                    taskId, fileName, fileSize, storagePath);
+            log.info("文件写入并登记成功 taskId={}, size={}B", taskId, fileSize);
             return FileUploadResponse.builder()
                     .taskId(taskId)
                     .fileName(fileName)
@@ -140,10 +139,10 @@ public class FileUploadApplicationService {
     private void compensateObject(String storagePath) {
         try {
             minioStorageService.deleteFile(null, storagePath);
-            log.warn("数据库登记失败，已补偿删除 MinIO 对象 storagePath={}", storagePath);
+            log.warn("数据库登记失败，已补偿删除 MinIO 对象");
         } catch (Exception cleanupException) {
-            log.error("数据库登记失败且 MinIO 补偿删除失败，留下孤儿对象 storagePath={}: {}",
-                    storagePath, cleanupException.getMessage(), cleanupException);
+            log.error("数据库登记失败且 MinIO 补偿删除失败，留下孤儿对象，类型={}",
+                    cleanupException.getClass().getSimpleName());
         }
     }
 }

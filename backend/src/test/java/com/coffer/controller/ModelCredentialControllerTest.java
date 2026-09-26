@@ -21,8 +21,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
-@AutoConfigureMockMvc
-class ModelCredentialControllerTest {
+@AutoConfigureMockMvc(addFilters = false)
+class ModelCredentialControllerTest extends com.coffer.auth.OwnerTestSupport {
 
     @Autowired
     private MockMvc mockMvc;

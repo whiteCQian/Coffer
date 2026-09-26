@@ -24,8 +24,8 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "governance_preview_batch",
         uniqueConstraints = {
-                @UniqueConstraint(name = "uk_governance_preview_batch_preview_id", columnNames = "preview_id"),
-                @UniqueConstraint(name = "uk_governance_preview_batch_request_id", columnNames = "request_id")
+                @UniqueConstraint(name = "uk_governance_preview_batch_preview_id", columnNames = {"owner_id", "preview_id"}),
+                @UniqueConstraint(name = "uk_governance_preview_batch_request_id", columnNames = {"owner_id", "request_id"})
         },
         indexes = {
                 @Index(name = "idx_governance_preview_batch_status_expires", columnList = "status,expires_at"),
@@ -36,7 +36,8 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 @EqualsAndHashCode(callSuper = false)
-public class GovernancePreviewBatch {
+public class GovernancePreviewBatch extends com.coffer.auth.domain.TenantOwnedEntity {
+    @Column(name = "model_snapshot_id", length = 36) private String modelSnapshotId;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

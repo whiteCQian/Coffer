@@ -50,7 +50,7 @@ import java.util.Locale;
  * </ul>
  * 两分支汇合到 {@link #finishProcessing}：标签去重入库并建立文件-标签关联
  * （PENDING 待人工确认）→ category 落库 → 摘要写入文件元数据 → 更新文件与任务状态为完成。
- * 任一环节异常则文件与任务置为 FAILED，错误信息写入任务 {@code result} 供前端轮询展示。
+ * 任一环节异常则文件与任务置为 FAILED，并写入不含底层异常详情的安全错误摘要供前端轮询展示。
  *
  * <p>文件经 {@code FileMetadata.taskId = taskId} 与任务关联定位（AsyncTask 无 fileMetadataId 字段）。
  * 方法标注 {@code @Async("taskExecutor")} 异步执行保证上传接口快速返回，
@@ -58,6 +58,7 @@ import java.util.Locale;
  * 保证无论成功或失败任务终态均被持久化，且异常不向外抛出。
  */
 @Slf4j
+@com.coffer.auth.service.OwnerOnly
 @Service
 @RequiredArgsConstructor
 public class UploadPipelineService {
@@ -85,6 +86,8 @@ public class UploadPipelineService {
     /** Optional for focused unit tests that construct this service without Spring. */
     @Autowired(required = false)
     private ModelRuntimeModeService runtimeModeService;
+    @Autowired(required = false)
+    private com.coffer.model.runtime.ModelExecutionSnapshotService modelSnapshots;
 
     /** Field injection preserves the existing small Mockito constructor used by unit tests. */
     @Autowired(required = false)
@@ -115,13 +118,13 @@ public class UploadPipelineService {
                 .fileType(fileType)
                 .storagePath(storagePath)
                 .taskId(taskId)
+                .modelSnapshotId(com.coffer.model.runtime.ModelExecutionContext.currentId())
                 .build();
         fileMetadataRepository.save(metadata);
 
         // AsyncTask 无 fileMetadataId 字段，文件与任务经 FileMetadata.taskId 关联
         taskRegistrationService.createPendingTask(taskId, originalFilename);
-        log.info("上传任务登记完成 taskId={}, fileMetadataId={}, fileName={}",
-                taskId, metadata.getId(), originalFilename);
+        log.info("上传任务登记完成");
         return metadata;
     }
 
@@ -130,9 +133,18 @@ public class UploadPipelineService {
      *
      * @param taskId 异步任务 ID（同时作为 FileMetadata.taskId 关联定位文件）
      */
-    @Async("taskExecutor")
     @Transactional
     public void processUploadPipeline(String taskId) {
+        if (modelSnapshots != null) {
+            String id = taskRegistrationService.findSnapshotId(taskId);
+            if (id == null) {
+                asyncTaskService.markAsFailed(taskId, "任务缺少模型目标确认，请确认后重试");
+                fileMetadataRepository.findByTaskId(taskId).ifPresent(file -> { file.markAsFailed(); fileMetadataRepository.save(file); });
+                return;
+            }
+            modelSnapshots.with(id, () -> processUploadPipelineInternal(taskId));
+            return;
+        }
         java.util.Optional<GovernanceRunMode> taskMode = taskRegistrationService.findRunMode(taskId);
         if (runtimeModeService != null && taskMode != null && taskMode.isPresent()) {
             runtimeModeService.withSnapshot(taskMode.get(), () -> processUploadPipelineInternal(taskId));
@@ -150,8 +162,8 @@ public class UploadPipelineService {
             FileMetadata metadata = fileMetadataRepository.findByTaskId(taskId)
                     .orElse(null);
             if (metadata == null) {
-                asyncTaskService.markAsFailed(taskId, "文件元数据不存在: " + taskId);
-                log.error("文件处理管道失败：文件元数据不存在 taskId={}", taskId);
+                asyncTaskService.markAsFailed(taskId, "文件元数据不存在");
+                log.error("文件处理管道失败：文件元数据不存在");
                 return;
             }
 
@@ -159,8 +171,7 @@ public class UploadPipelineService {
             asyncTaskService.updateTaskStatus(taskId, AsyncTaskStatus.PROCESSING, 10, null);
             metadata.markAsProcessing();
             fileMetadataRepository.save(metadata);
-            log.info("文件处理管道启动 taskId={}, fileMetadataId={}, fileName={}",
-                    taskId, metadata.getId(), metadata.getFileName());
+            log.info("文件处理管道启动");
 
             // 4. 按文件类型分支：图片走视觉模型，其余保持文本解析路径
             if (isImage(metadata.getFileType())) {
@@ -169,17 +180,18 @@ public class UploadPipelineService {
                 processText(metadata, taskId);
             }
         } catch (Exception e) {
-            log.error("文件处理管道执行失败 taskId={}: {}", taskId, e.getMessage(), e);
+            String safeFailure = safeFailureMessage(e);
+            log.error("文件处理管道执行失败，异常类型={}", e.getClass().getSimpleName());
             try {
-                asyncTaskService.markAsFailed(taskId, e.getMessage());
+                asyncTaskService.markAsFailed(taskId, safeFailure);
                 FileMetadata failedMetadata = fileMetadataRepository.findByTaskId(taskId).orElse(null);
                 if (failedMetadata != null) {
                     failedMetadata.markAsFailed();
                     fileMetadataRepository.save(failedMetadata);
                 }
-                log.warn("文件处理管道失败状态已回写 taskId={}", taskId);
+                log.warn("文件处理管道失败状态已回写");
             } catch (Exception saveError) {
-                log.error("失败状态回写失败 taskId={}: {}", taskId, saveError.getMessage(), saveError);
+                log.error("失败状态回写失败，异常类型={}", saveError.getClass().getSimpleName());
             }
         }
     }
@@ -202,14 +214,14 @@ public class UploadPipelineService {
             }
             text = parseResult.getContent();
         }
-        log.info("文件解析完成 taskId={}, 文本长度 {} 字符", taskId, text == null ? 0 : text.length());
+        log.info("文件解析完成，文本长度 {} 字符", text == null ? 0 : text.length());
 
         // 基于文本生成受控分类 + 关键词标签（进度 50），一次调用同时产出 category 与 tags
         asyncTaskService.updateTaskStatus(taskId, AsyncTaskStatus.PROCESSING, 50, null);
         TagAndCategoryResult tagResult = tagGenerationTool.generateTagAndCategory(text);
         List<String> tagNames = tagResult.tags();
-        log.info("标签与分类生成完成 taskId={}, 分类={}, 标签 {} 个: {}",
-                taskId, tagResult.category(), tagNames.size(), tagNames);
+        log.info("标签与分类生成完成，分类={}, 标签 {} 个",
+                tagResult.category(), tagNames.size());
 
         finishProcessing(metadata, tagResult.category(), tagNames, buildSummary(text), taskId);
         if (eventPublisher != null) {
@@ -233,7 +245,7 @@ public class UploadPipelineService {
         asyncTaskService.updateTaskStatus(taskId, AsyncTaskStatus.PROCESSING, 30, null);
         Long reportedSize = metadata.getFileSize();
         if (reportedSize != null && reportedSize > MAX_IMAGE_SIZE_BYTES) {
-            throw new IllegalStateException("图片过大（" + reportedSize + "B），超过 " + MAX_IMAGE_SIZE_BYTES + "B 上限");
+            throw new SafeProcessingException("图片过大，超过 10MB 处理上限");
         }
 
         byte[] imageBytes;
@@ -241,15 +253,15 @@ public class UploadPipelineService {
             imageBytes = inputStream.readAllBytes();
         }
         if (imageBytes.length > MAX_IMAGE_SIZE_BYTES) {
-            throw new IllegalStateException("图片过大（" + imageBytes.length + "B），超过 " + MAX_IMAGE_SIZE_BYTES + "B 上限");
+            throw new SafeProcessingException("图片过大，超过 10MB 处理上限");
         }
 
         asyncTaskService.updateTaskStatus(taskId, AsyncTaskStatus.PROCESSING, 60, null);
         String base64 = Base64.getEncoder().encodeToString(imageBytes);
         VisionResult visionResult = visionModelService.describeImage(
                 base64, imageMime(metadata.getFileType()), metadata.getFileName());
-        log.info("图片识别完成 taskId={}, 分类={}, 标签 {} 个, 描述={}",
-                taskId, visionResult.category(), visionResult.tags().size(), visionResult.description());
+        log.info("图片识别完成，分类={}, 标签 {} 个",
+                visionResult.category(), visionResult.tags().size());
 
         String summary = visionResult.description() == null ? "" : visionResult.description();
         finishProcessing(metadata, visionResult.category(), visionResult.tags(), summary, taskId);
@@ -268,7 +280,7 @@ public class UploadPipelineService {
     private void finishProcessing(FileMetadata metadata, CategoryType category, List<String> tagNames,
                                   String summary, String taskId) {
         if (tagNames == null || tagNames.isEmpty()) {
-            throw new IllegalStateException("标签生成失败，无有效标签");
+            throw new SafeProcessingException("标签生成失败，无有效标签");
         }
         metadata.setCategory(category);
 
@@ -285,12 +297,12 @@ public class UploadPipelineService {
             mappings.add(mapping);
         }
         fileTagMappingRepository.saveAll(mappings);
-        log.info("文件标签关联入库完成 taskId={}, 关联 {} 条", taskId, mappings.size());
+        log.info("文件标签关联入库完成，关联 {} 条", mappings.size());
 
         metadata.markAsCompleted(summary);
         fileMetadataRepository.save(metadata);
         asyncTaskService.markAsCompleted(taskId, summary);
-        log.info("文件处理管道完成 taskId={}, fileName={}", taskId, metadata.getFileName());
+        log.info("文件处理管道完成");
     }
 
     /**
@@ -330,5 +342,24 @@ public class UploadPipelineService {
             return "";
         }
         return text.length() <= SUMMARY_MAX_LENGTH ? text : text.substring(0, SUMMARY_MAX_LENGTH);
+    }
+
+    /** Returns only an allowlisted, non-sensitive reason for display in task status. */
+    private static String safeFailureMessage(Exception error) {
+        if (error instanceof SafeProcessingException safeError) {
+            return safeError.safeMessage;
+        }
+        return "文件处理失败，请稍后重试或联系管理员";
+    }
+
+    /** A deliberate, pre-approved user-facing failure reason with no exception detail attached. */
+    private static final class SafeProcessingException extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+
+        private final String safeMessage;
+
+        private SafeProcessingException(String safeMessage) {
+            this.safeMessage = safeMessage;
+        }
     }
 }

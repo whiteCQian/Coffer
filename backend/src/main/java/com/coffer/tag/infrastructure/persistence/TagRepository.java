@@ -10,7 +10,7 @@ import java.util.Optional;
  * 标签 Repository。
  */
 @Repository
-public interface TagRepository extends JpaRepository<Tag, Long> {
+public interface TagRepository extends com.coffer.auth.infrastructure.OwnedRepository<Tag, Long> {
 
     /**
      * 按标签名精确查找。

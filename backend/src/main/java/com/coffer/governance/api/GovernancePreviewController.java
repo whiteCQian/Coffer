@@ -31,17 +31,20 @@ public class GovernancePreviewController {
     private final GovernancePreviewService governancePreviewService;
 
     @PostMapping
+    @com.coffer.model.runtime.ModelSubmission("GOVERNANCE")
     public Result<GovernancePreviewResponse> create(@Valid @RequestBody CreateGovernancePreviewRequest request) {
         return Result.success(governancePreviewService.create(request));
     }
 
     @PostMapping("/reanalyze")
+    @com.coffer.model.runtime.ModelSubmission("GOVERNANCE")
     public Result<GovernancePreviewResponse> reanalyze(
             @Valid @RequestBody ReanalyzeGovernanceFilesRequest request) {
         return Result.success(governancePreviewService.reanalyze(request));
     }
 
     @PostMapping("/reanalyze/{fileId}")
+    @com.coffer.model.runtime.ModelSubmission("GOVERNANCE")
     public Result<GovernancePreviewResponse> reanalyzeOne(
             @PathVariable Long fileId,
             @Valid @RequestBody ReanalyzeGovernanceFileRequest request) {
@@ -58,6 +61,7 @@ public class GovernancePreviewController {
     }
 
     @PostMapping("/{previewId}/regenerate")
+    @com.coffer.model.runtime.ModelSubmission("GOVERNANCE")
     public Result<GovernancePreviewResponse> regenerate(
             @PathVariable String previewId,
             @Valid @RequestBody RegenerateGovernancePreviewRequest request) {

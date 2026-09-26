@@ -1,7 +1,6 @@
 package com.coffer.file.api;
 
 import com.coffer.file.api.dto.CategoryCountResponse;
-import com.coffer.file.api.dto.ChangeCategoryRequest;
 import com.coffer.file.api.dto.FileDetailResponse;
 import com.coffer.file.api.dto.FileListResponse;
 import com.coffer.file.api.dto.FileUploadRequest;
@@ -11,12 +10,20 @@ import com.coffer.dto.Result;
 import com.coffer.file.application.FileService;
 import com.coffer.file.application.FileUploadApplicationService;
 import com.coffer.file.application.FileLifecycleApplicationService;
+import com.coffer.file.domain.FileMetadata;
+import com.coffer.service.MinioStorageService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ContentDisposition;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
@@ -30,6 +37,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.nio.charset.StandardCharsets;
+import java.io.InputStream;
+import java.util.Locale;
 
 /**
  * 文件接口：列表查询与上传。
@@ -43,6 +53,8 @@ public class FileController {
     private final FileService fileService;
     private final FileUploadApplicationService fileUploadApplicationService;
     private final FileLifecycleApplicationService fileLifecycleApplicationService;
+    private final MinioStorageService minioStorageService;
+    private final com.coffer.service.PrivateFileAccess privateFiles;
 
     /**
      * 文件列表查询：可选关键词（文件名/AI摘要/未拒绝标签模糊匹配）、可选分类过滤、
@@ -62,13 +74,12 @@ public class FileController {
             @RequestParam(required = false) String tag,
             @RequestParam(required = false) String sort,
             @PageableDefault(size = 10) Pageable pageable) {
-        log.info("查询文件列表 keyword={}, category={}, tag={}, sort={}, page={}, size={}",
-                keyword, category, tag, sort, pageable.getPageNumber(), pageable.getPageSize());
+        log.info("查询文件列表 page={}, size={}", pageable.getPageNumber(), pageable.getPageSize());
         try {
             return Result.success(fileService.listFiles(keyword, category, tag, sort, pageable));
         } catch (IllegalArgumentException e) {
             // 非法排序 token / 非法分类参数 → 400
-            log.warn("文件列表查询参数非法: {}", e.getMessage());
+            log.warn("文件列表查询参数非法");
             return Result.error(400, e.getMessage());
         }
     }
@@ -90,14 +101,66 @@ public class FileController {
      * @return 统一响应；文件不存在时 code=404
      */
     @GetMapping("/{id}")
-    public Result<FileDetailResponse> getFileDetail(@PathVariable Long id) {
+    public Result<FileDetailResponse> getFileDetail(@PathVariable Long id,
+            @RequestParam(required = false) Long revision) {
         try {
-            return Result.success(fileService.getFileDetail(id));
+            if (revision != null) privateFiles.requireVersion(id, revision);
+            FileDetailResponse detail = fileService.getFileDetail(id);
+            if (revision != null) {
+                privateFiles.requireVersion(id, revision);
+                detail.setPreviewUrl("/api/files/" + id + "/content?revision=" + revision);
+            }
+            return Result.success(detail);
         } catch (IllegalArgumentException e) {
             // 文件不存在 → 404
-            log.warn("文件详情查询失败: {}", e.getMessage());
+            log.warn("文件详情查询失败");
             return Result.error(404, e.getMessage());
         }
+    }
+
+    /** Authenticated, owner-scoped file content; the browser never receives an object-store URL. */
+    @GetMapping("/{id}/content")
+    public ResponseEntity<org.springframework.core.io.InputStreamResource> getFileContent(@PathVariable Long id,
+            @RequestParam(required = false) Long revision) {
+        FileMetadata metadata;
+        try {
+            metadata = fileService.requireFileForContent(id);
+            if (revision != null) privateFiles.requireVersion(id, revision);
+        } catch (IllegalArgumentException missingOrNotOwned) {
+            return ResponseEntity.notFound().build();
+        }
+        if (metadata.getStoragePath() == null || metadata.getStoragePath().isBlank()) {
+            return ResponseEntity.notFound().build();
+        }
+        MediaType contentType = contentTypeFor(metadata.getFileType());
+        boolean inlineSafe = contentType.getType().equals("image")
+                || contentType.equals(MediaType.APPLICATION_PDF)
+                || contentType.equals(MediaType.TEXT_PLAIN);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(contentType);
+        if (metadata.getFileSize() != null) headers.setContentLength(metadata.getFileSize());
+        headers.setContentDisposition(ContentDisposition.builder(inlineSafe ? "inline" : "attachment")
+                .filename(metadata.getFileName(), StandardCharsets.UTF_8).build());
+        headers.setCacheControl("private, no-store");
+        headers.set("X-Content-Type-Options", "nosniff");
+        headers.set("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'");
+        // Open under the authenticated request scope. ResourceHttpMessageConverter closes the stream.
+        return ResponseEntity.ok().headers(headers).body(new org.springframework.core.io.InputStreamResource(
+                minioStorageService.getFileStream(null, metadata.getStoragePath())));
+    }
+
+    private MediaType contentTypeFor(String fileType) {
+        String extension = fileType == null ? "" : fileType.trim().toLowerCase(Locale.ROOT);
+        return switch (extension) {
+            case "png" -> MediaType.IMAGE_PNG;
+            case "jpg", "jpeg" -> MediaType.IMAGE_JPEG;
+            case "gif" -> MediaType.IMAGE_GIF;
+            case "webp" -> MediaType.parseMediaType("image/webp");
+            case "bmp" -> MediaType.parseMediaType("image/bmp");
+            case "pdf" -> MediaType.APPLICATION_PDF;
+            case "txt" -> MediaType.TEXT_PLAIN;
+            default -> MediaType.APPLICATION_OCTET_STREAM;
+        };
     }
 
     /**
@@ -116,30 +179,16 @@ public class FileController {
             return Result.success(fileService.getFileDetail(id));
         } catch (IllegalArgumentException e) {
             // 文件名非法 / 文件不存在 → 400
-            log.warn("文件重命名失败: {}", e.getMessage());
+            log.warn("文件重命名失败");
             return Result.error(400, e.getMessage());
         }
     }
 
-    /**
-     * 文件改分类：仅 COMPLETED 可改，返回改分类后的完整详情；归档文件会于事务外触发
-     * 对象存储物理搬移到新分类目录。
-     *
-     * @param id      文件 ID
-     * @param request 改分类请求（目标分类为受控枚举名，必填）
-     * @return 统一响应，data 为最新文件详情；分类非法、文件不存在或状态非 COMPLETED 时 code=400
-     */
+    /** Direct category writes were retired because they bypass the preview and archive ledger. */
     @PutMapping("/{id}/category")
-    public Result<FileDetailResponse> changeCategory(@PathVariable Long id,
-                                                     @RequestBody @Valid ChangeCategoryRequest request) {
-        try {
-            fileLifecycleApplicationService.changeCategory(id, request.getCategory());
-            return Result.success(fileService.getFileDetail(id));
-        } catch (IllegalArgumentException e) {
-            // 分类非法 / 文件不存在 / 非 COMPLETED → 400
-            log.warn("文件改分类失败: {}", e.getMessage());
-            return Result.error(400, e.getMessage());
-        }
+    public ResponseEntity<Result<Void>> changeCategory(@PathVariable Long id) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Result.<Void>error(409, "分类变更必须通过整理预览确认"));
     }
 
     /**
@@ -150,13 +199,14 @@ public class FileController {
      * @return 统一响应；文件不存在或状态非 FAILED 时 code=400
      */
     @PostMapping("/{id}/retry")
+    @com.coffer.model.runtime.ModelSubmission("RETRY")
     public Result<Void> retryFile(@PathVariable Long id) {
         try {
             fileLifecycleApplicationService.retryFile(id);
             return Result.success();
         } catch (IllegalArgumentException e) {
             // 文件不存在 / 非失败状态 → 400
-            log.warn("文件重试失败: {}", e.getMessage());
+            log.warn("文件重试失败");
             return Result.error(400, e.getMessage());
         }
     }
@@ -177,7 +227,7 @@ public class FileController {
             return Result.success();
         } catch (IllegalArgumentException e) {
             // 文件不存在 → 404
-            log.warn("文件删除失败: {}", e.getMessage());
+            log.warn("文件删除失败");
             return Result.error(404, e.getMessage());
         }
     }
@@ -194,11 +244,12 @@ public class FileController {
      * @return 统一响应，data 为任务信息（taskId/fileName/fileSize/status/uploadTime）
      */
     @PostMapping("/upload")
+    @com.coffer.model.runtime.ModelSubmission("UPLOAD")
     public Result<FileUploadResponse> uploadFile(@Valid @ModelAttribute FileUploadRequest request) {
         try {
             return Result.success(fileUploadApplicationService.upload(request));
         } catch (Exception e) {
-            log.error("文件上传失败（其他异常）: {}", e.getMessage(), e);
+            log.error("文件上传失败（其他异常），异常类型={}", e.getClass().getSimpleName());
             return Result.error(500, "文件上传失败");
         }
     }

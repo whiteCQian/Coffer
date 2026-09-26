@@ -27,7 +27,7 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "file_tag_mapping",
         uniqueConstraints = {
-                @UniqueConstraint(name = "uk_file_tag_mapping_file_tag", columnNames = {"file_id", "tag_id"})
+                @UniqueConstraint(name = "uk_file_tag_mapping_file_tag", columnNames = {"owner_id", "file_id", "tag_id"})
         },
         indexes = {
                 // 说明：复合唯一约束 (file_id, tag_id) 的最左前缀已能支撑按 file_id 查询，
@@ -37,10 +37,11 @@ import java.time.LocalDateTime;
                 @Index(name = "idx_file_tag_mapping_tag_id", columnList = "tag_id")
         })
 @Data
+@lombok.EqualsAndHashCode(callSuper = false)
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class FileTagMapping {
+public class FileTagMapping extends com.coffer.auth.domain.TenantOwnedEntity {
 
     /** 自增主键。 */
     @Id

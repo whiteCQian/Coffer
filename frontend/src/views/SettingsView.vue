@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import AccountPanel from '@/components/AccountPanel.vue'
+import ModelPrivacyPanel from '@/components/ModelPrivacyPanel.vue'
+import PrivacyPanel from '@/components/PrivacyPanel.vue'
 import {
   deleteRuntimeEndpoint,
   getRuntimeEndpointConfigs,
@@ -258,7 +261,7 @@ onMounted(load)
           <div>
             <p class="eyebrow">CURRENT RUNTIME</p>
             <h2 class="panel-title">当前运行模式</h2>
-            <p class="panel-note">全局只会启用一个模式，切换前必须完成该模式的能力校验。</p>
+            <p class="panel-note">当前账号启用一个模式，切换前必须完成能力校验。已提交任务继续使用原先确认的配置。</p>
           </div>
           <span class="mode-badge" :class="activeMode === selectedMode ? 'is-active' : ''">
             {{ modeLabel(activeMode) }}{{ activeMode === selectedMode ? ' · 当前' : '' }}
@@ -361,9 +364,12 @@ onMounted(load)
         <dl class="kv-list">
           <div class="kv"><dt class="kv-label">前端</dt><dd class="kv-value">Vue 3 · TypeScript · Vite · Element Plus</dd></div>
           <div class="kv"><dt class="kv-label">后端</dt><dd class="kv-value">Spring Boot · LangChain4j · MinIO</dd></div>
-          <div class="kv"><dt class="kv-label">模式</dt><dd class="kv-value">本地单用户</dd></div>
+          <div class="kv"><dt class="kv-label">模式</dt><dd class="kv-value">多账号私有工作区</dd></div>
         </dl>
       </section>
+      <AccountPanel />
+      <ModelPrivacyPanel />
+      <PrivacyPanel />
     </div>
   </div>
 </template>

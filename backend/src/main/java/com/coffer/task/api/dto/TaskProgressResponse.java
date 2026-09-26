@@ -19,6 +19,7 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 public class TaskProgressResponse {
+    private String modelSnapshotId;
 
     /** 任务 ID。 */
     private String taskId;

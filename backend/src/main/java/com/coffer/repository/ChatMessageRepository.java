@@ -11,7 +11,7 @@ import java.util.List;
  * 对话消息 Repository。
  */
 @Repository
-public interface ChatMessageRepository extends JpaRepository<ChatMessage, Long> {
+public interface ChatMessageRepository extends com.coffer.auth.infrastructure.OwnedRepository<ChatMessage, Long> {
 
     /**
      * 按会话 ID 查询该会话下的所有聊天记录，按时间升序排列。

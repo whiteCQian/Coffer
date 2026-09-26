@@ -15,7 +15,7 @@ import java.util.Optional;
 
 /** Persistence access for archive operation batches. */
 @Repository
-public interface ArchiveOperationBatchRepository extends JpaRepository<ArchiveOperationBatch, Long> {
+public interface ArchiveOperationBatchRepository extends com.coffer.auth.infrastructure.OwnedRepository<ArchiveOperationBatch, Long> {
 
     Optional<ArchiveOperationBatch> findByBatchId(String batchId);
 

@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /** Application service for querying asynchronous task progress. */
+@com.coffer.auth.service.OwnerOnly
 @Service
 @RequiredArgsConstructor
 public class TaskProgressApplicationService {
@@ -24,7 +25,7 @@ public class TaskProgressApplicationService {
     @Transactional(readOnly = true)
     public TaskProgressResponse getTaskProgress(String taskId) {
         AsyncTask task = asyncTaskRepository.findByTaskId(taskId)
-                .orElseThrow(() -> new IllegalArgumentException("任务不存在"));
+                .orElseThrow(() -> new com.coffer.auth.service.ResourceNotFoundException());
         return toResponse(task);
     }
 
@@ -33,6 +34,7 @@ public class TaskProgressApplicationService {
                 .taskId(task.getTaskId())
                 .fileName(task.getFileName())
                 .runMode(task.getRunMode())
+                .modelSnapshotId(task.getModelSnapshotId())
                 .status(task.getStatus() == null ? null : task.getStatus().name())
                 .progress(task.getProgress())
                 .result(task.getResult())

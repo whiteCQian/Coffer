@@ -20,7 +20,7 @@ public final class OpenAiCompatibleEmbeddingProvider implements EmbeddingProvide
 
     @Override
     public Response<Embedding> embed(String text) {
-        return delegate.embed(text);
+        return com.coffer.model.provider.ModelInvocationException.safely(() -> delegate.embed(text));
     }
 
     @Override

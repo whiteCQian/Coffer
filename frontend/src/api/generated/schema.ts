@@ -907,6 +907,9 @@ export interface components {
         ChatCitation: {
             /** Format: int64 */
             fileId?: number;
+            /** Format: int64 */
+            revision?: number;
+            contentUrl?: string;
             fileName?: string;
             fileType?: string;
             snippet?: string;
@@ -978,6 +981,7 @@ export interface components {
         };
         TaskProgressResponse: {
             taskId?: string;
+            modelSnapshotId?: string;
             fileName?: string;
             /**
              * @description 任务状态

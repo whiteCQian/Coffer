@@ -9,13 +9,13 @@ import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "governance_compensation_task",
-        uniqueConstraints = @UniqueConstraint(name = "uk_governance_compensation_task_key", columnNames = "task_key"),
+        uniqueConstraints = @UniqueConstraint(name = "uk_governance_compensation_task_key", columnNames = {"owner_id", "task_key"}),
         indexes = {
                 @Index(name = "idx_governance_compensation_due", columnList = "status,next_attempt_at"),
                 @Index(name = "idx_governance_compensation_batch", columnList = "batch_id,created_at")
         })
-@Data @Builder @NoArgsConstructor @AllArgsConstructor
-public class GovernanceCompensationTask {
+@Data @lombok.EqualsAndHashCode(callSuper = false) @Builder @NoArgsConstructor @AllArgsConstructor
+public class GovernanceCompensationTask extends com.coffer.auth.domain.TenantOwnedEntity {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY) private Long id;
     @Column(name = "task_key", nullable = false, length = 160) private String taskKey;
     @Column(name = "batch_id", nullable = false, length = 64) private String batchId;

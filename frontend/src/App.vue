@@ -1,7 +1,8 @@
 <script setup lang="ts">
-// 应用壳：路由承载单页布局
+import { useAuthStore } from '@/stores/auth'
+const auth = useAuthStore()
 </script>
 
 <template>
-  <router-view />
+  <router-view v-if="auth.user || $route.meta.public" :key="auth.generation" />
 </template>

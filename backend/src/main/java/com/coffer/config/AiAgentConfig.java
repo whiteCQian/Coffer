@@ -27,7 +27,7 @@ public class AiAgentConfig {
      */
     @Bean
     public SystemMessage systemMessage() {
-        log.debug("初始化 Agent 系统提示词: {}", systemPrompt);
+        log.debug("初始化 Agent 系统提示词，字符数={}", systemPrompt == null ? 0 : systemPrompt.length());
         return SystemMessage.from(systemPrompt);
     }
 }
