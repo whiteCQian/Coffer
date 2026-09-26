@@ -253,7 +253,7 @@ try {
     } else { Write-Host 'MinIO is already listening; reusing it.' }
 
     $jar = Join-Path $backendDir 'target\coffer-backend-0.0.1-SNAPSHOT.jar'
-    $sourceRoot = Join-Path $backendDir 'src'
+    $sourceRoot = Join-Path $backendDir 'src\main'
     $needsBuild = -not (Test-Path -LiteralPath $jar)
     if (-not $needsBuild) {
         $jarTime = (Get-Item -LiteralPath $jar).LastWriteTimeUtc
@@ -268,9 +268,10 @@ try {
         $buildOut = Join-Path $logDir 'backend-build.out.log'
         $buildErr = Join-Path $logDir 'backend-build.err.log'
         $mavenRepo = Join-Path $env:USERPROFILE '.m2\repository'
-        Push-Location $backendDir
-        try { & $maven "-Dmaven.repo.local=$mavenRepo" package -DskipTests *> $buildOut; $buildExit = $LASTEXITCODE }
-        finally { Pop-Location }
+        $build = Start-Process -FilePath $maven -ArgumentList @("-Dmaven.repo.local=$mavenRepo", 'package', '-DskipTests') `
+            -WorkingDirectory $backendDir -WindowStyle Hidden -Wait -PassThru `
+            -RedirectStandardOutput $buildOut -RedirectStandardError $buildErr
+        $buildExit = $build.ExitCode
         if ($buildExit -ne 0 -or -not (Test-Path -LiteralPath $jar)) { throw "Backend build failed (exit $buildExit). See logs\backend-build.*.log." }
     }
 
