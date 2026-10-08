@@ -5,6 +5,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import * as governanceApi from '@/api/governance'
+import { approveFileModel, assessFileModel, type ModelCapability } from '@/api/files'
 import type {
   Category,
   GovernancePreviewItemResponse,
@@ -304,6 +305,33 @@ async function retryOperation() {
   }
 }
 
+async function authorizeAndReanalyze(item: GovernancePreviewItemResponse) {
+  const extension = item.sourceFileName?.split('.').pop()?.toLowerCase()
+  const capability: ModelCapability = extension && ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'].includes(extension)
+    ? 'VISION' : 'CHAT'
+  const { data: assessed } = await assessFileModel(item.fileId, capability)
+  const target = assessed.data
+  const risk = target.risk === 'SENSITIVE' ? '本地规则发现敏感信息'
+    : target.risk === 'UNKNOWN' ? '本地无法判断正文是否敏感' : '未命中本地敏感规则'
+  try {
+    await ElMessageBox.confirm(
+      `文件：${item.sourceFileName}\n版本：${target.revision}\n风险：${risk}\n模式：${target.mode}\n` +
+      `目标：${target.endpointUrl}（${target.modelName}）\n\n仅授权这个文件版本向该端点发送内容。`,
+      '确认文件模型授权',
+      { confirmButtonText: '授权并重新分析', cancelButtonText: '取消', type: 'warning', customClass: 'model-consent-dialog' },
+    )
+  } catch { return }
+  actionId.value = item.id
+  try {
+    await approveFileModel(item.fileId, capability, target)
+    const { data } = await governanceApi.reanalyzeGovernanceFile(item.fileId, {
+      requestId: crypto.randomUUID(),
+      mode: preview.value?.mode ?? 'API',
+    })
+    if (data.data?.previewId) await router.push({ name: 'governance-preview', params: { previewId: data.data.previewId } })
+  } finally { actionId.value = null }
+}
+
 async function cancelPreview() {
   if (!canCancel.value) return
   try {
@@ -476,6 +504,10 @@ onMounted(load)
               <div v-if="item.errorMessage" class="item-error">
                 {{ item.errorCode ? `[${item.errorCode}] ` : '' }}{{ item.errorMessage }}
               </div>
+              <button v-if="item.errorCode === 'MODEL_CONSENT_REQUIRED'" class="item-btn"
+                      :disabled="actionId === item.id" @click="authorizeAndReanalyze(item)">
+                查看目标并授权此文件
+              </button>
               <div v-if="item.skipReason" class="item-skip">跳过原因：{{ item.skipReason }}</div>
 
               <div class="suggestion-grid">

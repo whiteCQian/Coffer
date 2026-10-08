@@ -6,9 +6,12 @@ import com.coffer.file.domain.FileStatus;
 import com.coffer.file.infrastructure.persistence.FileMetadataRepository;
 import com.coffer.governance.application.ArchiveRollbackPersistenceService;
 import com.coffer.governance.application.ArchiveRollbackService;
+import com.coffer.governance.application.GovernanceCompensationProcessor;
+import com.coffer.governance.application.GovernanceRecoveryCoordinator;
 import com.coffer.governance.domain.*;
 import com.coffer.governance.infrastructure.persistence.ArchiveOperationBatchRepository;
 import com.coffer.governance.infrastructure.persistence.ArchiveOperationItemRepository;
+import com.coffer.governance.infrastructure.persistence.GovernanceCompensationTaskRepository;
 import com.coffer.service.MinioStorageService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -28,21 +31,27 @@ import static org.mockito.Mockito.*;
 class ArchiveRollbackExecutionTest extends com.coffer.auth.OwnerTestSupport {
     @Autowired ArchiveRollbackService rollbackService;
     @Autowired ArchiveRollbackPersistenceService rollbackPersistenceService;
+    @Autowired GovernanceCompensationProcessor compensationProcessor;
+    @Autowired GovernanceRecoveryCoordinator recoveryCoordinator;
+    @Autowired GovernanceCompensationTaskRepository compensationRepository;
     @Autowired FileMetadataRepository fileRepository;
     @Autowired ArchiveOperationBatchRepository batchRepository;
     @Autowired ArchiveOperationItemRepository itemRepository;
     @MockitoBean MinioStorageService minio;
+    @Autowired com.fasterxml.jackson.databind.ObjectMapper json;
+    private static final String SHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
     @BeforeEach void clean() {
-        itemRepository.deleteAll(); batchRepository.deleteAll(); fileRepository.deleteAll(); reset(minio);
+        compensationRepository.deleteAll(); itemRepository.deleteAll(); batchRepository.deleteAll();
+        fileRepository.deleteAll(); reset(minio);
     }
 
     @Test void restoresOriginalPathCategoryAndName() {
         ArchiveOperationItem item = seed("rollback-ok", 1L);
         stubTarget(true, "target-etag");
-        when(minio.objectExists(isNull(), eq(ownerPath("files/original.txt")))).thenReturn(false);
-        when(minio.statFile(isNull(), eq(ownerPath("files/original.txt"))))
-                .thenReturn(new MinioStorageService.ObjectSnapshot("restored-etag", 12));
+        when(minio.exists(eq(ownerPath("files/original.txt")))).thenReturn(false);
+        when(minio.stat(eq(ownerPath("files/original.txt"))))
+                .thenReturn(object(ownerPath("files/original.txt"), "restored-etag"));
 
         rollbackPersistenceService.prepareItem(item.getBatchId(), item.getId());
         rollbackService.executeItem(item.getId());
@@ -55,22 +64,20 @@ class ArchiveRollbackExecutionTest extends com.coffer.auth.OwnerTestSupport {
         assertThat(file.isArchived()).isFalse();
         assertThat(file.getRevision()).isEqualTo(2L);
         assertThat(saved.getRollbackStatus()).isEqualTo(ArchiveOperationItemRollbackStatus.SUCCEEDED);
-        verify(minio).copyObject(ownerPath("contracts/archived.txt"), ownerPath("files/original.txt"));
+        verify(minio).copy(ownerPath("contracts/archived.txt"), ownerPath("files/original.txt"), SHA);
     }
 
     @Test void occupiedOriginalPathBecomesConflictWithoutOverwrite() {
         ArchiveOperationItem item = seed("rollback-collision", 1L);
         stubTarget(true, "target-etag");
-        when(minio.objectExists(isNull(), eq(ownerPath("files/original.txt")))).thenReturn(true);
-        when(minio.statFile(isNull(), eq(ownerPath("files/original.txt"))))
-                .thenReturn(new MinioStorageService.ObjectSnapshot("occupied-etag", 99));
+        when(minio.exists(eq(ownerPath("files/original.txt")))).thenReturn(true);
         rollbackPersistenceService.prepareItem(item.getBatchId(), item.getId());
         rollbackService.executeItem(item.getId());
         assertThat(itemRepository.findById(item.getId()).orElseThrow().getRollbackStatus())
                 .isEqualTo(ArchiveOperationItemRollbackStatus.CONFLICTED);
         assertThat(fileRepository.findById(item.getFileId()).orElseThrow().getStoragePath())
                 .isEqualTo(ownerPath("contracts/archived.txt"));
-        verify(minio, never()).copyObject(anyString(), anyString());
+        verify(minio, never()).copy(anyString(), anyString(), anyString());
     }
 
     @Test void changedFileBecomesConflictAndDeletedObjectIsNotReversible() {
@@ -81,7 +88,7 @@ class ArchiveRollbackExecutionTest extends com.coffer.auth.OwnerTestSupport {
                 .isEqualTo(ArchiveOperationItemRollbackStatus.CONFLICTED);
 
         ArchiveOperationItem missing = seed("rollback-missing", 1L);
-        when(minio.objectExists(isNull(), eq(ownerPath("contracts/archived.txt")))).thenReturn(false);
+        when(minio.exists(eq(ownerPath("contracts/archived.txt")))).thenReturn(false);
         rollbackPersistenceService.prepareItem(missing.getBatchId(), missing.getId());
         rollbackService.executeItem(missing.getId());
         assertThat(itemRepository.findById(missing.getId()).orElseThrow().getRollbackStatus())
@@ -100,9 +107,9 @@ class ArchiveRollbackExecutionTest extends com.coffer.auth.OwnerTestSupport {
     @Test void batchRollbackAggregatesSuccessfulResult() {
         ArchiveOperationItem item = seed("rollback-batch", 1L);
         stubTarget(true, "target-etag");
-        when(minio.objectExists(isNull(), eq(ownerPath("files/original.txt")))).thenReturn(false);
-        when(minio.statFile(isNull(), eq(ownerPath("files/original.txt"))))
-                .thenReturn(new MinioStorageService.ObjectSnapshot("restored-etag", 12));
+        when(minio.exists(eq(ownerPath("files/original.txt")))).thenReturn(false);
+        when(minio.stat(eq(ownerPath("files/original.txt"))))
+                .thenReturn(object(ownerPath("files/original.txt"), "restored-etag"));
 
         assertThat(rollbackPersistenceService.prepareBatch(item.getBatchId())).isTrue();
         rollbackService.executeBatch(item.getBatchId());
@@ -113,11 +120,60 @@ class ArchiveRollbackExecutionTest extends com.coffer.auth.OwnerTestSupport {
                 .isEqualTo(ArchiveOperationItemRollbackStatus.SUCCEEDED);
     }
 
+    @Test void interruptedRollbackRecoveryRecomputesBatchStatus() {
+        ArchiveOperationItem item = seed("rollback-interrupted", 1L);
+        assertThat(rollbackPersistenceService.prepareBatch(item.getBatchId())).isTrue();
+        item = itemRepository.findById(item.getId()).orElseThrow();
+        item.setRollbackStatus(ArchiveOperationItemRollbackStatus.COPYING);
+        itemRepository.saveAndFlush(item);
+        stubTarget(true, "target-etag");
+        when(minio.exists(eq(ownerPath("files/original.txt")))).thenReturn(false);
+        when(minio.stat(eq(ownerPath("files/original.txt"))))
+                .thenReturn(object(ownerPath("files/original.txt"), "restored-etag"));
+
+        recoveryCoordinator.recover();
+        assertThat(compensationRepository.findAll()).singleElement()
+                .extracting(GovernanceCompensationTask::getAction)
+                .isEqualTo(GovernanceCompensationAction.RESUME_ROLLBACK);
+        compensationProcessor.process(compensationRepository.findAll().get(0).getId());
+
+        assertThat(itemRepository.findById(item.getId()).orElseThrow().getRollbackStatus())
+                .isEqualTo(ArchiveOperationItemRollbackStatus.SUCCEEDED);
+        assertThat(batchRepository.findByBatchId(item.getBatchId()).orElseThrow().getRollbackStatus())
+                .isEqualTo(ArchiveOperationRollbackStatus.SUCCEEDED);
+    }
+
+    @Test void verifiedRollbackCopySurvivesRecoveryStatusReset() {
+        ArchiveOperationItem item = seed("rollback-verified-copy", 1L);
+        stubTarget(true, "target-etag");
+        when(minio.exists(eq(ownerPath("files/original.txt")))).thenReturn(true);
+        when(minio.stat(eq(ownerPath("files/original.txt"))))
+                .thenReturn(object(ownerPath("files/original.txt"), "restored-etag"));
+        assertThat(rollbackPersistenceService.prepareBatch(item.getBatchId())).isTrue();
+        rollbackPersistenceService.claim(item.getId());
+        rollbackPersistenceService.markCopying(item.getId());
+        rollbackPersistenceService.markDbCommitting(item.getId());
+
+        rollbackPersistenceService.prepareRecovery(item.getId());
+        assertThat(itemRepository.findById(item.getId()).orElseThrow().isRollbackCopyVerified()).isTrue();
+        rollbackService.executeItem(item.getId());
+
+        assertThat(itemRepository.findById(item.getId()).orElseThrow().getRollbackStatus())
+                .isEqualTo(ArchiveOperationItemRollbackStatus.SUCCEEDED);
+        assertThat(fileRepository.findById(item.getFileId()).orElseThrow().getStoragePath())
+                .isEqualTo(ownerPath("files/original.txt"));
+        verify(minio, never()).copy(anyString(), anyString(), anyString());
+    }
+
     private ArchiveOperationItem seed(String batchId, long currentRevision) {
         FileMetadata file = fileRepository.saveAndFlush(FileMetadata.builder().fileName("archived.txt")
                 .fileSize(12L).fileType("txt").storagePath(ownerPath("contracts/archived.txt"))
                 .status(FileStatus.COMPLETED).category(CategoryType.CONTRACT).archived(true)
-                .revision(currentRevision).contentEtag("target-etag").build());
+                .revision(currentRevision).contentEtag("target-etag").contentSha256(SHA).build());
+        var source = new ArchiveFormalSnapshot("original.txt", ownerPath("files/original.txt"),
+                "REPORT", null, java.util.List.of(), false, 0L, SHA, 12L, "source-etag");
+        var target = new ArchiveFormalSnapshot("archived.txt", ownerPath("contracts/archived.txt"),
+                "CONTRACT", null, java.util.List.of(), true, 1L, SHA, 12L, "target-etag");
         batchRepository.saveAndFlush(ArchiveOperationBatch.builder().batchId(batchId)
                 .source(ArchiveOperationSource.PREVIEW_CONFIRMATION).runMode(GovernanceRunMode.LOCAL)
                 .requestId("request-" + batchId).status(ArchiveOperationBatchStatus.SUCCEEDED).totalCount(1)
@@ -127,15 +183,23 @@ class ArchiveRollbackExecutionTest extends com.coffer.auth.OwnerTestSupport {
                 .targetFileName("archived.txt").sourceCategory("REPORT").targetCategory("CONTRACT")
                 .sourcePath(ownerPath("files/original.txt")).targetPath(ownerPath("contracts/archived.txt"))
                 .sourceEtag("source-etag").sourceSize(12L).targetEtag("target-etag").targetSize(12L)
+                .sourceSha256(SHA).targetSha256(SHA).snapshotVersion(1)
+                .sourceSnapshotJson(write(source)).targetSnapshotJson(write(target))
                 .preExecuteRevision(0L).postExecuteRevision(1L)
                 .executionStatus(ArchiveOperationItemExecutionStatus.SUCCEEDED).build());
     }
 
     private void stubTarget(boolean exists, String etag) {
-        when(minio.objectExists(isNull(), eq(ownerPath("contracts/archived.txt")))).thenReturn(exists);
-        when(minio.statFile(isNull(), eq(ownerPath("contracts/archived.txt"))))
-                .thenReturn(new MinioStorageService.ObjectSnapshot(etag, 12));
-        doNothing().when(minio).copyObject(anyString(), anyString());
-        doNothing().when(minio).deleteFile(isNull(), anyString());
+        when(minio.exists(eq(ownerPath("contracts/archived.txt")))).thenReturn(exists);
+        when(minio.stat(eq(ownerPath("contracts/archived.txt"))))
+                .thenReturn(object(ownerPath("contracts/archived.txt"), etag));
+    }
+
+    private com.coffer.file.storage.FileStoragePort.StoredObject object(String path, String etag) {
+        return new com.coffer.file.storage.FileStoragePort.StoredObject(path, 12, SHA, etag);
+    }
+    private String write(ArchiveFormalSnapshot snapshot) {
+        try { return json.writeValueAsString(snapshot); }
+        catch (Exception error) { throw new AssertionError(error); }
     }
 }

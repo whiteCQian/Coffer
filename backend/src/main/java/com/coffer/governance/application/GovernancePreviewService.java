@@ -26,7 +26,7 @@ import com.coffer.governance.domain.GovernanceRunMode;
 import com.coffer.governance.infrastructure.persistence.GovernancePreviewBatchRepository;
 import com.coffer.governance.infrastructure.persistence.GovernancePreviewItemRepository;
 import com.coffer.model.runtime.ModelRuntimeModeService;
-import com.coffer.service.MinioStorageService;
+import com.coffer.file.storage.FileStoragePort;
 import com.coffer.tag.api.dto.TagAndCategoryResult;
 import com.coffer.service.VisionModelService;
 import com.coffer.tool.TagGenerationTool;
@@ -77,7 +77,7 @@ public class GovernancePreviewService {
     private final GovernancePreviewBatchRepository batchRepository;
     private final GovernancePreviewItemRepository itemRepository;
     private final FileMetadataRepository fileMetadataRepository;
-    private final MinioStorageService minioStorageService;
+    private final FileStoragePort minioStorageService;
     private final DocumentParseService documentParseService;
     private final TagGenerationTool tagGenerationTool;
     private final VisionModelService visionModelService;
@@ -89,9 +89,11 @@ public class GovernancePreviewService {
     @Autowired(required = false)
     private ArchiveOperationService archiveOperationService;
 
-    /** Optional in focused unit tests; production resolves the validated global mode. */
-    @Autowired(required = false)
+    /** Production requires a validated model mode; focused unit tests inject a fixture. */
+    @Autowired
     private ModelRuntimeModeService runtimeModeService;
+    @Autowired
+    private com.coffer.model.runtime.ModelContentGate contentGate;
 
     /** Create a preview, or return the original result for an identical request retry. */
     @Transactional
@@ -204,7 +206,7 @@ public class GovernancePreviewService {
         item.setSuggestedTags(writeTags(tags));
         item.setSkipReason(null);
         item.setUpdatedAt(LocalDateTime.now());
-        if (minioStorageService.objectExists(null, suggestedPath)) {
+        if (minioStorageService.exists(suggestedPath)) {
             item.setStatus(GovernancePreviewItemStatus.CONFLICTED);
             item.setErrorCode("TARGET_PATH_CONFLICT");
             item.setErrorMessage("预计归档路径已存在，确认前必须修改建议");
@@ -407,7 +409,7 @@ public class GovernancePreviewService {
             item.setUpdatedAt(LocalDateTime.now());
             return false;
         }
-        MinioStorageService.ObjectSnapshot current;
+        FileStoragePort.StoredObject current;
         try {
             current = statSource(metadata);
         } catch (PreviewAnalysisException e) {
@@ -433,7 +435,7 @@ public class GovernancePreviewService {
             item.setUpdatedAt(LocalDateTime.now());
             return false;
         }
-        if (minioStorageService.objectExists(null, item.getSuggestedPath())) {
+        if (minioStorageService.exists(item.getSuggestedPath())) {
             item.setStatus(GovernancePreviewItemStatus.CONFLICTED);
             item.setErrorCode("TARGET_PATH_CONFLICT");
             item.setErrorMessage("预计归档路径已存在，确认前必须修改建议");
@@ -553,7 +555,7 @@ public class GovernancePreviewService {
                                              GovernanceRunMode mode) {
         GovernancePreviewItem item = baseItem(batch.getPreviewId(), metadata, mode);
         try {
-            MinioStorageService.ObjectSnapshot before = statSource(metadata);
+            FileStoragePort.StoredObject before = statSource(metadata);
             applySourceSnapshot(item, metadata, before);
 
             AnalysisResult result = isImage(metadata.getFileType())
@@ -569,13 +571,13 @@ public class GovernancePreviewService {
             item.setSuggestedSummary(limitSummary(result.summary()));
             item.setSuggestedTags(writeTags(result.tags()));
 
-            MinioStorageService.ObjectSnapshot after = statSource(metadata);
+            FileStoragePort.StoredObject after = statSource(metadata);
             if (!sameSnapshot(before, after)
                     || !Objects.equals(item.getSourceRevision(), defaultRevision(metadata))) {
                 item.setStatus(GovernancePreviewItemStatus.CONFLICTED);
                 item.setErrorCode("SOURCE_CHANGED");
                 item.setErrorMessage("分析期间文件对象或治理版本发生变化，请重新生成预览");
-            } else if (minioStorageService.objectExists(null, item.getSuggestedPath())) {
+            } else if (minioStorageService.exists(item.getSuggestedPath())) {
                 item.setStatus(GovernancePreviewItemStatus.CONFLICTED);
                 item.setErrorCode("TARGET_PATH_CONFLICT");
                 item.setErrorMessage("预计归档路径已存在，确认前必须修改建议");
@@ -596,13 +598,15 @@ public class GovernancePreviewService {
     }
 
     private AnalysisResult analyzeText(FileMetadata metadata) {
-        try (InputStream stream = minioStorageService.getFileStream(null, metadata.getStoragePath())) {
+        try (InputStream stream = com.coffer.file.application.VerifiedFileSource.open(minioStorageService, metadata)) {
             ParseResult parseResult = documentParseService.extractTextWithFallback(metadata.getFileName(), stream);
             if (parseResult.getStatus() != ParseStatus.SUCCESS) {
                 throw new PreviewAnalysisException("PARSE_" + parseResult.getStatus().name(),
                         "文件解析失败，请检查文件格式");
             }
             String content = parseResult.getContent();
+            java.util.Objects.requireNonNull(contentGate, "模型内容授权组件不可用").requireAllowed(metadata, content, true,
+                    com.coffer.model.runtime.ModelRuntimeCapability.CHAT);
             TagAndCategoryResult tagResult = tagGenerationTool.generateTagAndCategory(content);
             if (tagResult == null) {
                 throw new PreviewAnalysisException("AI_RESULT_EMPTY", "AI 未返回分类和标签结果");
@@ -614,14 +618,25 @@ public class GovernancePreviewService {
             return new AnalysisResult(tagResult.category(), tags, content);
         } catch (PreviewAnalysisException e) {
             throw e;
+        } catch (com.coffer.model.runtime.ModelConsentRequiredException consent) {
+            throw new PreviewAnalysisException("MODEL_CONSENT_REQUIRED", "请先授权此文件发送至所选模型端点");
         } catch (Exception e) {
             throw new PreviewAnalysisException("ANALYSIS_FAILED", safeMessage(e), e);
         }
     }
 
     private AnalysisResult analyzeImage(FileMetadata metadata) {
-        try (InputStream stream = minioStorageService.getFileStream(null, metadata.getStoragePath())) {
-            byte[] bytes = stream.readAllBytes();
+        try {
+            byte[] bytes = com.coffer.file.application.VerifiedFileSource.readBounded(
+                    minioStorageService, metadata, 10 * 1024 * 1024);
+            if (bytes.length > 10 * 1024 * 1024)
+                throw new PreviewAnalysisException("IMAGE_LIMIT", "图片超过处理上限");
+            var imageDocument = documentParseService.parseStructured(metadata,
+                    new java.io.ByteArrayInputStream(bytes));
+            if (imageDocument.status() != ParseStatus.SUCCESS)
+                throw new PreviewAnalysisException("PARSE_" + imageDocument.status().name(), "图片格式或尺寸不受支持");
+            java.util.Objects.requireNonNull(contentGate, "模型内容授权组件不可用").requireAllowed(metadata, null, false,
+                    com.coffer.model.runtime.ModelRuntimeCapability.VISION);
             VisionResult vision = visionModelService.describeImage(
                     java.util.Base64.getEncoder().encodeToString(bytes), imageMime(metadata.getFileType()),
                     metadata.getFileName());
@@ -635,6 +650,8 @@ public class GovernancePreviewService {
             return new AnalysisResult(vision.category(), tags, vision.description());
         } catch (PreviewAnalysisException e) {
             throw e;
+        } catch (com.coffer.model.runtime.ModelConsentRequiredException consent) {
+            throw new PreviewAnalysisException("MODEL_CONSENT_REQUIRED", "请先授权此文件发送至所选模型端点");
         } catch (Exception e) {
             throw new PreviewAnalysisException("ANALYSIS_FAILED", safeMessage(e), e);
         }
@@ -684,19 +701,19 @@ public class GovernancePreviewService {
         return model == null || model.isBlank() ? properties.getAnalysisModel() : model;
     }
 
-    private MinioStorageService.ObjectSnapshot statSource(FileMetadata metadata) {
+    private FileStoragePort.StoredObject statSource(FileMetadata metadata) {
         if (metadata.getStoragePath() == null || metadata.getStoragePath().isBlank()) {
             throw new PreviewAnalysisException("SOURCE_PATH_MISSING", "文件没有可读取的对象路径");
         }
         try {
-            return minioStorageService.statFile(null, metadata.getStoragePath());
+            return minioStorageService.stat(metadata.getStoragePath());
         } catch (RuntimeException e) {
             throw new PreviewAnalysisException("SOURCE_OBJECT_UNAVAILABLE", safeMessage(e), e);
         }
     }
 
     private void applySourceSnapshot(GovernancePreviewItem item, FileMetadata metadata,
-                                     MinioStorageService.ObjectSnapshot snapshot) {
+                                     FileStoragePort.StoredObject snapshot) {
         if (snapshot == null) {
             throw new PreviewAnalysisException("SOURCE_OBJECT_UNAVAILABLE", "无法读取文件对象快照");
         }
@@ -828,10 +845,10 @@ public class GovernancePreviewService {
         return category == null ? null : category.name();
     }
 
-    private boolean sameSnapshot(MinioStorageService.ObjectSnapshot before,
-                                 MinioStorageService.ObjectSnapshot after) {
+    private boolean sameSnapshot(FileStoragePort.StoredObject before,
+                                 FileStoragePort.StoredObject after) {
         return before != null && after != null
-                && Objects.equals(before.etag(), after.etag())
+                && Objects.equals(before.sha256(), after.sha256())
                 && before.size() == after.size();
     }
 
@@ -884,6 +901,7 @@ public class GovernancePreviewService {
                 case "AI_RESULT_EMPTY" -> "AI 未返回有效分析结果";
                 case "SOURCE_PATH_MISSING" -> "文件没有可读取的对象路径";
                 case "SOURCE_OBJECT_UNAVAILABLE" -> "无法读取文件对象，请检查存储状态";
+                case "MODEL_CONSENT_REQUIRED" -> "请先授权此文件发送至所选模型端点";
                 default -> "文件分析失败，请稍后重试";
             };
         }

@@ -20,7 +20,9 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.Set;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doNothing;
@@ -85,7 +87,7 @@ class FileTagControllerTest extends com.coffer.auth.OwnerModelSubmissionTestSupp
                         .content("{\"fileId\":1}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(400))
-                .andExpect(jsonPath("$.msg").value("tagId: 标签 ID 不能为空"));
+                .andExpect(jsonPath("$.msg").value("请求字段校验失败，请检查必填项、格式和长度"));
     }
 
     @Test
@@ -96,9 +98,9 @@ class FileTagControllerTest extends com.coffer.auth.OwnerModelSubmissionTestSupp
         mockMvc.perform(post("/api/files/tags/confirm")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"fileId\":999,\"tagId\":888}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(400))
-                .andExpect(jsonPath("$.msg").value("文件与标签的关联不存在"));
+                .andExpect(jsonPath("$.msg").value("请求参数不符合要求，请检查输入后重试"));
     }
 
     @Test
@@ -109,7 +111,7 @@ class FileTagControllerTest extends com.coffer.auth.OwnerModelSubmissionTestSupp
         mockMvc.perform(post("/api/files/tags/confirm")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"fileId\":1,\"tagId\":2}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.code").value(500))
                 .andExpect(jsonPath("$.msg").value("确认标签失败"));
     }
@@ -144,7 +146,7 @@ class FileTagControllerTest extends com.coffer.auth.OwnerModelSubmissionTestSupp
                         .content("{\"fileId\":1}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(400))
-                .andExpect(jsonPath("$.msg").value("tagId: 标签 ID 不能为空"));
+                .andExpect(jsonPath("$.msg").value("请求字段校验失败，请检查必填项、格式和长度"));
     }
 
     @Test
@@ -155,9 +157,9 @@ class FileTagControllerTest extends com.coffer.auth.OwnerModelSubmissionTestSupp
         mockMvc.perform(post("/api/files/tags/reject")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"fileId\":999,\"tagId\":888}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(400))
-                .andExpect(jsonPath("$.msg").value("文件与标签的关联不存在"));
+                .andExpect(jsonPath("$.msg").value("请求参数不符合要求，请检查输入后重试"));
     }
 
     @Test
@@ -168,7 +170,7 @@ class FileTagControllerTest extends com.coffer.auth.OwnerModelSubmissionTestSupp
         mockMvc.perform(post("/api/files/tags/reject")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"fileId\":1,\"tagId\":2,\"newTagName\":\"修正标签\"}"))
-                .andExpect(status().isOk())
+                .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.code").value(500))
                 .andExpect(jsonPath("$.msg").value("拒绝标签失败"));
     }
@@ -196,6 +198,11 @@ class FileTagControllerTest extends com.coffer.auth.OwnerModelSubmissionTestSupp
                 .andExpect(jsonPath("$.data[0].fileCount").value(2))
                 .andExpect(jsonPath("$.data[1].name").value("发票"))
                 .andExpect(jsonPath("$.data[1].fileCount").value(1));
+
+        assertThat(fileTagMappingRepository.findConfirmedTagSources(Set.of("合同", "发票", "人员")))
+                .extracting(source -> source.getName() + ":" + source.getFileId())
+                .containsExactlyInAnyOrder("合同:" + f1.getId(), "合同:" + f2.getId(),
+                        "发票:" + f3.getId());
     }
 
     @Test

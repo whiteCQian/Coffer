@@ -6,12 +6,15 @@ import com.coffer.model.provider.VisionProvider;
 public final class ModeAwareVisionProvider extends ModeAwareChatProvider implements VisionProvider {
 
     public ModeAwareVisionProvider(ModelRuntimeModeService modeService,
-                                   ModelRuntimeProviderFactory providerFactory) {
-        super(modeService, providerFactory);
+                                   ModelRuntimeProviderFactory providerFactory,
+                                   ModelExecutionSnapshotService snapshots) {
+        super(modeService, providerFactory, snapshots);
     }
 
     @Override
     protected com.coffer.model.provider.ChatProvider delegate() {
-        return providerFactory.vision(ModelExecutionContext.require().mode());
+        var snapshot = ModelExecutionContext.require();
+        snapshots.requireCurrent(snapshot);
+        return providerFactory.vision(snapshot.mode());
     }
 }

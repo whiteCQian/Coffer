@@ -280,6 +280,7 @@ function stateMini(f: ListItem) {
 }
 
 const uploadInput = ref<HTMLInputElement>()
+const lastUpload = ref<{ signature: string; requestId: string } | null>(null)
 function onUploadClick() {
   uploadInput.value?.click()
 }
@@ -290,8 +291,13 @@ async function onUploadPicked(e: Event) {
   if (!picked) return
   const fd = new FormData()
   fd.append('file', picked)
+  const signature = `${picked.name}\0${picked.size}\0${picked.lastModified}`
+  if (lastUpload.value?.signature !== signature) {
+    lastUpload.value = { signature, requestId: crypto.randomUUID() }
+  }
   try {
-    await fileApi.uploadFile(fd)
+    await fileApi.uploadFile(fd, lastUpload.value.requestId)
+    lastUpload.value = null
     ElMessage.success(`「${picked.name}」已上传，AI 开始解析…`)
     reload()
   } catch {

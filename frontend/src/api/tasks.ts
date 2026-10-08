@@ -20,3 +20,7 @@ export function getOverview() {
 export function getInboxImportProgress() {
   return http.get<Result<InboxImportProgressResponse>>('/inbox-imports/progress')
 }
+
+export function retryInboxImport(id: number) {
+  return http.post<Result<null>>(`/inbox-imports/${id}/retry`)
+}

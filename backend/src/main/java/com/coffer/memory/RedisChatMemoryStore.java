@@ -3,6 +3,7 @@ package com.coffer.memory;
 import com.coffer.service.ChatCitationCollector;
 import com.coffer.service.ChatSessionService;
 import com.coffer.service.PrivateFileAccess;
+import com.coffer.model.runtime.ModelExecutionContext;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.ChatMessageDeserializer;
@@ -37,6 +38,11 @@ public class RedisChatMemoryStore implements ChatMemoryStore {
         Envelope envelope;
         try { envelope = json.readValue(raw, Envelope.class); }
         catch (Exception invalid) { redis.delete(key); return null; }
+        var current = ModelExecutionContext.current();
+        if (current != null && !Objects.equals(current.version(), envelope.configurationVersion())) {
+            redis.delete(key);
+            return null;
+        }
         if (envelope.revisions() == null || envelope.messages() == null || envelope.revisions().entrySet().stream()
                 .anyMatch(e -> !files.current(e.getKey(), e.getValue()))) {
             redis.delete(key);
@@ -63,12 +69,14 @@ public class RedisChatMemoryStore implements ChatMemoryStore {
             throw new com.coffer.service.FileVersionConflictException();
         }
         try {
+            var current = ModelExecutionContext.current();
             redis.opsForValue().set(key, json.writeValueAsString(new Envelope(
-                    ChatMessageSerializer.messagesToJson(messages), revisions)), Duration.ofDays(7));
+                    ChatMessageSerializer.messagesToJson(messages), revisions,
+                    current == null ? null : current.version())), Duration.ofDays(7));
         } catch (com.fasterxml.jackson.core.JsonProcessingException invalid) {
             throw new IllegalStateException("会话记忆保存失败", invalid);
         }
     }
     @Override public void deleteMessages(Object id) { redis.delete(key(id)); }
-    public record Envelope(String messages, Map<Long, Long> revisions) {}
+    public record Envelope(String messages, Map<Long, Long> revisions, String configurationVersion) {}
 }

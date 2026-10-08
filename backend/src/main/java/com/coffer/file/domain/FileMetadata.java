@@ -115,6 +115,10 @@ public class FileMetadata extends com.coffer.auth.domain.TenantOwnedEntity {
     @Column(name = "content_etag", length = 255)
     private String contentEtag;
 
+    /** Stable content identity across local and object-store deployments. */
+    @Column(name = "content_sha256", length = 64)
+    private String contentSha256;
+
     /**
      * 将状态置为「处理中」，用于 Agent 开始分析时调用。
      */

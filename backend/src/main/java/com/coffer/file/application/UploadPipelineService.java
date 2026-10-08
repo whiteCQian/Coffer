@@ -14,15 +14,13 @@ import com.coffer.file.infrastructure.persistence.FileMetadataRepository;
 import com.coffer.tag.infrastructure.persistence.FileTagMappingRepository;
 import com.coffer.tag.infrastructure.persistence.TagRepository;
 import com.coffer.file.application.parse.DocumentParseService;
-import com.coffer.service.MinioStorageService;
+import com.coffer.file.storage.FileStoragePort;
 import com.coffer.service.VisionModelService;
 import com.coffer.tool.TagGenerationTool;
 import com.coffer.file.domain.parse.ParseResult;
 import com.coffer.file.domain.parse.ParseStatus;
 import com.coffer.vector.VectorIndexingService;
 import com.coffer.vector.FileVectorIndexRequested;
-import com.coffer.governance.domain.GovernanceRunMode;
-import com.coffer.model.runtime.ModelRuntimeModeService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
@@ -72,7 +70,7 @@ public class UploadPipelineService {
     /** 走视觉模型识别的图片扩展名（GIF 按图片处理，只看首帧语义）。 */
     private static final List<String> IMAGE_EXTENSIONS = List.of("jpg", "jpeg", "png", "gif", "webp", "bmp");
 
-    private final MinioStorageService minioStorageService;
+    private final FileStoragePort minioStorageService;
     private final DocumentParseService documentParseService;
     private final TagGenerationTool tagGenerationTool;
     private final VisionModelService visionModelService;
@@ -83,11 +81,12 @@ public class UploadPipelineService {
     private final AsyncTaskService asyncTaskService;
     private final VectorIndexingService vectorIndexingService;
 
-    /** Optional for focused unit tests that construct this service without Spring. */
-    @Autowired(required = false)
-    private ModelRuntimeModeService runtimeModeService;
-    @Autowired(required = false)
+    @Autowired
     private com.coffer.model.runtime.ModelExecutionSnapshotService modelSnapshots;
+    @Autowired
+    private com.coffer.model.runtime.ModelContentGate modelContentGate;
+    @Autowired
+    private com.coffer.file.application.parse.ParsedDocumentStore parsedStore;
 
     /** Field injection preserves the existing small Mockito constructor used by unit tests. */
     @Autowired(required = false)
@@ -112,11 +111,18 @@ public class UploadPipelineService {
     @Transactional
     public FileMetadata registerUploadTask(String taskId, String originalFilename, String fileType,
                                            String storagePath, Long fileSize) {
+        return registerUploadTask(taskId, originalFilename, fileType, storagePath, fileSize, null);
+    }
+
+    @Transactional
+    public FileMetadata registerUploadTask(String taskId, String originalFilename, String fileType,
+                                           String storagePath, Long fileSize, String contentSha256) {
         FileMetadata metadata = FileMetadata.builder()
                 .fileName(originalFilename)
                 .fileSize(fileSize)
                 .fileType(fileType)
                 .storagePath(storagePath)
+                .contentSha256(contentSha256)
                 .taskId(taskId)
                 .modelSnapshotId(com.coffer.model.runtime.ModelExecutionContext.currentId())
                 .build();
@@ -135,22 +141,26 @@ public class UploadPipelineService {
      */
     @Transactional
     public void processUploadPipeline(String taskId) {
-        if (modelSnapshots != null) {
-            String id = taskRegistrationService.findSnapshotId(taskId);
-            if (id == null) {
-                asyncTaskService.markAsFailed(taskId, "任务缺少模型目标确认，请确认后重试");
-                fileMetadataRepository.findByTaskId(taskId).ifPresent(file -> { file.markAsFailed(); fileMetadataRepository.save(file); });
-                return;
-            }
-            modelSnapshots.with(id, () -> processUploadPipelineInternal(taskId));
+        String id = taskRegistrationService.findSnapshotId(taskId);
+        if (id == null || id.isBlank()) {
+            asyncTaskService.markAsFailed(taskId, "任务缺少模型目标确认，请确认后重试");
+            fileMetadataRepository.findByTaskId(taskId).ifPresent(file -> { file.markAsFailed(); fileMetadataRepository.save(file); });
             return;
         }
-        java.util.Optional<GovernanceRunMode> taskMode = taskRegistrationService.findRunMode(taskId);
-        if (runtimeModeService != null && taskMode != null && taskMode.isPresent()) {
-            runtimeModeService.withSnapshot(taskMode.get(), () -> processUploadPipelineInternal(taskId));
-            return;
+        try {
+            java.util.Objects.requireNonNull(modelSnapshots, "模型执行快照组件不可用")
+                    .with(id, () -> processUploadPipelineInternal(taskId));
+        } catch (RuntimeException snapshotFailure) {
+            // A claimed task must reach a visible terminal state even if its saved
+            // model destination can no longer be loaded before processing starts.
+            log.warn("文件处理任务的模型执行快照不可用，异常类型={}",
+                    snapshotFailure.getClass().getSimpleName());
+            asyncTaskService.markAsFailed(taskId, "模型目标确认已失效，请重新确认后重试");
+            fileMetadataRepository.findByTaskId(taskId).ifPresent(file -> {
+                file.markAsFailed();
+                fileMetadataRepository.save(file);
+            });
         }
-        processUploadPipelineInternal(taskId);
     }
 
     private void processUploadPipelineInternal(String taskId) {
@@ -206,15 +216,19 @@ public class UploadPipelineService {
     private void processText(FileMetadata metadata, String taskId) throws java.io.IOException {
         // 从 MinIO 读取文件流并解析纯文本（bucket 传 null 使用配置默认桶）
         String text;
-        try (InputStream inputStream = minioStorageService.getFileStream(null, metadata.getStoragePath())) {
-            ParseResult parseResult = documentParseService.extractTextFromFile(metadata.getFileName(), inputStream);
-            if (parseResult.getStatus() != ParseStatus.SUCCESS) {
-                throw new IllegalStateException("文件解析失败: " + parseResult.getStatus()
-                        + (parseResult.getErrorMessage() != null ? ", " + parseResult.getErrorMessage() : ""));
+        com.coffer.file.domain.parse.ParsedDocument parsed;
+        try (InputStream inputStream = VerifiedFileSource.open(minioStorageService, metadata)) {
+            parsed = documentParseService.parseStructured(metadata, inputStream);
+            if (parsedStore != null && metadata.getContentSha256() != null) parsedStore.save(metadata, parsed);
+            if (parsed.status() != ParseStatus.SUCCESS) {
+                throw new SafeProcessingException("文件解析状态：" + parsed.status().name());
             }
-            text = parseResult.getContent();
+            text = parsed.content();
         }
         log.info("文件解析完成，文本长度 {} 字符", text == null ? 0 : text.length());
+
+        java.util.Objects.requireNonNull(modelContentGate, "模型内容授权组件不可用").requireAllowed(metadata, text, true,
+                com.coffer.model.runtime.ModelRuntimeCapability.CHAT);
 
         // 基于文本生成受控分类 + 关键词标签（进度 50），一次调用同时产出 category 与 tags
         asyncTaskService.updateTaskStatus(taskId, AsyncTaskStatus.PROCESSING, 50, null);
@@ -224,6 +238,7 @@ public class UploadPipelineService {
                 tagResult.category(), tagNames.size());
 
         finishProcessing(metadata, tagResult.category(), tagNames, buildSummary(text), taskId);
+        saveCompletedParse(metadata, parsed);
         if (eventPublisher != null) {
             eventPublisher.publishEvent(new FileVectorIndexRequested(metadata.getId()));
         } else {
@@ -248,13 +263,19 @@ public class UploadPipelineService {
             throw new SafeProcessingException("图片过大，超过 10MB 处理上限");
         }
 
-        byte[] imageBytes;
-        try (InputStream inputStream = minioStorageService.getFileStream(null, metadata.getStoragePath())) {
-            imageBytes = inputStream.readAllBytes();
-        }
+        byte[] imageBytes = VerifiedFileSource.readBounded(minioStorageService, metadata,
+                (int) MAX_IMAGE_SIZE_BYTES);
         if (imageBytes.length > MAX_IMAGE_SIZE_BYTES) {
             throw new SafeProcessingException("图片过大，超过 10MB 处理上限");
         }
+        var imageDocument = documentParseService.parseStructured(metadata,
+                new java.io.ByteArrayInputStream(imageBytes));
+        if (parsedStore != null && metadata.getContentSha256() != null) parsedStore.save(metadata, imageDocument);
+        if (imageDocument.status() != ParseStatus.SUCCESS) {
+            throw new SafeProcessingException("图片解析状态：" + imageDocument.status().name());
+        }
+        java.util.Objects.requireNonNull(modelContentGate, "模型内容授权组件不可用").requireAllowed(metadata, null, false,
+                com.coffer.model.runtime.ModelRuntimeCapability.VISION);
 
         asyncTaskService.updateTaskStatus(taskId, AsyncTaskStatus.PROCESSING, 60, null);
         String base64 = Base64.getEncoder().encodeToString(imageBytes);
@@ -265,6 +286,13 @@ public class UploadPipelineService {
 
         String summary = visionResult.description() == null ? "" : visionResult.description();
         finishProcessing(metadata, visionResult.category(), visionResult.tags(), summary, taskId);
+        saveCompletedParse(metadata, imageDocument);
+    }
+
+    private void saveCompletedParse(FileMetadata file, com.coffer.file.domain.parse.ParsedDocument parsed) {
+        if (parsedStore == null || file.getContentSha256() == null) return;
+        parsedStore.save(file, new com.coffer.file.domain.parse.ParsedDocument(file.getId(), file.getRevision(),
+                parsed.format(), parsed.parserVersion(), parsed.status(), parsed.errorCode(), parsed.chunks()));
     }
 
     /**
@@ -346,6 +374,8 @@ public class UploadPipelineService {
 
     /** Returns only an allowlisted, non-sensitive reason for display in task status. */
     private static String safeFailureMessage(Exception error) {
+        if (error instanceof com.coffer.model.runtime.ModelConsentRequiredException)
+            return "需要确认此文件和模型发送目标后重试";
         if (error instanceof SafeProcessingException safeError) {
             return safeError.safeMessage;
         }

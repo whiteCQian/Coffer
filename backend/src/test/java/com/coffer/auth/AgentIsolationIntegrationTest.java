@@ -64,6 +64,15 @@ class AgentIsolationIntegrationTest {
         @Bean RedisVectorStore vectors() { return mock(RedisVectorStore.class); }
         @Bean MinioStorageService storage() { return mock(MinioStorageService.class); }
         @Bean DocumentParseService parser() { return mock(DocumentParseService.class); }
+        @Bean com.coffer.model.runtime.ModelContentGate contentGate() {
+            return mock(com.coffer.model.runtime.ModelContentGate.class);
+        }
+        @Bean com.coffer.file.application.parse.ParsedDocumentStore parsedStore() {
+            return mock(com.coffer.file.application.parse.ParsedDocumentStore.class);
+        }
+        @Bean com.coffer.model.runtime.ModelRuntimeModeService runtimeModeService() {
+            return mock(com.coffer.model.runtime.ModelRuntimeModeService.class);
+        }
         @Bean TagGenerationTool tagTool() { return mock(TagGenerationTool.class); }
         @Bean HybridSearchProperties properties() { return new HybridSearchProperties(); }
         @Bean com.coffer.file.application.FileUploadApplicationService upload() { return mock(com.coffer.file.application.FileUploadApplicationService.class); }
@@ -123,16 +132,33 @@ class AgentIsolationIntegrationTest {
         when(redis.delete(anyString())).thenAnswer(i -> redisValues.remove(i.getArgument(0)) != null);
         when(model.chat(any(ChatRequest.class))).thenReturn(reply("ok"));
         when(embedding.embed(anyString())).thenReturn(Response.from(Embedding.from(new float[]{1, 0})));
-        when(storage.getFileStream(isNull(), anyString())).thenAnswer(i ->
-                new java.io.ByteArrayInputStream((i.<String>getArgument(1).contains("/" + a.getId() + "/") ? "A_CONTENT" : "B_CONTENT").getBytes(StandardCharsets.UTF_8)));
-        when(parserMock.extractTextFromFile(anyString(), any())).thenAnswer(i -> ParseResult.success(
-                new String(i.<java.io.InputStream>getArgument(1).readAllBytes(), StandardCharsets.UTF_8)));
+        when(storage.read(anyString())).thenAnswer(i ->
+                new java.io.ByteArrayInputStream((i.<String>getArgument(0).contains("/" + a.getId() + "/") ? "A_CONTENT" : "B_CONTENT").getBytes(StandardCharsets.UTF_8)));
+        when(storage.readIfUnchanged(anyString(), any())).thenAnswer(i ->
+                new java.io.ByteArrayInputStream((i.<String>getArgument(0).contains("/" + a.getId() + "/") ? "A_CONTENT" : "B_CONTENT").getBytes(StandardCharsets.UTF_8)));
+        when(storage.stat(anyString())).thenAnswer(i -> new com.coffer.file.storage.FileStoragePort.StoredObject(
+                i.getArgument(0), 9L,
+                digest(i.<String>getArgument(0).contains("/" + a.getId() + "/") ? "A_CONTENT" : "B_CONTENT"), null));
+        when(parserMock.parseStructured(any(FileMetadata.class), any())).thenAnswer(i -> {
+            FileMetadata file = i.getArgument(0);
+            String text = new String(i.<java.io.InputStream>getArgument(1).readAllBytes(), StandardCharsets.UTF_8);
+            return new com.coffer.file.domain.parse.ParsedDocument(file.getId(), file.getRevision(), "txt", "test",
+                    com.coffer.file.domain.parse.ParseStatus.SUCCESS, null, java.util.List.of(new com.coffer.file.domain.parse.ParsedDocument.Chunk(
+                            text, "LINE", 1, 1, 1, text.length())));
+        });
     }
     @AfterEach void clear() { citations.clear(); TenantContext.clear(); SecurityContextHolder.clearContext(); }
     FileMetadata file(AppUser owner, String marker) throws Exception {
         return TenantContext.callAs(owner.getId(), () -> files.saveAndFlush(FileMetadata.builder()
                 .fileName("shared-" + marker + ".txt").summary(marker).fileSize(9L).fileType("txt")
-                .status(FileStatus.COMPLETED).storagePath("users/" + owner.getId() + "/files/a.txt").build()));
+                .status(FileStatus.COMPLETED).storagePath("users/" + owner.getId() + "/files/a.txt")
+                .contentSha256(digest(marker.startsWith("A_") ? "A_CONTENT" : "B_CONTENT")).build()));
+    }
+    static String digest(String value) {
+        try {
+            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException impossible) { throw new AssertionError(impossible); }
     }
     static ChatResponse reply(String text) { return ChatResponse.builder().aiMessage(AiMessage.from(text)).build(); }
     static ChatResponse tool(String name, String args) {
@@ -243,6 +269,23 @@ class AgentIsolationIntegrationTest {
         });
         TenantContext.runAs(admin.getId(), () -> assertThatThrownBy(() -> memory.getMemory(session)).isInstanceOf(AccessDeniedException.class));
         TenantContext.runAs(a.getId(), () -> assertThat(retained.messages().toString()).contains("A_ONLY").doesNotContain("poison"));
+    }
+
+    @Test void modelConfigurationChangeDiscardsOldConversationMemory() {
+        TenantContext.runAs(a.getId(), () -> {
+            String session = sessions.create();
+            var oldTarget = new com.coffer.model.runtime.ModelExecutionContext.Snapshot(
+                    "old", a.getId(), "config-v1", com.coffer.governance.domain.GovernanceRunMode.LOCAL, Map.of());
+            var newTarget = new com.coffer.model.runtime.ModelExecutionContext.Snapshot(
+                    "new", a.getId(), "config-v2", com.coffer.governance.domain.GovernanceRunMode.LOCAL, Map.of());
+            com.coffer.model.runtime.ModelExecutionContext.with(oldTarget,
+                    () -> memory.getMemory(session).add(UserMessage.from("A_CONTENT")));
+            assertThat(redisValues.values().toString()).contains("A_CONTENT");
+            com.coffer.model.runtime.ModelExecutionContext.with(newTarget, () -> {
+                assertThat(memory.getMemory(session).messages()).isEmpty();
+            });
+            assertThat(redisValues.values().toString()).doesNotContain("A_CONTENT");
+        });
     }
 
     @Test void changedOrDeletedSourceInvalidatesFullMemoryBeforeNextModelRequest() {

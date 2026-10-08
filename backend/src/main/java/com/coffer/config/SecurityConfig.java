@@ -50,6 +50,7 @@ public class SecurityConfig {
                                             SecurityContextRepository securityContextRepository,
                                             TenantContextFilter tenantContextFilter,
                                             ObjectMapper objectMapper,
+                                            org.springframework.core.env.Environment environment,
                                             @Value("${coffer.auth.cookie-secure:false}") boolean secureCookie) throws Exception {
         CookieCsrfTokenRepository csrf = CookieCsrfTokenRepository.withHttpOnlyFalse();
         csrf.setCookiePath("/");
@@ -81,6 +82,9 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/status", "/api/auth/csrf", "/api/auth/setup", "/api/auth/login",
                                 "/error", "/actuator/health", "/actuator/health/**").permitAll()
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                        .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html", "/doc.html", "/webjars/**", "/swagger-resources/**")
+                        .access((authentication, context) -> new org.springframework.security.authorization.AuthorizationDecision(environment.matchesProfiles("dev & !prod & !desktop")))
+                        .requestMatchers("/actuator/**", "/h2-console/**", "/api/test/**").denyAll()
                         .requestMatchers("/api/auth/**").authenticated()
                         .requestMatchers("/api/**").hasRole("USER")
                         .anyRequest().permitAll());

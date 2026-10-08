@@ -30,7 +30,8 @@ public class EmbeddingConfig {
     @Bean
     @ConditionalOnProperty(prefix = "coffer.embedding", name = "enabled", havingValue = "true")
     public EmbeddingProvider embeddingProvider(ModelRuntimeModeService modeService,
-                                               ModelRuntimeProviderFactory providerFactory) {
-        return new ModeAwareEmbeddingProvider(modeService, providerFactory);
+                                               ModelRuntimeProviderFactory providerFactory,
+                                               com.coffer.model.runtime.ModelExecutionSnapshotService snapshots) {
+        return new ModeAwareEmbeddingProvider(modeService, providerFactory, snapshots);
     }
 }

@@ -4,7 +4,7 @@ import com.coffer.config.EmbeddingProperties;
 import com.coffer.file.domain.FileMetadata;
 import com.coffer.file.application.parse.DocumentParseService;
 import com.coffer.model.provider.EmbeddingProvider;
-import com.coffer.service.MinioStorageService;
+import com.coffer.file.storage.FileStoragePort;
 import com.coffer.service.RetryableModelService;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.model.output.Response;
@@ -48,7 +48,9 @@ class VectorIndexingServiceTest {
                 .thenAnswer(invocation -> ((Supplier<float[]>) invocation.getArgument(1)).get());
 
         service = new VectorIndexingService(properties, provider, redisVectorStore,
-                retryableModelService, mock(MinioStorageService.class), mock(DocumentParseService.class));
+                retryableModelService, mock(FileStoragePort.class), mock(DocumentParseService.class));
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "contentGate",
+                mock(com.coffer.model.runtime.ModelContentGate.class));
     }
 
     @Test

@@ -155,21 +155,6 @@
             <version>${langchain4j.core.version}</version>
         </dependency>
 
-        <!-- ==================== MinIO 对象存储 ==================== -->
-        <dependency>
-            <groupId>io.minio</groupId>
-            <artifactId>minio</artifactId>
-            <version>8.6.0</version>
-        </dependency>
-        <!-- OkHttp 4.12.0：Minio 8.6.0 的类文件引用 okhttp3.HttpUrl（4.x API），但其 pom 声明
-             的 okhttp 5.1.0 为 Kotlin 多平台空桩 jar（仅 767 字节、无 .class），Maven 直接消费
-             会编译失败。此处显式固定 4.12.0（含完整 okhttp3.HttpUrl）覆盖传递依赖 -->
-        <dependency>
-            <groupId>com.squareup.okhttp3</groupId>
-            <artifactId>okhttp</artifactId>
-            <version>4.12.0</version>
-        </dependency>
-
         <!-- ==================== PDF 解析（Apache PDFBox） ==================== -->
         <!-- fontbox 已由 pdfbox 3.0.8 传递引入（同版本），无需单独声明 -->
         <dependency>
@@ -201,6 +186,13 @@
             <groupId>org.apache.poi</groupId>
             <artifactId>poi-scratchpad</artifactId>
             <version>5.5.1</version>
+        </dependency>
+
+        <!-- Decode WebP with ImageIO so the local parser can reject corrupt images before AI submission. -->
+        <dependency>
+            <groupId>com.twelvemonkeys.imageio</groupId>
+            <artifactId>imageio-webp</artifactId>
+            <version>3.15.2</version>
         </dependency>
 
         <!-- ==================== Redis（Spring Data Redis，默认 Lettuce 客户端） ==================== -->
@@ -289,4 +281,51 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!-- Web and NAS are the default server distribution. -->
+        <profile>
+            <id>server</id>
+            <activation><activeByDefault>true</activeByDefault></activation>
+            <dependencies>
+                <dependency>
+                    <groupId>io.minio</groupId>
+                    <artifactId>minio</artifactId>
+                    <version>8.6.0</version>
+                </dependency>
+                <!-- The MinIO SDK's okhttp 5 metadata artifact contains no JVM classes. -->
+                <dependency>
+                    <groupId>com.squareup.okhttp3</groupId>
+                    <artifactId>okhttp</artifactId>
+                    <version>4.12.0</version>
+                </dependency>
+            </dependencies>
+        </profile>
+        <!-- Desktop packaging has neither the SDK nor its client/config classes. -->
+        <profile>
+            <id>desktop</id>
+            <!-- Server integration fixtures import MinIO types that are deliberately absent
+                 from this distribution. Run the full suite with the default server profile. -->
+            <properties>
+                <maven.test.skip>true</maven.test.skip>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <configuration>
+                            <excludes>
+                                <exclude>**/service/MinioStorageService.java</exclude>
+                                <exclude>**/config/MinioConfig.java</exclude>
+                                <exclude>**/config/BucketInitializer.java</exclude>
+                                <exclude>**/config/MinioStorageHealthIndicator.java</exclude>
+                                <exclude>**/config/ServerStorageProbe.java</exclude>
+                            </excludes>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

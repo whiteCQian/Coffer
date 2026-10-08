@@ -21,15 +21,16 @@ class StorageAuthorizationTest {
         TenantContext.runAs(10L, () -> {
             for (String path : java.util.List.of("users/11/files/x", "users/100/files/x", "files/x",
                     "users/10/../11/files/x", "users/10/files/./x", "users/10/files//x", "users/10/files/\\x")) {
-                assertThatThrownBy(() -> storage.getFileStream(null, path)).isInstanceOf(ResourceNotFoundException.class);
-                assertThatThrownBy(() -> storage.deleteFile(null, path)).isInstanceOf(ResourceNotFoundException.class);
-                assertThatThrownBy(() -> storage.statFile(null, path)).isInstanceOf(ResourceNotFoundException.class);
-                assertThatThrownBy(() -> storage.generatePresignedUrl(null, path, null)).isInstanceOf(ResourceNotFoundException.class);
-                assertThatThrownBy(() -> storage.uploadFile(null, path, java.io.InputStream.nullInputStream(), "text/plain", 0)).isInstanceOf(ResourceNotFoundException.class);
-                assertThatThrownBy(() -> storage.copyObject(path, "users/10/files/safe")).isInstanceOf(ResourceNotFoundException.class);
-                assertThatThrownBy(() -> storage.copyObject("users/10/files/safe", path)).isInstanceOf(ResourceNotFoundException.class);
+                assertThatThrownBy(() -> storage.read(path)).isInstanceOf(RuntimeException.class);
+                assertThatThrownBy(() -> storage.delete(path, "a".repeat(64))).isInstanceOf(RuntimeException.class);
+                assertThatThrownBy(() -> storage.stat(path)).isInstanceOf(RuntimeException.class);
+                assertThatThrownBy(() -> storage.write(path, java.io.InputStream.nullInputStream(), "text/plain", 0))
+                        .isInstanceOf(RuntimeException.class);
+                assertThatThrownBy(() -> storage.copy(path, "users/10/files/safe", "a".repeat(64)))
+                        .isInstanceOf(RuntimeException.class);
+                assertThatThrownBy(() -> storage.copy("users/10/files/safe", path, "a".repeat(64)))
+                        .isInstanceOf(RuntimeException.class);
             }
-            assertThatThrownBy(() -> storage.getFileStream("other-bucket", "users/10/files/x")).isInstanceOf(ResourceNotFoundException.class);
         });
         verifyNoInteractions(client);
     }

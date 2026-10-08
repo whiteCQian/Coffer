@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, nextTick, ref, watch } from 'vue'
 
 import * as fileApi from '@/api/files'
 import * as governanceApi from '@/api/governance'
 import { confirmTag, rejectTag } from '@/api/fileTags'
-import type { FileDetailResponse, FileStatus } from '@/api/types'
+import type { ChatCitation, FileDetailResponse, FileStatus } from '@/api/types'
 import FileTile from '@/components/FileTile.vue'
 import { formatBytes, shortTime, toDisplayTime } from '@/utils/format'
 
@@ -33,6 +33,7 @@ type DrawerFile = {
 const props = defineProps<{
   modelValue: number | null
   revision?: number
+  source?: ChatCitation
   /** 在对话放大态打开时提升抽屉层级，避免被对话遮罩覆盖。 */
   elevated?: boolean
 }>()
@@ -50,6 +51,7 @@ const loading = ref(false)
 /** 当前打开文件拉取的真实详情（切换/关闭时置空，未加载完成为 null） */
 const detail = ref<FileDetailResponse | null>(null)
 const reanalyzing = ref(false)
+const approvingChat = ref(false)
 
 function fromDetail(d: FileDetailResponse): DrawerFile {
   const tags: DrawerFile['tags'] = [
@@ -159,6 +161,32 @@ async function reanalyze() {
   }
 }
 
+async function approveForChat() {
+  const id = props.modelValue
+  if (!id || approvingChat.value) return
+  approvingChat.value = true
+  try {
+    const { data } = await fileApi.assessFileModel(id, 'CHAT')
+    const target = data.data
+    if (target.mode === 'LOCAL') {
+      ElMessage.info(`当前聊天模型在本地运行：${target.endpointUrl}（${target.modelName}），无需远端授权`)
+      return
+    }
+    const risk = target.risk === 'SENSITIVE' ? '本地规则发现敏感信息'
+      : target.risk === 'UNKNOWN' ? '本地无法判断正文是否敏感' : '未命中本地敏感规则'
+    try {
+      await ElMessageBox.confirm(
+        `文件：${file.value?.fileName ?? id}\n版本：${target.revision}\n风险：${risk}\n` +
+          `聊天目标：${target.endpointUrl}（${target.modelName}）\n\n仅授权此文件版本向该端点发送内容。`,
+        '确认文件模型授权',
+        { confirmButtonText: '授权此文件', cancelButtonText: '取消', type: 'warning', customClass: 'model-consent-dialog' },
+      )
+    } catch { return }
+    await fileApi.approveFileModel(id, 'CHAT', target)
+    ElMessage.success('已授权当前文件版本用于聊天搜索')
+  } finally { approvingChat.value = false }
+}
+
 /* —— 标签确认 / 拒绝 —— */
 const editingTag = ref<number | null>(null)
 const correction = ref('')
@@ -192,6 +220,22 @@ async function submitReject() {
 
 /* —— 预览 —— */
 const isImage = computed(() => ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(file.value?.fileType ?? ''))
+const sourceLabel = computed(() => {
+  const source = props.source
+  if (!source) return ''
+  if (source.sourceKind === 'ORIGINAL_IMAGE') return '原图'
+  if (!source.sourceStart) return ''
+  if (source.sourceKind === 'PAGE') return `第 ${source.sourceStart} 页`
+  if (source.sourceKind === 'LINE') return `第 ${source.sourceStart} 行`
+  if (source.sourceKind === 'PARAGRAPH') return `第 ${source.sourceStart} 段`
+  return '原文'
+})
+const previewLink = computed(() => {
+  const url = file.value?.previewUrl
+  if (!url) return undefined
+  const page = props.source?.sourceKind === 'PAGE' ? props.source.sourceStart : undefined
+  return page && file.value?.fileType?.toLowerCase() === 'pdf' ? `${url}#page=${page}` : url
+})
 
 const confirmedTags = computed(() => file.value?.tags.filter((t) => t.status === 'CONFIRMED') ?? [])
 const pendingTags = computed(
@@ -252,6 +296,9 @@ watch(
           >
             {{ reanalyzing ? '分析中…' : '重新分析' }}
           </button>
+          <button class="act-btn" :disabled="approvingChat" @click="approveForChat">
+            {{ approvingChat ? '授权中…' : '授权聊天搜索' }}
+          </button>
           <button class="act-btn" @click="openAction('rename')">重命名</button>
           <button class="act-btn is-danger" @click="openAction('delete')">删除</button>
         </div>
@@ -268,15 +315,19 @@ watch(
           <template v-else>
             <FileTile :file-type="file.fileType" size="lg" />
             <p class="preview-note">
-              该类型暂不支持内嵌预览<template v-if="file.previewUrl">
+              该类型暂不支持内嵌预览<template v-if="previewLink">
                 ，可
-                <a class="preview-link" :href="file.previewUrl" target="_blank" rel="noreferrer">在浏览器中打开</a>
-                （预签名链接 7 天内有效）
+                <a class="preview-link" :href="previewLink" target="_blank" rel="noreferrer">在浏览器中打开</a>
               </template>
             </p>
           </template>
           <span class="preview-size">{{ formatBytes(file.fileSize) }}</span>
         </div>
+
+        <section v-if="source && sourceLabel" class="block">
+          <h3 class="block-title">引用位置 · {{ sourceLabel }}</h3>
+          <p v-if="source.snippet" class="summary">{{ source.snippet }}</p>
+        </section>
 
         <!-- AI 摘要 -->
         <section class="block">

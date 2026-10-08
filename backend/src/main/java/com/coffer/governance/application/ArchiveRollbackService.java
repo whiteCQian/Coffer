@@ -2,9 +2,11 @@ package com.coffer.governance.application;
 
 import com.coffer.file.domain.FileMetadata;
 import com.coffer.file.infrastructure.persistence.FileMetadataRepository;
+import com.coffer.file.storage.FileStoragePort;
+import com.coffer.file.storage.StorageObjectNotFoundException;
 import com.coffer.governance.domain.ArchiveOperationItem;
+import com.coffer.governance.domain.ArchiveFormalSnapshot;
 import com.coffer.governance.infrastructure.persistence.ArchiveOperationItemRepository;
-import com.coffer.service.MinioStorageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
@@ -26,7 +28,8 @@ public class ArchiveRollbackService {
     private final ArchiveRollbackPersistenceService persistenceService;
     private final ArchiveOperationItemRepository itemRepository;
     private final FileMetadataRepository fileMetadataRepository;
-    private final MinioStorageService minioStorageService;
+    private final FileStoragePort storage;
+    private final ArchiveSnapshotService snapshotService;
     private final ApplicationEventPublisher eventPublisher;
     private final GovernanceCompensationRegistry compensationRegistry;
 
@@ -65,27 +68,41 @@ public class ArchiveRollbackService {
         if (item == null) return;
         boolean readyForDatabase = false;
         try {
+            if (resumeCompletedMetadata(item)) {
+                persistenceService.markSucceeded(itemId);
+                return;
+            }
             validateCurrentState(item);
-            MinioStorageService.ObjectSnapshot restored;
+            ArchiveFormalSnapshot before = snapshotService.requireSource(item);
+            ArchiveFormalSnapshot after = snapshotService.requireTarget(item);
+            FileStoragePort.StoredObject restored;
             if (!Objects.equals(item.getSourcePath(), item.getTargetPath())) {
-                if (minioStorageService.objectExists(null, item.getSourcePath())) {
-                    MinioStorageService.ObjectSnapshot existing = minioStorageService.statFile(null, item.getSourcePath());
-                    if (!Objects.equals(existing.etag(), item.getTargetEtag())
-                            || !Objects.equals(existing.size(), item.getTargetSize())) {
+                if (storage.exists(item.getSourcePath())) {
+                    // A durable marker is written only after this rollback copied
+                    // and verified the source. COPYING alone cannot prove ownership.
+                    if (!item.isRollbackCopyVerified())
                         throw new ArchiveRollbackConflictException("原路径已被占用，拒绝覆盖: " + item.getSourcePath());
-                    }
+                    FileStoragePort.StoredObject recordedCopy = storage.stat(item.getSourcePath());
+                    if (!before.sha256().equalsIgnoreCase(recordedCopy.sha256())
+                            || recordedCopy.size() != before.size())
+                        throw new ArchiveRollbackConflictException("已记录的撤销副本内容不一致");
                 } else {
                     persistenceService.markCopying(itemId);
-                    minioStorageService.copyObject(item.getTargetPath(), item.getSourcePath());
+                    storage.copy(item.getTargetPath(), item.getSourcePath(), after.sha256());
                 }
             }
-            restored = minioStorageService.statFile(null, item.getSourcePath());
+            restored = storage.stat(item.getSourcePath());
+            if (!before.sha256().equalsIgnoreCase(restored.sha256())) {
+                throw new ArchiveRollbackConflictException("恢复对象内容摘要不一致");
+            }
             persistenceService.markDbCommitting(itemId);
             readyForDatabase = true;
-            persistenceService.restoreMetadata(itemId, restored.etag());
+            persistenceService.restoreMetadata(itemId, restored.etag(), restored.sha256());
             if (!Objects.equals(item.getSourcePath(), item.getTargetPath())) {
                 try {
-                    minioStorageService.deleteFile(null, item.getTargetPath());
+                    storage.delete(item.getTargetPath(), after.sha256());
+                } catch (StorageObjectNotFoundException alreadyRemoved) {
+                    // A crash may happen after cleanup and before marking the ledger complete.
                 } catch (Exception cleanupError) {
                     compensationRegistry.register(item.getBatchId(), itemId,
                             com.coffer.governance.domain.GovernanceCompensationAction.DELETE_ROLLBACK_TARGET,
@@ -108,21 +125,40 @@ public class ArchiveRollbackService {
         }
     }
 
+    /** Resume after the metadata transaction committed but object cleanup was interrupted. */
+    private boolean resumeCompletedMetadata(ArchiveOperationItem item) {
+        if (item.getRollbackResultRevision() == null) return false;
+        ArchiveFormalSnapshot before = snapshotService.requireSource(item);
+        ArchiveFormalSnapshot after = snapshotService.requireTarget(item);
+        FileMetadata file = fileMetadataRepository.findById(item.getFileId()).orElse(null);
+        if (file == null || !snapshotService.matchesAfterRollback(file, before, item.getRollbackResultRevision())) {
+            return false;
+        }
+        FileStoragePort.StoredObject restored = storage.stat(before.path());
+        if (!before.sha256().equalsIgnoreCase(restored.sha256())) {
+            throw new ArchiveRollbackConflictException("恢复对象内容摘要不一致");
+        }
+        if (!Objects.equals(before.path(), after.path()) && storage.exists(after.path())) {
+            storage.delete(after.path(), after.sha256());
+        }
+        return true;
+    }
+
     private void validateCurrentState(ArchiveOperationItem item) {
         FileMetadata file = fileMetadataRepository.findById(item.getFileId())
                 .orElseThrow(() -> new ArchiveRollbackNotReversibleException("正式文件已删除: " + item.getFileId()));
-        if (!Objects.equals(file.getRevision(), item.getPostExecuteRevision())
-                || !Objects.equals(file.getStoragePath(), item.getTargetPath())
-                || !Objects.equals(file.getFileName(), item.getTargetFileName())
-                || !Objects.equals(file.getCategory() == null ? null : file.getCategory().name(), item.getTargetCategory())) {
+        ArchiveFormalSnapshot after = snapshotService.requireTarget(item);
+        snapshotService.requireSource(item);
+        if (!snapshotService.matches(file, after)
+                || !Objects.equals(file.getContentSha256(), after.sha256())) {
             throw new ArchiveRollbackConflictException("文件正式状态已变化，拒绝撤销");
         }
-        if (!minioStorageService.objectExists(null, item.getTargetPath())) {
+        if (!storage.exists(item.getTargetPath())) {
             throw new ArchiveRollbackNotReversibleException("归档对象不存在: " + item.getTargetPath());
         }
-        MinioStorageService.ObjectSnapshot target = minioStorageService.statFile(null, item.getTargetPath());
-        if (!Objects.equals(target.etag(), item.getTargetEtag())
-                || !Objects.equals(target.size(), item.getTargetSize())) {
+        FileStoragePort.StoredObject target = storage.stat(item.getTargetPath());
+        if (!after.sha256().equalsIgnoreCase(target.sha256())
+                || target.size() != after.size()) {
             throw new ArchiveRollbackConflictException("归档对象指纹已变化，拒绝撤销");
         }
     }

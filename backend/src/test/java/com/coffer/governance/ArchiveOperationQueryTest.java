@@ -13,23 +13,32 @@ import com.coffer.governance.domain.GovernanceRunMode;
 import com.coffer.governance.infrastructure.persistence.ArchiveOperationBatchRepository;
 import com.coffer.governance.infrastructure.persistence.ArchiveOperationItemRepository;
 import com.coffer.service.MinioStorageService;
+import com.coffer.auth.service.OwnerAuthorization;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Sort;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.nio.charset.StandardCharsets;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /** C08 query and JSON/CSV export coverage. */
 @SpringBootTest(properties = {
         "spring.datasource.url=jdbc:h2:mem:archive_operation_query_test;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE",
         "spring.flyway.locations=classpath:db/migration/h2",
+        "coffer.governance.export.max-bytes=4096",
         "minio.access-key=test-access-key",
         "minio.secret-key=test-secret-key"
 })
@@ -89,6 +98,50 @@ class ArchiveOperationQueryTest extends com.coffer.auth.OwnerTestSupport {
                 .contains("archive-c08-export", "source-2001.txt");
         assertThat(new String(csv.content(), StandardCharsets.UTF_8))
                 .contains("batchId,fileId,sourceFileName", "archive-c08-export", "MINIO_IO_FAILED");
+    }
+
+    @Test
+    void csvEscapesFormulaPrefixesEvenAfterWhitespaceOrFormatCharacters() {
+        saveOperation("archive-formula", "3001", ArchiveOperationBatchStatus.SUCCEEDED,
+                ArchiveOperationItemExecutionStatus.SUCCEEDED);
+        ArchiveOperationItem item = itemRepository.findByBatchIdOrderByIdAsc("archive-formula").get(0);
+        item.setSourceFileName("=SUM(1,2).txt");
+        item.setTargetFileName("+cmd.txt");
+        item.setSourcePath("  -1+2");
+        item.setTargetPath("@payload");
+        item.setFailureMessage("\u200B=HYPERLINK(1,2)");
+        itemRepository.saveAndFlush(item);
+
+        String csv = new String(queryService.export("archive-formula", null, null, "csv").content(),
+                StandardCharsets.UTF_8);
+        assertThat(csv).contains("\"'=SUM(1,2).txt\"", "\"'+cmd.txt\"", "\"'  -1+2\"",
+                "\"'@payload\"", "\"'\u200B=HYPERLINK(1,2)\"");
+    }
+
+    @Test
+    void csvAndJsonRejectOutputBeyondEncodedByteBudget() {
+        saveOperation("archive-large", "3002", ArchiveOperationBatchStatus.FAILED,
+                ArchiveOperationItemExecutionStatus.FAILED);
+        ArchiveOperationItem item = itemRepository.findByBatchIdOrderByIdAsc("archive-large").get(0);
+        item.setFailureMessage("超".repeat(2000));
+        itemRepository.saveAndFlush(item);
+
+        assertThatThrownBy(() -> queryService.export("archive-large", null, null, "csv"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("大小上限");
+        assertThatThrownBy(() -> queryService.export("archive-large", null, null, "json"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("大小上限");
+    }
+
+    @Test
+    void exportRejectsMoreThanTenThousandRowsBeforeEncoding() {
+        ArchiveOperationItemRepository items = mock(ArchiveOperationItemRepository.class);
+        when(items.search(isNull(), isNull(), isNull(), any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(new PageImpl<>(java.util.List.of(), PageRequest.of(0, 10_000), 10_001));
+        ArchiveOperationQueryService service = new ArchiveOperationQueryService(
+                batchRepository, items, new ObjectMapper(), mock(OwnerAuthorization.class));
+
+        assertThatThrownBy(() -> service.export(null, null, null, "csv"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("10000");
     }
 
     private void saveOperation(String batchId, String fileId, ArchiveOperationBatchStatus batchStatus,

@@ -15,6 +15,7 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 public class InboxImportItemResponse {
 
+    private Long id;
     private String fileName;
     private InboxImportStatus status;
     private Integer stableObservations;

@@ -3,6 +3,7 @@ package com.coffer.governance.application;
 import com.coffer.config.GovernanceArchiveProperties;
 import com.coffer.file.domain.FileMetadata;
 import com.coffer.file.infrastructure.persistence.FileMetadataRepository;
+import com.coffer.file.storage.FileStoragePort;
 import com.coffer.governance.api.dto.ArchiveOperationBatchResponse;
 import com.coffer.governance.api.dto.ArchiveOperationItemResponse;
 import com.coffer.governance.domain.ArchiveOperationBatch;
@@ -10,12 +11,12 @@ import com.coffer.governance.domain.ArchiveOperationBatchStatus;
 import com.coffer.governance.domain.ArchiveOperationItem;
 import com.coffer.governance.domain.ArchiveOperationItemExecutionStep;
 import com.coffer.governance.domain.ArchiveOperationSource;
+import com.coffer.governance.domain.ArchiveFormalSnapshot;
 import com.coffer.governance.domain.GovernancePreviewBatch;
 import com.coffer.governance.domain.GovernancePreviewItem;
 import com.coffer.governance.infrastructure.persistence.ArchiveOperationBatchRepository;
 import com.coffer.governance.infrastructure.persistence.ArchiveOperationItemRepository;
 import com.coffer.governance.infrastructure.persistence.GovernancePreviewItemRepository;
-import com.coffer.service.MinioStorageService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -43,7 +44,8 @@ public class ArchiveOperationService {
     private final ArchiveOperationItemRepository itemRepository;
     private final GovernancePreviewItemRepository previewItemRepository;
     private final FileMetadataRepository fileMetadataRepository;
-    private final MinioStorageService minioStorageService;
+    private final FileStoragePort storage;
+    private final ArchiveSnapshotService snapshotService;
     private final ArchiveOperationPersistenceService persistenceService;
     private final GovernanceArchiveProperties properties;
     private final ObjectMapper objectMapper;
@@ -78,6 +80,23 @@ public class ArchiveOperationService {
                     .build();
             batchRepository.saveAndFlush(batch);
             for (GovernancePreviewItem previewItem : confirmedItems) {
+                FileMetadata formal = fileMetadataRepository.findByIdForUpdate(previewItem.getFileId())
+                        .orElseThrow(() -> new ArchiveExecutionConflictException("正式文件不存在"));
+                FileStoragePort.StoredObject object = storage.stat(formal.getStoragePath());
+                if (valueOrZero(formal.getRevision()) != valueOrZero(previewItem.getSourceRevision())
+                        || !Objects.equals(formal.getStoragePath(), previewItem.getSourcePath())
+                        || !Objects.equals(formal.getFileName(), previewItem.getSourceFileName())
+                        || !sameCategory(formal.getCategory(), previewItem.getSourceCategory())
+                        || !Objects.equals(object.etag(), previewItem.getSourceEtag())
+                        || object.size() != previewItem.getSourceSize()) {
+                    throw new ArchiveExecutionConflictException("确认时文件或对象已变化，请重新生成预览");
+                }
+                ArchiveFormalSnapshot before = snapshotService.capture(formal, object);
+                List<String> confirmedTags = readTags(previewItem.getSuggestedTags());
+                ArchiveFormalSnapshot after = snapshotService.intendedTarget(before,
+                        previewItem.getSuggestedFileName(), previewItem.getSuggestedPath(),
+                        com.coffer.file.domain.CategoryType.fromLabel(previewItem.getSuggestedCategory()).name(),
+                        previewItem.getSuggestedSummary(), confirmedTags);
                 ArchiveOperationItem item = ArchiveOperationItem.builder()
                         .batchId(batch.getBatchId())
                         .fileId(previewItem.getFileId())
@@ -86,11 +105,15 @@ public class ArchiveOperationService {
                         .sourceFileName(previewItem.getSourceFileName())
                         .targetFileName(previewItem.getSuggestedFileName())
                         .sourceCategory(previewItem.getSourceCategory())
-                        .targetCategory(previewItem.getSuggestedCategory())
+                        .targetCategory(after.category())
                         .sourcePath(previewItem.getSourcePath())
                         .targetPath(previewItem.getSuggestedPath())
                         .sourceEtag(previewItem.getSourceEtag())
                         .sourceSize(previewItem.getSourceSize())
+                        .snapshotVersion(ArchiveSnapshotService.VERSION)
+                        .sourceSnapshotJson(snapshotService.encode(before))
+                        .targetSnapshotJson(snapshotService.encode(after))
+                        .sourceSha256(before.sha256())
                         .build();
                 itemRepository.save(item);
             }
@@ -167,32 +190,47 @@ public class ArchiveOperationService {
             return;
         }
 
-        GovernancePreviewItem previewItem = previewItemRepository
-                .findByPreviewIdAndFileId(requireBatch(item.getBatchId()).getPreviewId(), item.getFileId())
-                .orElse(null);
-        String summary = previewItem == null ? null : previewItem.getSuggestedSummary();
-        List<String> tags = previewItem == null ? List.of() : readTags(previewItem.getSuggestedTags());
         boolean readyForDatabase = false;
         try {
-            MinioStorageService.ObjectSnapshot targetSnapshot;
+            ArchiveFormalSnapshot desired = snapshotService.targetOrNull(item);
+            GovernancePreviewItem previewItem = desired == null ? previewItemRepository
+                    .findByPreviewIdAndFileId(requireBatch(item.getBatchId()).getPreviewId(), item.getFileId())
+                    .orElse(null) : null;
+            String summary = desired == null
+                    ? (previewItem == null ? null : previewItem.getSuggestedSummary()) : desired.summary();
+            List<String> tags = desired == null
+                    ? (previewItem == null ? List.of() : readTags(previewItem.getSuggestedTags()))
+                    : desired.confirmedTagNames();
+            FileStoragePort.StoredObject targetSnapshot;
             if (isBeforeTargetCopied(item.getExecutionStep())) {
                 validateSourceAndTarget(item);
                 persistenceService.markSourceVerified(itemId);
-                if (!Objects.equals(item.getSourcePath(), item.getTargetPath())
-                        && !minioStorageService.objectExists(null, item.getTargetPath())) {
-                    minioStorageService.copyObject(item.getSourcePath(), item.getTargetPath());
+                if (!Objects.equals(item.getSourcePath(), item.getTargetPath())) {
+                    String expectedSha = item.getSourceSha256() == null
+                            ? storage.stat(item.getSourcePath()).sha256() : item.getSourceSha256();
+                    storage.copy(item.getSourcePath(), item.getTargetPath(), expectedSha);
                 }
-                targetSnapshot = minioStorageService.statFile(null, item.getTargetPath());
-                persistenceService.markTargetCopied(itemId, targetSnapshot.etag(), targetSnapshot.size());
+                targetSnapshot = storage.stat(item.getTargetPath());
+                if (desired != null && !desired.sha256().equalsIgnoreCase(targetSnapshot.sha256())) {
+                    throw new ArchiveExecutionConflictException("归档目标内容摘要不一致");
+                }
+                persistenceService.markTargetCopied(itemId, targetSnapshot.etag(),
+                        targetSnapshot.size(), targetSnapshot.sha256());
             } else {
-                targetSnapshot = minioStorageService.statFile(null, item.getTargetPath());
+                targetSnapshot = storage.stat(item.getTargetPath());
+                if (item.getTargetSha256() != null
+                        && !item.getTargetSha256().equalsIgnoreCase(targetSnapshot.sha256())) {
+                    throw new ArchiveExecutionConflictException("归档目标内容摘要已变化");
+                }
             }
 
             readyForDatabase = true;
-            persistenceService.applyFormalState(itemId, targetSnapshot.etag(), targetSnapshot.size(), summary, tags);
+            persistenceService.applyFormalState(itemId, targetSnapshot.etag(),
+                    targetSnapshot.size(), targetSnapshot.sha256(), summary, tags);
             if (!Objects.equals(item.getSourcePath(), item.getTargetPath())) {
                 try {
-                    minioStorageService.deleteFile(null, item.getSourcePath());
+                    storage.delete(item.getSourcePath(), item.getSourceSha256() == null
+                            ? storage.stat(item.getSourcePath()).sha256() : item.getSourceSha256());
                 } catch (Exception cleanupError) {
                     persistenceService.markCleanupPending(itemId);
                     compensationRegistry.register(item.getBatchId(), itemId,
@@ -225,18 +263,22 @@ public class ArchiveOperationService {
                 || !sameCategory(metadata.getCategory(), item.getSourceCategory())) {
             throw new ArchiveExecutionConflictException("文件正式状态已变化，拒绝执行");
         }
-        MinioStorageService.ObjectSnapshot source = minioStorageService.statFile(null, item.getSourcePath());
+        FileStoragePort.StoredObject source = storage.stat(item.getSourcePath());
         if (!Objects.equals(item.getSourceEtag(), source.etag())
-                || !Objects.equals(item.getSourceSize(), source.size())) {
+                || !Objects.equals(item.getSourceSize(), source.size())
+                || (item.getSourceSha256() != null
+                    && !item.getSourceSha256().equalsIgnoreCase(source.sha256()))) {
             throw new ArchiveExecutionConflictException("源对象指纹已变化，拒绝执行");
         }
+        ArchiveFormalSnapshot before = snapshotService.sourceOrNull(item);
+        if (before != null && !snapshotService.matches(metadata, before)) {
+            throw new ArchiveExecutionConflictException("源文件正式字段或标签已变化，拒绝执行");
+        }
         if (!Objects.equals(item.getSourcePath(), item.getTargetPath())
-                && minioStorageService.objectExists(null, item.getTargetPath())) {
-            MinioStorageService.ObjectSnapshot existing = minioStorageService.statFile(null, item.getTargetPath());
-            if (!Objects.equals(item.getSourceEtag(), existing.etag())
-                    || !Objects.equals(item.getSourceSize(), existing.size())) {
-                throw new ArchiveExecutionConflictException("归档目标路径已被占用: " + item.getTargetPath());
-            }
+                && storage.exists(item.getTargetPath())) {
+            // Equal bytes are not proof this operation created the object. A crash
+            // between copy and the durable TARGET_COPIED step requires manual review.
+            throw new ArchiveExecutionConflictException("归档目标路径已被占用: " + item.getTargetPath());
         }
     }
 
@@ -304,14 +346,15 @@ public class ArchiveOperationService {
     }
 
     private List<String> readTags(String json) {
-        if (json == null || json.isBlank()) {
-            return List.of();
-        }
+        if (json == null || json.isBlank()) throw new IllegalArgumentException("预览缺少确认标签快照");
         try {
-            return objectMapper.readValue(json, new TypeReference<List<String>>() { });
+            List<String> values = objectMapper.readValue(json, new TypeReference<List<String>>() { });
+            if (values == null || values.stream().anyMatch(value -> value == null || value.isBlank())) {
+                throw new IllegalArgumentException("预览确认标签无效");
+            }
+            return values.stream().map(String::trim).distinct().toList();
         } catch (Exception e) {
-            log.warn("归档读取预览标签失败，将跳过正式标签写入");
-            return List.of();
+            throw new IllegalArgumentException("预览确认标签已损坏，请重新生成预览", e);
         }
     }
 

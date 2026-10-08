@@ -19,15 +19,20 @@ public class ModeAwareChatProvider implements ChatProvider {
 
     protected final ModelRuntimeModeService modeService;
     protected final ModelRuntimeProviderFactory providerFactory;
+    protected final ModelExecutionSnapshotService snapshots;
 
     public ModeAwareChatProvider(ModelRuntimeModeService modeService,
-                                 ModelRuntimeProviderFactory providerFactory) {
+                                 ModelRuntimeProviderFactory providerFactory,
+                                 ModelExecutionSnapshotService snapshots) {
         this.modeService = modeService;
         this.providerFactory = providerFactory;
+        this.snapshots = snapshots;
     }
 
     protected ChatProvider delegate() {
-        GovernanceRunMode mode = ModelExecutionContext.require().mode();
+        var snapshot = ModelExecutionContext.require();
+        snapshots.requireCurrent(snapshot);
+        GovernanceRunMode mode = snapshot.mode();
         return providerFactory.chat(mode);
     }
 

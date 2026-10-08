@@ -93,7 +93,8 @@ class InboxImportScannerTest {
             records.put(record.getSnapshotKey(), record);
             return record;
         }).when(recordRepository).save(any(InboxImportRecord.class));
-        when(recordRepository.claimForImport(anyLong(), anyLong(), any(InboxImportStatus.class), anyCollection(), any()))
+        when(recordRepository.claimForImport(anyLong(), anyLong(), any(InboxImportStatus.class), anyCollection(),
+                org.mockito.ArgumentMatchers.anyInt(), any()))
                 .thenAnswer(invocation -> {
                     Long id = invocation.getArgument(0, Long.class);
                     InboxImportStatus target = invocation.getArgument(2, InboxImportStatus.class);
@@ -101,8 +102,12 @@ class InboxImportScannerTest {
                     Optional<InboxImportRecord> record = records.values().stream()
                             .filter(candidate -> candidate.getId().equals(id))
                             .findFirst();
-                    if (record.isPresent() && claimable.contains(record.get().getStatus())) {
+                    int maxAttempts = invocation.getArgument(4, Integer.class);
+                    if (record.isPresent() && claimable.contains(record.get().getStatus())
+                            && record.get().getAttemptCount() < maxAttempts) {
                         record.get().setStatus(target);
+                        record.get().setAttemptCount(record.get().getAttemptCount() + 1);
+                        record.get().setImportStartedAt(invocation.getArgument(5));
                         return 1;
                     }
                     return 0;
@@ -116,7 +121,7 @@ class InboxImportScannerTest {
     void waitsForASecondUnchangedObservationBeforeImporting() throws IOException {
         Path file = write("memo.txt", "stable content");
         FileUploadResponse response = FileUploadResponse.builder().taskId("task-c04-001").build();
-        when(fileUploadApplicationService.importInboxFile(any(Path.class), anyLong(), anyLong()))
+        when(fileUploadApplicationService.importInboxFile(any(Path.class), anyLong(), anyLong(), anyLong()))
                 .thenReturn(response);
         when(fileMetadataRepository.findByTaskId("task-c04-001"))
                 .thenReturn(Optional.of(FileMetadata.builder().id(101L).build()));
@@ -126,7 +131,7 @@ class InboxImportScannerTest {
         assertThat(scanner.scanOnce().imported()).isZero();
 
         verify(fileUploadApplicationService).importInboxFile(file, Files.size(file),
-                Files.getLastModifiedTime(file).toMillis());
+                Files.getLastModifiedTime(file).toMillis(), 1L);
         assertThat(records.values()).singleElement()
                 .extracting(InboxImportRecord::getStatus)
                 .isEqualTo(InboxImportStatus.IMPORTED);
@@ -135,7 +140,7 @@ class InboxImportScannerTest {
     @Test
     void treatsSameContentAtAnotherPathAsDuplicate() throws IOException {
         Path original = write("a.txt", "same content");
-        when(fileUploadApplicationService.importInboxFile(any(Path.class), anyLong(), anyLong()))
+        when(fileUploadApplicationService.importInboxFile(any(Path.class), anyLong(), anyLong(), anyLong()))
                 .thenReturn(FileUploadResponse.builder().taskId("task-c04-002").build());
         when(fileMetadataRepository.findByTaskId("task-c04-002"))
                 .thenReturn(Optional.of(FileMetadata.builder().id(102L).build()));
@@ -147,7 +152,7 @@ class InboxImportScannerTest {
         assertThat(scanner.scanOnce().duplicate()).isEqualTo(1);
 
         verify(fileUploadApplicationService).importInboxFile(original, Files.size(original),
-                Files.getLastModifiedTime(original).toMillis());
+                Files.getLastModifiedTime(original).toMillis(), 1L);
         verifyNoMoreInteractions(fileUploadApplicationService);
         assertThat(records.values()).anyMatch(record -> record.getSourceFileName().equals("b.txt")
                 && record.getStatus() == InboxImportStatus.DUPLICATE);
@@ -156,7 +161,7 @@ class InboxImportScannerTest {
     @Test
     void changedFileStartsAFreshStabilityWindow() throws IOException {
         Path file = write("changing.txt", "a");
-        when(fileUploadApplicationService.importInboxFile(any(Path.class), anyLong(), anyLong()))
+        when(fileUploadApplicationService.importInboxFile(any(Path.class), anyLong(), anyLong(), anyLong()))
                 .thenReturn(FileUploadResponse.builder().taskId("task-c04-changing").build());
         when(fileMetadataRepository.findByTaskId("task-c04-changing"))
                 .thenReturn(Optional.of(FileMetadata.builder().id(103L).build()));
@@ -169,7 +174,7 @@ class InboxImportScannerTest {
     @Test
     void recordsFailureAndDoesNotRetryBeforeBackoff() throws IOException {
         write("broken.txt", "stable content");
-        when(fileUploadApplicationService.importInboxFile(any(Path.class), anyLong(), anyLong()))
+        when(fileUploadApplicationService.importInboxFile(any(Path.class), anyLong(), anyLong(), anyLong()))
                 .thenThrow(new IllegalStateException("MinIO unavailable"));
 
         scanner.scanOnce();
@@ -178,6 +183,48 @@ class InboxImportScannerTest {
         assertThat(records.values()).singleElement()
                 .extracting(InboxImportRecord::getStatus)
                 .isEqualTo(InboxImportStatus.FAILED);
+    }
+
+    @Test
+    void exhaustedImportRequiresExplicitRetry() throws IOException {
+        Path file = write("broken.txt", "stable content");
+        properties.setMaxAttempts(1);
+        when(fileUploadApplicationService.importInboxFile(any(Path.class), anyLong(), anyLong(), anyLong()))
+                .thenThrow(new IllegalStateException("storage unavailable"));
+
+        scanner.scanOnce();
+        scanner.scanOnce();
+        InboxImportRecord record = records.values().iterator().next();
+        assertThat(record.getStatus()).isEqualTo(InboxImportStatus.MANUAL_REVIEW);
+        assertThat(record.getAttemptCount()).isEqualTo(1);
+        scanner.scanOnce();
+        verify(fileUploadApplicationService).importInboxFile(file, Files.size(file),
+                Files.getLastModifiedTime(file).toMillis(), 1L);
+
+        scanner.retry(record.getId());
+        assertThat(record.getStatus()).isEqualTo(InboxImportStatus.STABLE);
+        assertThat(record.getAttemptCount()).isZero();
+    }
+
+    @Test
+    void symbolicLinkInInboxIsNeverImported() throws IOException {
+        Path outside = Files.writeString(inbox.getParent().resolve("outside.txt"), "secret");
+        try { Files.createSymbolicLink(inbox.resolve("linked.txt"), outside); }
+        catch (UnsupportedOperationException | SecurityException | IOException unavailable) {
+            org.junit.jupiter.api.Assumptions.assumeTrue(false, "symbolic links unavailable");
+        }
+        Path normal = write("normal.txt", "ordinary");
+        when(fileUploadApplicationService.importInboxFile(any(Path.class), anyLong(), anyLong(), anyLong()))
+                .thenReturn(FileUploadResponse.builder().taskId("normal-task").build());
+        when(fileMetadataRepository.findByTaskId("normal-task"))
+                .thenReturn(Optional.of(FileMetadata.builder().id(104L).build()));
+        scanner.scanOnce();
+        scanner.scanOnce();
+        assertThat(records.values()).singleElement()
+                .extracting(InboxImportRecord::getSourceFileName).isEqualTo("normal.txt");
+        verify(fileUploadApplicationService).importInboxFile(normal, Files.size(normal),
+                Files.getLastModifiedTime(normal).toMillis(), 1L);
+        verifyNoMoreInteractions(fileUploadApplicationService);
     }
 
     private Path write(String name, String content) throws IOException {

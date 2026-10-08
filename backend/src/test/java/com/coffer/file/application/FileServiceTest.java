@@ -357,9 +357,6 @@ class FileServiceTest extends com.coffer.auth.OwnerTestSupport {
         saveMapping(fm.getId(), tagId2, ConfirmationStatus.PENDING_CONFIRMATION);
         saveMapping(fm.getId(), tagId3, ConfirmationStatus.REJECTED);
 
-        when(minioStorageService.generatePresignedUrl(nullable(String.class), nullable(String.class),
-                nullable(Duration.class))).thenReturn("http://preview/url");
-
         FileDetailResponse detail = fileService.getFileDetail(fm.getId());
 
         assertThat(detail.getFileName()).isEqualTo("详情文档.pdf");
@@ -388,9 +385,6 @@ class FileServiceTest extends com.coffer.auth.OwnerTestSupport {
                 .archived(true)
                 .storagePath("contracts/2025/08/29/uuid.pdf")
                 .build());
-        when(minioStorageService.generatePresignedUrl(nullable(String.class), nullable(String.class),
-                nullable(Duration.class))).thenReturn("http://preview/url");
-
         FileDetailResponse detail = fileService.getFileDetail(fm.getId());
 
         assertThat(detail.getCategory()).isEqualTo("CONTRACT");

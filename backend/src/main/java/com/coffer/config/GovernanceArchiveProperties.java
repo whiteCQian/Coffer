@@ -12,5 +12,5 @@ public class GovernanceArchiveProperties {
     private long retryDelaySeconds = 30;
 
     /** Maximum number of external execution attempts recorded for one item. */
-    private int maxAttempts = 3;
+    private int maxAttempts = 2;
 }

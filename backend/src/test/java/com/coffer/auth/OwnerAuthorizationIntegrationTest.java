@@ -47,12 +47,18 @@ class OwnerAuthorizationIntegrationTest {
             com.coffer.file.application.FileService.class, com.coffer.file.application.assembler.FileResponseAssembler.class,
             com.coffer.file.application.FileOperationService.class, com.coffer.task.application.TaskRegistrationService.class,
             com.coffer.file.application.StorageDeletionTaskService.class,
-            com.coffer.task.application.UploadTaskRecovery.class})
+            com.coffer.task.application.UploadTaskRecovery.class,
+            com.coffer.task.application.AsyncTaskLeaseService.class})
     static class Config {
         @Bean(name = "taskExecutor") java.util.concurrent.Executor taskExecutor() { return Runnable::run; }
         @Bean com.coffer.service.MinioStorageService storage() { return org.mockito.Mockito.mock(com.coffer.service.MinioStorageService.class); }
         @Bean com.coffer.service.VectorCleanupService vectorCleanup() { return org.mockito.Mockito.mock(com.coffer.service.VectorCleanupService.class); }
         @Bean com.coffer.file.application.async.AsyncFileProcessor processor() { return org.mockito.Mockito.mock(com.coffer.file.application.async.AsyncFileProcessor.class); }
+        @Bean com.coffer.model.runtime.ModelRuntimeModeService runtimeModeService() {
+            var mode = org.mockito.Mockito.mock(com.coffer.model.runtime.ModelRuntimeModeService.class);
+            org.mockito.Mockito.when(mode.requireActiveMode()).thenReturn(com.coffer.governance.domain.GovernanceRunMode.API);
+            return mode;
+        }
     }
 
     static class Worker {

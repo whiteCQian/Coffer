@@ -44,9 +44,12 @@ const expanded = ref(false)
 /** 当前点击的引用文件；详情抽屉按 ID 重新读取真实文件状态。 */
 const citationFileId = ref<number | null>(null)
 const citationRevision = ref<number | undefined>(undefined)
+const citationLocation = ref<ChatCitation | undefined>(undefined)
 /** 文件删除或详情加载失败后保留在对话卡片上的失效提示。 */
 const invalidCitationIds = ref<Set<string>>(new Set())
-const citationKey = (citation: ChatCitation) => `${citation.fileId}:${citation.revision}`
+const citationFileKey = (citation: ChatCitation) => `${citation.fileId}:${citation.revision}`
+const citationKey = (citation: ChatCitation) =>
+  `${citationFileKey(citation)}:${citation.sourceKind ?? ''}:${citation.sourceStart ?? ''}:${citation.startCharacter ?? ''}`
 
 /** 读取当前对话模型的配置状态；配置存在不等于网络连接成功。 */
 async function loadAiStatus() {
@@ -66,6 +69,7 @@ function toggleExpand() {
 function openCitation(citation: ChatCitation) {
   if (citationIsUnavailable(citation)) return
   citationRevision.value = citation.revision
+  citationLocation.value = citation
   citationFileId.value = citation.fileId
 }
 
@@ -75,7 +79,16 @@ function markCitationUnavailable(fileId: number) {
 }
 
 function citationIsUnavailable(citation: ChatCitation) {
-  return !citation.fileId || !Number.isInteger(citation.revision) || invalidCitationIds.value.has(citationKey(citation))
+  return !citation.fileId || !Number.isInteger(citation.revision) || invalidCitationIds.value.has(citationFileKey(citation))
+}
+
+function sourceLabel(citation: ChatCitation) {
+  if (!citation.sourceStart) return ''
+  if (citation.sourceKind === 'PAGE') return `第 ${citation.sourceStart} 页`
+  if (citation.sourceKind === 'LINE') return `第 ${citation.sourceStart} 行`
+  if (citation.sourceKind === 'PARAGRAPH') return `第 ${citation.sourceStart} 段`
+  if (citation.sourceKind === 'ORIGINAL_IMAGE') return '原图'
+  return ''
 }
 
 function citationTypeLabel(type: string) {
@@ -86,6 +99,7 @@ function citationTypeLabel(type: string) {
       VECTOR: '向量',
       HYBRID: '混合',
       RECENT_UPLOAD: '最近上传',
+      PARSE: '原文',
     })[item.trim()] ?? item.trim())
     .filter(Boolean)
     .join(' / ')
@@ -193,7 +207,9 @@ function onQuick(p: string) {
                     {{ citation.snippet || '暂无命中片段' }}
                   </span>
                   <span class="citation-meta">
-                    {{ citationTypeLabel(citation.retrievalType) }} · 相关度 {{ citationScoreLabel(citation.score) }}
+                    {{ citationTypeLabel(citation.retrievalType) }}
+                    <template v-if="sourceLabel(citation)"> · {{ sourceLabel(citation) }}</template>
+                    · 相关度 {{ citationScoreLabel(citation.score) }}
                   </span>
                 </span>
                 <span v-if="!citationIsUnavailable(citation)" class="citation-arrow">›</span>
@@ -241,6 +257,7 @@ function onQuick(p: string) {
     <FileDetailDrawer
       v-model="citationFileId"
       :revision="citationRevision"
+      :source="citationLocation"
       :elevated="expanded"
       @unavailable="markCitationUnavailable"
     />

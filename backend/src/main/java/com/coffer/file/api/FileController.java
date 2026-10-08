@@ -11,7 +11,8 @@ import com.coffer.file.application.FileService;
 import com.coffer.file.application.FileUploadApplicationService;
 import com.coffer.file.application.FileLifecycleApplicationService;
 import com.coffer.file.domain.FileMetadata;
-import com.coffer.service.MinioStorageService;
+import com.coffer.file.storage.FileStoragePort;
+import com.coffer.file.storage.StorageObjectNotFoundException;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,7 +24,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ContentDisposition;
-import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
@@ -40,6 +41,8 @@ import java.util.List;
 import java.nio.charset.StandardCharsets;
 import java.io.InputStream;
 import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 文件接口：列表查询与上传。
@@ -53,8 +56,9 @@ public class FileController {
     private final FileService fileService;
     private final FileUploadApplicationService fileUploadApplicationService;
     private final FileLifecycleApplicationService fileLifecycleApplicationService;
-    private final MinioStorageService minioStorageService;
+    private final FileStoragePort storage;
     private final com.coffer.service.PrivateFileAccess privateFiles;
+    private static final Pattern SINGLE_BYTE_RANGE = Pattern.compile("(?i)^bytes=(\\d*)-(\\d*)$");
 
     /**
      * 文件列表查询：可选关键词（文件名/AI摘要/未拒绝标签模糊匹配）、可选分类过滤、
@@ -80,7 +84,7 @@ public class FileController {
         } catch (IllegalArgumentException e) {
             // 非法排序 token / 非法分类参数 → 400
             log.warn("文件列表查询参数非法");
-            return Result.error(400, e.getMessage());
+            return Result.error(400, "请求参数不符合要求，请检查输入后重试");
         }
     }
 
@@ -114,14 +118,16 @@ public class FileController {
         } catch (IllegalArgumentException e) {
             // 文件不存在 → 404
             log.warn("文件详情查询失败");
-            return Result.error(404, e.getMessage());
+            return Result.error(404, "资源不存在或已不可用");
         }
     }
 
     /** Authenticated, owner-scoped file content; the browser never receives an object-store URL. */
     @GetMapping("/{id}/content")
     public ResponseEntity<org.springframework.core.io.InputStreamResource> getFileContent(@PathVariable Long id,
-            @RequestParam(required = false) Long revision) {
+            @RequestParam(required = false) Long revision,
+            @RequestParam(defaultValue = "false") boolean download,
+            @RequestHeader(value = "Range", required = false) String rangeHeader) {
         FileMetadata metadata;
         try {
             metadata = fileService.requireFileForContent(id);
@@ -132,21 +138,87 @@ public class FileController {
         if (metadata.getStoragePath() == null || metadata.getStoragePath().isBlank()) {
             return ResponseEntity.notFound().build();
         }
+        FileStoragePort.StoredObject object;
+        try {
+            object = storage.stat(metadata.getStoragePath());
+        } catch (StorageObjectNotFoundException missing) {
+            return ResponseEntity.notFound().build();
+        }
+        if (metadata.getContentSha256() == null
+                || !metadata.getContentSha256().matches("[0-9a-f]{64}")
+                || !metadata.getContentSha256().equals(object.sha256())
+                || !java.util.Objects.equals(metadata.getFileSize(), object.size())) {
+            throw new com.coffer.file.storage.StorageConflictException("文件正文与元数据指纹不一致");
+        }
+        long size = object.size();
+        if (size < 0) throw new IllegalStateException("存储对象大小无效");
         MediaType contentType = contentTypeFor(metadata.getFileType());
         boolean inlineSafe = contentType.getType().equals("image")
                 || contentType.equals(MediaType.APPLICATION_PDF)
                 || contentType.equals(MediaType.TEXT_PLAIN);
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(contentType);
-        if (metadata.getFileSize() != null) headers.setContentLength(metadata.getFileSize());
-        headers.setContentDisposition(ContentDisposition.builder(inlineSafe ? "inline" : "attachment")
+        headers.setContentDisposition(ContentDisposition.builder(inlineSafe && !download ? "inline" : "attachment")
                 .filename(metadata.getFileName(), StandardCharsets.UTF_8).build());
         headers.setCacheControl("private, no-store");
         headers.set("X-Content-Type-Options", "nosniff");
         headers.set("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'");
-        // Open under the authenticated request scope. ResourceHttpMessageConverter closes the stream.
-        return ResponseEntity.ok().headers(headers).body(new org.springframework.core.io.InputStreamResource(
-                minioStorageService.getFileStream(null, metadata.getStoragePath())));
+        headers.set("Cross-Origin-Resource-Policy", "same-origin");
+        headers.set("Accept-Ranges", "bytes");
+        String etag = object.sha256() != null && !object.sha256().isBlank() ? object.sha256() : object.etag();
+        if (etag != null && !etag.isBlank()) headers.setETag("\"" + etag.replace("\"", "") + "\"");
+
+        ByteRange requested = null;
+        if (rangeHeader != null) {
+            requested = parseRange(rangeHeader, size);
+            if (requested == null) {
+                headers.set("Content-Range", "bytes */" + size);
+                return ResponseEntity.status(HttpStatus.REQUESTED_RANGE_NOT_SATISFIABLE).headers(headers).build();
+            }
+        }
+
+        try {
+            // Open only after the owner and revision checks. The resource converter closes the stream.
+            InputStream stream = requested == null
+                    ? storage.readIfUnchanged(metadata.getStoragePath(), object)
+                    : storage.readRangeIfUnchanged(metadata.getStoragePath(), object,
+                            requested.start(), requested.length());
+            headers.setContentLength(requested == null ? size : requested.length());
+            if (requested != null) {
+                headers.set("Content-Range", "bytes " + requested.start() + "-" + requested.end() + "/" + size);
+            }
+            return ResponseEntity.status(requested == null ? HttpStatus.OK : HttpStatus.PARTIAL_CONTENT)
+                    .headers(headers).body(new org.springframework.core.io.InputStreamResource(stream));
+        } catch (StorageObjectNotFoundException missing) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    /** One byte range only; multipart ranges are intentionally rejected. */
+    private ByteRange parseRange(String value, long size) {
+        if (size == 0) return null;
+        Matcher match = SINGLE_BYTE_RANGE.matcher(value.trim());
+        if (!match.matches()) return null;
+        try {
+            String first = match.group(1);
+            String last = match.group(2);
+            if (first.isEmpty()) {
+                if (last.isEmpty()) return null;
+                long suffix = Long.parseLong(last);
+                if (suffix <= 0) return null;
+                return new ByteRange(Math.max(0, size - suffix), size - 1);
+            }
+            long start = Long.parseLong(first);
+            if (start < 0 || start >= size) return null;
+            long end = last.isEmpty() ? size - 1 : Math.min(Long.parseLong(last), size - 1);
+            return end < start ? null : new ByteRange(start, end);
+        } catch (NumberFormatException invalid) {
+            return null;
+        }
+    }
+
+    private record ByteRange(long start, long end) {
+        long length() { return end - start + 1; }
     }
 
     private MediaType contentTypeFor(String fileType) {
@@ -180,7 +252,7 @@ public class FileController {
         } catch (IllegalArgumentException e) {
             // 文件名非法 / 文件不存在 → 400
             log.warn("文件重命名失败");
-            return Result.error(400, e.getMessage());
+            return Result.error(400, "请求参数不符合要求，请检查输入后重试");
         }
     }
 
@@ -207,19 +279,11 @@ public class FileController {
         } catch (IllegalArgumentException e) {
             // 文件不存在 / 非失败状态 → 400
             log.warn("文件重试失败");
-            return Result.error(400, e.getMessage());
+            return Result.error(400, "请求参数不符合要求，请检查输入后重试");
         }
     }
 
-    /**
-     * 删除文件（允许任意状态）：清理 DB 记录并删除 MinIO 对象。
-     *
-     * <p>DB 清理失败整体回滚、对象不动；DB 删成功后 MinIO 删除失败仅留孤儿对象（可后台 GC），
-     * 只记日志不返回错误。正在跑的异步线程因查不到记录自然退出。
-     *
-     * @param id 文件 ID
-     * @return 统一响应；文件不存在时 code=404
-     */
+    /** Delete the logical file and enqueue durable physical cleanup. */
     @DeleteMapping("/{id}")
     public Result<Void> deleteFile(@PathVariable Long id) {
         try {
@@ -228,29 +292,15 @@ public class FileController {
         } catch (IllegalArgumentException e) {
             // 文件不存在 → 404
             log.warn("文件删除失败");
-            return Result.error(404, e.getMessage());
+            return Result.error(404, "资源不存在或已不可用");
         }
     }
 
-    /**
-     * 文件上传：接收 multipart/form-data 文件，同步上传 MinIO 并登记异步任务。
-     *
-     * <p>流程：{@code @Valid} 校验文件非空且 ≤50MB → 生成存储路径 → 上传 MinIO →
-     * 事务内登记 FileMetadata + AsyncTask（{@code registerUploadTask}）→ 事务提交后
-     * 异步触发分析管道 → 返回含 taskId 的响应供前端轮询。Controller 不加
-     * {@code @Transactional}，避免异步线程读到未提交数据。
-     *
-     * @param request 上传请求（file 必填，sessionId 可选）
-     * @return 统一响应，data 为任务信息（taskId/fileName/fileSize/status/uploadTime）
-     */
+    /** Upload through the configured storage port with a client-stable retry key. */
     @PostMapping("/upload")
     @com.coffer.model.runtime.ModelSubmission("UPLOAD")
-    public Result<FileUploadResponse> uploadFile(@Valid @ModelAttribute FileUploadRequest request) {
-        try {
-            return Result.success(fileUploadApplicationService.upload(request));
-        } catch (Exception e) {
-            log.error("文件上传失败（其他异常），异常类型={}", e.getClass().getSimpleName());
-            return Result.error(500, "文件上传失败");
-        }
+    public Result<FileUploadResponse> uploadFile(@Valid @ModelAttribute FileUploadRequest request,
+                                                 @RequestHeader("Idempotency-Key") String idempotencyKey) {
+        return Result.success(fileUploadApplicationService.upload(request, idempotencyKey));
     }
 }

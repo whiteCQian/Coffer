@@ -1,0 +1,3 @@
+ALTER TABLE async_task
+    ADD COLUMN lease_until DATETIME(6) NULL,
+    ADD COLUMN attempts INT NOT NULL DEFAULT 0;

@@ -26,6 +26,7 @@ public class InboxImportProgressResponse {
     private int importedCount;
     private int duplicateCount;
     private int failedCount;
+    private int manualReviewCount;
     private int unsupportedCount;
     private List<InboxImportItemResponse> items;
 }

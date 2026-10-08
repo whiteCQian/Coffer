@@ -58,17 +58,66 @@ export function deleteFile(id: number) {
 }
 
 /** 失败文件重试：仅 FAILED 可重试，事务外重新触发异步解析管道 */
-export function retryFile(id: number) {
-  return http.post<Result<null>>(`/files/${id}/retry`)
+export function retryFile(id: number, modelVersion?: string) {
+  return http.post<Result<null>>(`/files/${id}/retry`, null, modelVersion ? {
+    headers: { 'X-Coffer-Model-Version': modelVersion, 'X-Coffer-Allow-Sensitive': 'true' },
+  } : undefined)
+}
+
+export type ModelCapability = 'CHAT' | 'VISION' | 'EMBEDDING'
+export interface FileModelAssessment {
+  fileId: number
+  revision: number
+  contentSha256: string
+  risk: 'CLEAR' | 'SENSITIVE' | 'UNKNOWN'
+  configurationVersion: string
+  mode: 'API' | 'LOCAL'
+  capability: ModelCapability
+  endpointUrl: string
+  modelName: string
+}
+
+export function assessFileModel(id: number, capability: ModelCapability) {
+  return http.get<Result<FileModelAssessment>>(`/files/${id}/model-approval`, { params: { capability } })
+}
+
+export function approveFileModel(id: number, capability: ModelCapability, assessment: FileModelAssessment) {
+  return http.post<Result<FileModelAssessment>>(`/files/${id}/model-approval`, {
+    approved: true, revision: assessment.revision, contentSha256: assessment.contentSha256,
+    risk: assessment.risk,
+  }, {
+    params: { capability },
+    headers: { 'X-Coffer-Model-Version': assessment.configurationVersion, 'X-Coffer-Allow-Sensitive': 'true' },
+  })
+}
+
+export interface WorkSaveResponse {
+  operationId: string
+  fileId: number
+  revision: number
+  taskId: string
+}
+
+/** Saves edited bytes only if the formal revision and SHA-256 still match. Reuse requestId on retry. */
+export function saveWorkingCopy(id: number, file: File, expectedRevision: number,
+                                expectedSha256: string, requestId: string) {
+  const body = new FormData()
+  body.append('file', file)
+  body.append('expectedRevision', String(expectedRevision))
+  body.append('expectedSha256', expectedSha256)
+  return http.post<Result<WorkSaveResponse>>(`/files/${id}/work-save`, body, {
+    headers: { 'Idempotency-Key': requestId },
+  })
 }
 
 /** 文件上传：multipart/form-data，返回 taskId 供轮询 */
 export function uploadFile(
   formData: FormData,
+  idempotencyKey: string,
   onUploadProgress?: (percent: number) => void,
 ) {
   return http.post<Result<FileUploadResponse>>('/files/upload', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
+    headers: { 'Content-Type': 'multipart/form-data', 'Idempotency-Key': idempotencyKey },
     onUploadProgress: (e) => {
       if (e.total) onUploadProgress?.(Math.round((e.loaded / e.total) * 100))
     },

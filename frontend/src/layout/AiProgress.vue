@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
-import { retryFile } from '@/api/files'
-import { getInboxImportProgress, getOverview } from '@/api/tasks'
+import { approveFileModel, assessFileModel, retryFile, type ModelCapability } from '@/api/files'
+import { getInboxImportProgress, getOverview, retryInboxImport } from '@/api/tasks'
 import type { InboxImportProgressResponse, TaskOverviewResponse } from '@/api/types'
 import FileTile from '@/components/FileTile.vue'
 
@@ -101,9 +101,34 @@ async function load() {
 /** 失败重试（fileId 为空说明文件已被删除，不展示重试按钮） */
 async function doRetry(row: OverviewRow) {
   if (!row.fileId) return
-  const { data } = await retryFile(row.fileId)
+  let modelVersion: string | undefined
+  if (row.error?.includes('需要确认此文件')) {
+    const capability: ModelCapability = row.fileType && ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'].includes(row.fileType)
+      ? 'VISION' : 'CHAT'
+    const { data: assessed } = await assessFileModel(row.fileId, capability)
+    const target = assessed.data
+    const risk = target.risk === 'SENSITIVE' ? '本地规则发现敏感信息'
+      : target.risk === 'UNKNOWN' ? '本地无法判断正文是否敏感' : '未命中本地敏感规则'
+    try {
+      await ElMessageBox.confirm(
+        `文件：${row.name}\n版本：${target.revision}\n风险：${risk}\n模式：${target.mode}\n` +
+          `目标：${target.endpointUrl}（${target.modelName}）\n\n仅授权这个文件版本向该端点发送内容。`,
+        '确认文件模型授权',
+        { confirmButtonText: '授权并重试', cancelButtonText: '取消', type: 'warning' },
+      )
+    } catch { return }
+    await approveFileModel(row.fileId, capability, target)
+    modelVersion = target.configurationVersion
+  }
+  const { data } = await retryFile(row.fileId, modelVersion)
   void data
   ElMessage.success('已重新开始解析')
+  await load()
+}
+
+async function doRetryInbox(id: number) {
+  await retryInboxImport(id)
+  ElMessage.success('收件箱任务已重新排队')
   await load()
 }
 
@@ -138,8 +163,14 @@ onUnmounted(() => {
       </div>
       <p class="inbox-summary-detail">
         已导入 {{ inbox.importedCount }} · 重复 {{ inbox.duplicateCount }} ·
-        待稳定 {{ inbox.discoveredCount + inbox.stableCount }} · 失败 {{ inbox.failedCount }}
+        待稳定 {{ inbox.discoveredCount + inbox.stableCount }} · 失败 {{ inbox.failedCount }} ·
+        待人工处理 {{ inbox.manualReviewCount }}
       </p>
+      <div v-for="item in inbox.items.filter(i => i.status === 'MANUAL_REVIEW')"
+           :key="item.id" class="inbox-manual-item">
+        <span>{{ item.fileName }}：{{ item.error }}</span>
+        <button v-if="item.id" class="task-btn is-retry" @click="doRetryInbox(item.id)">核对后重试</button>
+      </div>
     </div>
 
     <div v-if="loading && !rows.length" class="progress-empty">
@@ -250,6 +281,16 @@ onUnmounted(() => {
   color: rgb(var(--ink-mint-rgb) / 0.7);
   font-size: 11.5px;
 }
+.inbox-manual-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+  color: var(--ink-mint);
+  font-size: 12px;
+}
+.inbox-manual-item span { overflow-wrap: anywhere; }
 
 .task-item {
   display: flex;

@@ -6,6 +6,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
+import java.nio.charset.StandardCharsets;
+import java.text.Normalizer;
 import java.util.Locale;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -38,6 +40,8 @@ public class PathGenerator {
         if (type == null || type.isBlank()) {
             type = "other";
         }
+        type = type.toLowerCase(Locale.ROOT);
+        if (!type.matches("[a-z0-9]{1,16}")) type = "other";
         String sanitized = sanitizeFilename(originalFilename);
         String path = String.format("users/%d/files/%04d/%02d/%02d/%s/%s_%s",
                 TenantContext.requireOwnerId(),
@@ -123,6 +127,21 @@ public class PathGenerator {
         if (originalFilename == null || originalFilename.isBlank()) {
             return "unnamed";
         }
-        return ILLEGAL_CHARS.matcher(originalFilename.trim()).replaceAll("_");
+        String normalized = Normalizer.normalize(originalFilename.trim(), Normalizer.Form.NFC);
+        String clean = ILLEGAL_CHARS.matcher(normalized).replaceAll("_");
+        // Leave room for the UUID/sequence prefix while respecting Windows' 255-byte segment limit.
+        StringBuilder shortened = new StringBuilder();
+        int bytes = 0;
+        for (int offset = 0; offset < clean.length();) {
+            int codePoint = clean.codePointAt(offset);
+            String next = new String(Character.toChars(codePoint));
+            int length = next.getBytes(StandardCharsets.UTF_8).length;
+            if (bytes + length > 200) break;
+            shortened.append(next);
+            bytes += length;
+            offset += Character.charCount(codePoint);
+        }
+        String result = shortened.toString().replaceAll("[. ]+$", "");
+        return result.isBlank() ? "unnamed" : result;
     }
 }

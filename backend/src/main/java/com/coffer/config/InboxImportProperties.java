@@ -25,4 +25,10 @@ public class InboxImportProperties {
 
     /** Delay before a failed snapshot is attempted again. */
     private long retryDelayMs = 60_000L;
+
+    /** Consecutive failures before the snapshot requires an explicit retry. */
+    private int maxAttempts = 2;
+
+    /** A crashed importer may be reclaimed only after this lease expires. */
+    private long importingLeaseMs = 900_000L;
 }

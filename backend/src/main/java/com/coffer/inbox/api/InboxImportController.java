@@ -5,6 +5,8 @@ import com.coffer.inbox.api.dto.InboxImportProgressResponse;
 import com.coffer.inbox.application.InboxImportScanner;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -19,5 +21,11 @@ public class InboxImportController {
     @GetMapping("/progress")
     public Result<InboxImportProgressResponse> getProgress() {
         return Result.success(inboxImportScanner.getProgress());
+    }
+
+    @PostMapping("/{id}/retry")
+    public Result<Void> retry(@PathVariable Long id) {
+        inboxImportScanner.retry(id);
+        return Result.success();
     }
 }

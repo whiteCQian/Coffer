@@ -22,6 +22,7 @@ public class GovernanceRecoveryCoordinator {
     private final ArchiveOperationPersistenceService archivePersistence;
     private final ArchiveRollbackPersistenceService rollbackPersistence;
     private final TenantJobRunner tenantJobRunner;
+    private final com.coffer.config.GovernanceArchiveProperties archiveProperties;
 
     @EventListener(ApplicationReadyEvent.class)
     public void recover() {
@@ -35,6 +36,15 @@ public class GovernanceRecoveryCoordinator {
     }
 
     private void recoverArchiveItems() {
+        // Prior releases left exhausted items as FAILED with a retry timestamp.
+        // Keep the operator-visible state consistent after an upgrade.
+        for (ArchiveOperationItem item : itemRepository.findByExecutionStatusIn(
+                List.of(ArchiveOperationItemExecutionStatus.FAILED))) {
+            if (item.getAttempts() >= Math.max(1, archiveProperties.getMaxAttempts())) {
+                archivePersistence.markFailed(item.getId(), item.getFailureCode(),
+                        item.getFailureMessage(), null);
+            }
+        }
         List<ArchiveOperationItemExecutionStatus> statuses = List.of(
                 ArchiveOperationItemExecutionStatus.PENDING, ArchiveOperationItemExecutionStatus.VALIDATING,
                 ArchiveOperationItemExecutionStatus.COPYING, ArchiveOperationItemExecutionStatus.DB_COMMITTING,
@@ -42,8 +52,10 @@ public class GovernanceRecoveryCoordinator {
         for (ArchiveOperationItem item : itemRepository.findByExecutionStatusIn(statuses)) {
             if (item.getExecutionStatus() == ArchiveOperationItemExecutionStatus.CLEANUP_PENDING
                     && item.getExecutionStep() == ArchiveOperationItemExecutionStep.OLD_OBJECT_CLEANUP_PENDING) {
-                if (Objects.equals(item.getSourcePath(), item.getTargetPath())) archivePersistence.markSucceeded(item.getId());
-                else registry.register(item.getBatchId(), item.getId(), GovernanceCompensationAction.DELETE_ARCHIVE_SOURCE,
+                if (Objects.equals(item.getSourcePath(), item.getTargetPath())) {
+                    registry.register(item.getBatchId(), item.getId(), GovernanceCompensationAction.RESUME_ARCHIVE,
+                            item.getTargetPath(), "服务重启后核对归档事实");
+                } else registry.register(item.getBatchId(), item.getId(), GovernanceCompensationAction.DELETE_ARCHIVE_SOURCE,
                         item.getSourcePath(), "服务重启后恢复旧对象清理");
             } else {
                 registry.register(item.getBatchId(), item.getId(), GovernanceCompensationAction.RESUME_ARCHIVE,
@@ -59,8 +71,10 @@ public class GovernanceRecoveryCoordinator {
                 ArchiveOperationItemRollbackStatus.CLEANUP_PENDING);
         for (ArchiveOperationItem item : itemRepository.findByRollbackStatusIn(statuses)) {
             if (item.getRollbackStatus() == ArchiveOperationItemRollbackStatus.CLEANUP_PENDING) {
-                if (Objects.equals(item.getSourcePath(), item.getTargetPath())) rollbackPersistence.markSucceeded(item.getId());
-                else registry.register(item.getBatchId(), item.getId(), GovernanceCompensationAction.DELETE_ROLLBACK_TARGET,
+                if (Objects.equals(item.getSourcePath(), item.getTargetPath())) {
+                    registry.register(item.getBatchId(), item.getId(), GovernanceCompensationAction.RESUME_ROLLBACK,
+                            item.getSourcePath(), "服务重启后核对撤销事实");
+                } else registry.register(item.getBatchId(), item.getId(), GovernanceCompensationAction.DELETE_ROLLBACK_TARGET,
                         item.getTargetPath(), "服务重启后恢复归档对象清理");
             } else {
                 registry.register(item.getBatchId(), item.getId(), GovernanceCompensationAction.RESUME_ROLLBACK,

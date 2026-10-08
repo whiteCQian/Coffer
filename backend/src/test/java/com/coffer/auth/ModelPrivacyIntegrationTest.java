@@ -86,7 +86,8 @@ class ModelPrivacyIntegrationTest {
     static class Config {
         @Bean ModelRuntimeProperties properties() { return new ModelRuntimeProperties(); }
         @Bean EmbeddingProperties embeddingProperties() { return new EmbeddingProperties(); }
-        @Bean ChatProvider model(ModelRuntimeModeService modes, ModelRuntimeProviderFactory factory) { return new ModeAwareChatProvider(modes, factory); }
+        @Bean ChatProvider model(ModelRuntimeModeService modes, ModelRuntimeProviderFactory factory,
+                                 ModelExecutionSnapshotService snapshots) { return new ModeAwareChatProvider(modes, factory, snapshots); }
     }
     @RestController static class Probe {
         private final ChatProvider model;
@@ -133,15 +134,17 @@ class ModelPrivacyIntegrationTest {
         var setting = settings.findById(owner).orElseThrow();
         setting.setActiveMode(GovernanceRunMode.LOCAL); setting.setLocalValidatedAt(LocalDateTime.now()); settings.saveAndFlush(setting);
     }
-    @Test void existingTaskKeepsDestinationAndCredentialAfterConfigurationChanges() {
+    @Test void existingTaskStopsBeforeSendingAfterConfigurationChanges() {
         TenantContext.runAs(a.getId(), () -> {
             var snapshot = snapshots.capture(snapshots.preview().configurationVersion(), true, "UPLOAD");
             ModelExecutionContext.with(snapshot, () -> tasks.createPendingTask("pinned-task", "file"));
             String id = taskRows.findByTaskId("pinned-task").orElseThrow().getModelSnapshotId();
             String cipher = snapshotRows.findById(id).orElseThrow().getEncryptedConfiguration();
             assertThat(cipher).doesNotContain("R14_KEY_MARKER", first.url());
-            configure(second, "NEW_KEY");
             snapshots.with(id, () -> assertThat(model.chat("R14_BODY_MARKER")).isEqualTo("ok"));
+            configure(second, "NEW_KEY");
+            assertThatThrownBy(() -> snapshots.with(id, () -> model.chat("R14_BODY_MARKER")))
+                    .isInstanceOf(ModelConsentRequiredException.class);
             assertThat(first.requests).hasSize(1);
             assertThat(first.requests.get(0)).contains("R14_KEY_MARKER", "R14_BODY_MARKER");
             assertThat(second.requests).isEmpty();

@@ -12,21 +12,28 @@ const username = ref('')
 const password = ref('')
 const setupToken = ref('')
 const busy = ref(false)
-const setupMode = computed(() => auth.status.setupRequired && auth.status.setupAvailable)
-const setupUnavailable = computed(() => auth.status.setupRequired && !auth.status.setupAvailable)
+const checkingStatus = ref(!auth.initialized)
+const serviceUnavailable = ref(false)
+const verifiedStatus = computed(() => auth.initialized && !checkingStatus.value && !serviceUnavailable.value)
+const setupMode = computed(() => verifiedStatus.value && auth.status.setupRequired && auth.status.setupAvailable)
+const setupUnavailable = computed(() => verifiedStatus.value && auth.status.setupRequired && !auth.status.setupAvailable)
 
-onMounted(async () => {
+async function checkService() {
+  checkingStatus.value = true
   try {
-    await auth.bootstrap()
+    await auth.bootstrap(true)
+    serviceUnavailable.value = false
     if (auth.user) await router.replace('/')
   } catch {
-    ElMessage.error('无法连接到服务，请稍后重试')
-  }
-})
+    serviceUnavailable.value = true
+  } finally { checkingStatus.value = false }
+}
+onMounted(() => void checkService())
 
 async function submit() {
-  if (username.value.trim().length < 3 || password.value.length < 12) {
-    ElMessage.warning('账号至少 3 个字符，密码至少 12 个字符')
+  if (!verifiedStatus.value) return
+  if (username.value.trim().length < 3 || password.value.length < 6 || password.value.length > 16) {
+    ElMessage.warning('账号至少 3 个字符，密码须为 6–16 个字符')
     return
   }
   busy.value = true
@@ -55,12 +62,17 @@ async function submit() {
       <p class="intro">{{ setupMode ? '首次启动时创建管理员账号。' : '使用管理员为你创建的账号登录。' }}</p>
       <p v-if="route.query.reason === 'expired'" role="alert">会话已失效，请重新登录。</p>
       <p v-if="route.query.reason === 'changed'" role="alert">其他窗口的登录身份已变化，当前页面状态已清空。</p>
+      <p v-if="checkingStatus" role="status">正在核实服务与账号状态…</p>
+      <div v-else-if="serviceUnavailable" role="alert">
+        <p>暂时无法核实服务和账号状态。请检查网络及后台服务，恢复后重新检查。</p>
+        <button type="button" @click="checkService">重新检查服务</button>
+      </div>
 
       <div v-if="setupUnavailable" class="setup-note">
         尚未创建管理员。请由部署者配置 COFFER_ADMIN_SETUP_TOKEN 后重启服务，再完成首次初始化。
       </div>
 
-      <template v-if="!setupUnavailable">
+      <template v-if="verifiedStatus && !setupUnavailable">
         <label v-if="setupMode" class="field">
           <span>初始化凭据</span>
           <input v-model="setupToken" type="password" autocomplete="off" required />
@@ -71,7 +83,7 @@ async function submit() {
         </label>
         <label class="field">
           <span>密码</span>
-          <input v-model="password" type="password" :autocomplete="setupMode ? 'new-password' : 'current-password'" minlength="12" required />
+          <input v-model="password" type="password" :autocomplete="setupMode ? 'new-password' : 'current-password'" minlength="6" maxlength="16" required />
         </label>
         <button class="submit" type="submit" :disabled="busy">
           {{ busy ? '处理中…' : setupMode ? '创建管理员' : '登录' }}

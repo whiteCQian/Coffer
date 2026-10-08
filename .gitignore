@@ -28,6 +28,7 @@ dist/
 *.rdb
 *.tsbuildinfo
 backend/data/
+/backend/.test-tmp/
 /data/
 .vite/
 
@@ -46,3 +47,5 @@ coffer-initial-admin-token.txt
 
 # Local E2E input documents are not part of the repository.
 /backend/e2e-sample/
+/.test-tmp/
+/frontend/.test-tmp/

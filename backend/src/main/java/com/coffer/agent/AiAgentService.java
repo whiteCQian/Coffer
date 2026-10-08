@@ -29,7 +29,7 @@ public class AiAgentService {
     private final FileSearchTool search;
     private final ChatSessionService sessions;
     private final ChatCitationCollector citations;
-    @Autowired(required = false) private ModelRuntimeModeService runtimeModeService;
+    @Autowired private ModelRuntimeModeService runtimeModeService;
     @Value("${coffer.system-prompt:}") private String systemPrompt;
 
     @LogModelCall

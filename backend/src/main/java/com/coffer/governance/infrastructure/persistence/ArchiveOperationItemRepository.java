@@ -25,6 +25,13 @@ public interface ArchiveOperationItemRepository extends com.coffer.auth.infrastr
 
     Optional<ArchiveOperationItem> findByItemKey(String itemKey);
 
+    @Query("select count(i) > 0 from ArchiveOperationItem i where "
+            + "(i.sourcePath = :path or i.targetPath = :path) "
+            + "and (i.executionStatus in :statuses or i.rollbackStatus in :rollbacks)")
+    boolean existsActivePath(@Param("path") String path,
+            @Param("statuses") List<com.coffer.governance.domain.ArchiveOperationItemExecutionStatus> statuses,
+            @Param("rollbacks") List<com.coffer.governance.domain.ArchiveOperationItemRollbackStatus> rollbacks);
+
     List<ArchiveOperationItem> findByExecutionStatusIn(List<com.coffer.governance.domain.ArchiveOperationItemExecutionStatus> statuses);
 
     List<ArchiveOperationItem> findByRollbackStatusIn(List<com.coffer.governance.domain.ArchiveOperationItemRollbackStatus> statuses);

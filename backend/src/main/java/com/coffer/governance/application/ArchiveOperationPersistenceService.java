@@ -2,12 +2,14 @@ package com.coffer.governance.application;
 
 import com.coffer.file.domain.CategoryType;
 import com.coffer.file.domain.FileMetadata;
+import com.coffer.config.GovernanceArchiveProperties;
 import com.coffer.file.infrastructure.persistence.FileMetadataRepository;
 import com.coffer.governance.domain.ArchiveOperationBatch;
 import com.coffer.governance.domain.ArchiveOperationBatchStatus;
 import com.coffer.governance.domain.ArchiveOperationItem;
 import com.coffer.governance.domain.ArchiveOperationItemExecutionStatus;
 import com.coffer.governance.domain.ArchiveOperationItemExecutionStep;
+import com.coffer.governance.domain.ArchiveFormalSnapshot;
 import com.coffer.governance.infrastructure.persistence.ArchiveOperationBatchRepository;
 import com.coffer.governance.infrastructure.persistence.ArchiveOperationItemRepository;
 import com.coffer.tag.domain.ConfirmationStatus;
@@ -37,6 +39,8 @@ public class ArchiveOperationPersistenceService {
     private final FileMetadataRepository fileMetadataRepository;
     private final TagRepository tagRepository;
     private final FileTagMappingRepository fileTagMappingRepository;
+    private final ArchiveSnapshotService snapshotService;
+    private final GovernanceArchiveProperties properties;
 
     @Transactional
     public ArchiveOperationItem claimItem(Long itemId) {
@@ -44,7 +48,15 @@ public class ArchiveOperationPersistenceService {
                 .orElseThrow(() -> new com.coffer.auth.service.ResourceNotFoundException());
         if (item.getExecutionStatus() == ArchiveOperationItemExecutionStatus.SUCCEEDED
                 || item.getExecutionStatus() == ArchiveOperationItemExecutionStatus.CONFLICTED
+                || item.getExecutionStatus() == ArchiveOperationItemExecutionStatus.MANUAL_REVIEW
                 || item.getExecutionStatus() == ArchiveOperationItemExecutionStatus.SKIPPED) {
+            return null;
+        }
+        if (item.getExecutionStatus() == ArchiveOperationItemExecutionStatus.FAILED
+                && item.getAttempts() >= Math.max(1, properties.getMaxAttempts())) {
+            item.setExecutionStatus(ArchiveOperationItemExecutionStatus.MANUAL_REVIEW);
+            item.setNextAttemptAt(null);
+            itemRepository.save(item);
             return null;
         }
         if (item.getExecutionStatus() == ArchiveOperationItemExecutionStatus.VALIDATING
@@ -75,10 +87,11 @@ public class ArchiveOperationPersistenceService {
     }
 
     @Transactional
-    public void markTargetCopied(Long itemId, String etag, long size) {
+    public void markTargetCopied(Long itemId, String etag, long size, String sha256) {
         ArchiveOperationItem item = lockItem(itemId);
         item.setTargetEtag(etag);
         item.setTargetSize(size);
+        item.setTargetSha256(sha256);
         item.setExecutionStatus(ArchiveOperationItemExecutionStatus.DB_COMMITTING);
         item.setExecutionStep(ArchiveOperationItemExecutionStep.TARGET_COPIED);
         item.setUpdatedAt(LocalDateTime.now());
@@ -87,10 +100,28 @@ public class ArchiveOperationPersistenceService {
 
     @Transactional
     public void applyFormalState(Long itemId, String targetEtag, long targetSize,
-                                 String summary, List<String> tags) {
+                                 String targetSha256, String summary, List<String> tags) {
         ArchiveOperationItem item = lockItem(itemId);
         FileMetadata metadata = fileMetadataRepository.findById(item.getFileId())
                 .orElseThrow(() -> new ArchiveExecutionConflictException("正式文件不存在: " + item.getFileId()));
+
+        ArchiveFormalSnapshot before = snapshotService.sourceOrNull(item);
+        ArchiveFormalSnapshot after = snapshotService.targetOrNull(item);
+        if (before != null) {
+            if (after == null || !after.sha256().equalsIgnoreCase(targetSha256)
+                    || after.size() != targetSize || !before.sha256().equalsIgnoreCase(targetSha256)) {
+                throw new ArchiveExecutionConflictException("归档目标内容与确认快照不一致");
+            }
+            applyCompleteSnapshot(item, metadata, before, after, targetEtag);
+            item.setTargetEtag(targetEtag);
+            item.setTargetSize(targetSize);
+            item.setTargetSha256(targetSha256);
+            item.setExecutionStatus(ArchiveOperationItemExecutionStatus.CLEANUP_PENDING);
+            item.setExecutionStep(ArchiveOperationItemExecutionStep.METADATA_COMMITTED);
+            item.setUpdatedAt(LocalDateTime.now());
+            itemRepository.save(item);
+            return;
+        }
 
         long expectedRevision = valueOrZero(item.getExpectedRevision());
         long currentRevision = valueOrZero(metadata.getRevision());
@@ -117,6 +148,7 @@ public class ArchiveOperationPersistenceService {
             metadata.setSummary(summary == null ? metadata.getSummary() : summary);
             metadata.setArchived(true);
             metadata.setContentEtag(targetEtag);
+            metadata.setContentSha256(targetSha256);
             metadata.setRevision(currentRevision + 1);
             metadata.setVectorIndexedAt(null);
             fileMetadataRepository.save(metadata);
@@ -130,6 +162,7 @@ public class ArchiveOperationPersistenceService {
 
         item.setTargetEtag(targetEtag == null ? item.getTargetEtag() : targetEtag);
         item.setTargetSize(targetSize);
+        item.setTargetSha256(targetSha256);
         item.setExecutionStatus(ArchiveOperationItemExecutionStatus.CLEANUP_PENDING);
         item.setExecutionStep(ArchiveOperationItemExecutionStep.METADATA_COMMITTED);
         item.setUpdatedAt(LocalDateTime.now());
@@ -142,12 +175,65 @@ public class ArchiveOperationPersistenceService {
         if (item.getExecutionStatus() == ArchiveOperationItemExecutionStatus.SUCCEEDED) {
             return;
         }
+        verifyArchivedFacts(item);
         item.setExecutionStatus(ArchiveOperationItemExecutionStatus.SUCCEEDED);
         item.setExecutionStep(ArchiveOperationItemExecutionStep.COMPLETED);
         item.setNextAttemptAt(null);
         item.setFinishedAt(LocalDateTime.now());
         item.setUpdatedAt(LocalDateTime.now());
         itemRepository.save(item);
+    }
+
+    @Transactional(readOnly = true)
+    public void verifyArchivedFacts(Long itemId) {
+        verifyArchivedFacts(itemRepository.findById(itemId)
+                .orElseThrow(() -> new com.coffer.auth.service.ResourceNotFoundException()));
+    }
+
+    private void verifyArchivedFacts(ArchiveOperationItem item) {
+        ArchiveFormalSnapshot after = snapshotService.targetOrNull(item);
+        if (after == null) return;
+        FileMetadata metadata = fileMetadataRepository.findById(item.getFileId())
+                .orElseThrow(() -> new ArchiveExecutionConflictException("归档后的正式文件已不存在"));
+        if (!snapshotService.matches(metadata, after)
+                || !Objects.equals(metadata.getContentEtag(), item.getTargetEtag())
+                || item.getTargetSha256() == null
+                || !after.sha256().equalsIgnoreCase(item.getTargetSha256())) {
+            throw new ArchiveExecutionConflictException("归档后的正式状态与台账快照不一致");
+        }
+    }
+
+    private void applyCompleteSnapshot(ArchiveOperationItem item, FileMetadata metadata,
+                                       ArchiveFormalSnapshot before, ArchiveFormalSnapshot after,
+                                       String targetEtag) {
+        if (snapshotService.matches(metadata, after)) {
+            if (!Objects.equals(metadata.getContentEtag(), targetEtag)) {
+                throw new ArchiveExecutionConflictException("归档后的对象指纹与台账不一致");
+            }
+            item.setPreExecuteRevision(before.revision());
+            item.setPostExecuteRevision(after.revision());
+            return;
+        }
+        if (!snapshotService.matches(metadata, before)) {
+            throw new ArchiveExecutionConflictException("文件正式状态或标签已变化，拒绝覆盖");
+        }
+        item.setPreExecuteRevision(before.revision());
+        metadata.setFileName(after.fileName());
+        metadata.setCategory(CategoryType.fromLabel(after.category()));
+        metadata.setStoragePath(after.path());
+        metadata.setSummary(after.summary());
+        metadata.setArchived(after.archived());
+        metadata.setContentEtag(targetEtag);
+        metadata.setContentSha256(after.sha256());
+        metadata.setFileSize(after.size());
+        metadata.setRevision(after.revision());
+        metadata.setVectorIndexedAt(null);
+        fileMetadataRepository.saveAndFlush(metadata);
+        snapshotService.replaceTags(metadata.getId(), after.tags());
+        if (!snapshotService.matches(metadata, after)) {
+            throw new IllegalStateException("归档完成后正式字段与确认快照不一致");
+        }
+        item.setPostExecuteRevision(after.revision());
     }
 
     @Transactional
@@ -162,10 +248,12 @@ public class ArchiveOperationPersistenceService {
     @Transactional
     public void markFailed(Long itemId, String code, String message, LocalDateTime nextAttemptAt) {
         ArchiveOperationItem item = lockItem(itemId);
-        item.setExecutionStatus(ArchiveOperationItemExecutionStatus.FAILED);
+        boolean exhausted = item.getAttempts() >= Math.max(1, properties.getMaxAttempts());
+        item.setExecutionStatus(exhausted ? ArchiveOperationItemExecutionStatus.MANUAL_REVIEW
+                : ArchiveOperationItemExecutionStatus.FAILED);
         item.setFailureCode(code);
         item.setFailureMessage(message);
-        item.setNextAttemptAt(nextAttemptAt);
+        item.setNextAttemptAt(exhausted ? null : nextAttemptAt);
         item.setFinishedAt(LocalDateTime.now());
         item.setUpdatedAt(LocalDateTime.now());
         itemRepository.save(item);
@@ -201,7 +289,8 @@ public class ArchiveOperationPersistenceService {
         ArchiveOperationBatch batch = lockBatch(batchId);
         List<ArchiveOperationItem> items = itemRepository.findByBatchIdOrderByIdAsc(batchId);
         int success = count(items, ArchiveOperationItemExecutionStatus.SUCCEEDED);
-        int failed = count(items, ArchiveOperationItemExecutionStatus.FAILED);
+        int failed = count(items, ArchiveOperationItemExecutionStatus.FAILED)
+                + count(items, ArchiveOperationItemExecutionStatus.MANUAL_REVIEW);
         int conflicted = count(items, ArchiveOperationItemExecutionStatus.CONFLICTED);
         int skipped = count(items, ArchiveOperationItemExecutionStatus.SKIPPED);
         boolean running = items.stream().anyMatch(item -> switch (item.getExecutionStatus()) {
@@ -238,10 +327,13 @@ public class ArchiveOperationPersistenceService {
         List<ArchiveOperationItem> items = itemRepository.findByBatchIdOrderByIdAsc(batchId);
         int reset = 0;
         for (ArchiveOperationItem item : items) {
-            if (item.getExecutionStatus() != ArchiveOperationItemExecutionStatus.FAILED) {
+            if (item.getExecutionStatus() != ArchiveOperationItemExecutionStatus.FAILED
+                    && item.getExecutionStatus() != ArchiveOperationItemExecutionStatus.MANUAL_REVIEW) {
                 continue;
             }
             item.setExecutionStatus(ArchiveOperationItemExecutionStatus.PENDING);
+            // Explicit operator retry begins a new bounded attempt series.
+            item.setAttempts(0);
             item.setFailureCode(null);
             item.setFailureMessage(null);
             item.setNextAttemptAt(null);
@@ -264,7 +356,8 @@ public class ArchiveOperationPersistenceService {
     public void prepareRecovery(Long itemId) {
         ArchiveOperationItem item = lockItem(itemId);
         if (item.getExecutionStatus() == ArchiveOperationItemExecutionStatus.SUCCEEDED
-                || item.getExecutionStatus() == ArchiveOperationItemExecutionStatus.CONFLICTED) return;
+                || item.getExecutionStatus() == ArchiveOperationItemExecutionStatus.CONFLICTED
+                || item.getExecutionStatus() == ArchiveOperationItemExecutionStatus.MANUAL_REVIEW) return;
         item.setExecutionStatus(ArchiveOperationItemExecutionStatus.PENDING);
         item.setNextAttemptAt(null);
         item.setFinishedAt(null);
@@ -344,6 +437,7 @@ public class ArchiveOperationPersistenceService {
     private String buildFailureSummary(List<ArchiveOperationItem> items) {
         return items.stream()
                 .filter(item -> item.getExecutionStatus() == ArchiveOperationItemExecutionStatus.FAILED
+                        || item.getExecutionStatus() == ArchiveOperationItemExecutionStatus.MANUAL_REVIEW
                         || item.getExecutionStatus() == ArchiveOperationItemExecutionStatus.CONFLICTED)
                 .map(item -> "fileId=" + item.getFileId() + ": " + item.getFailureMessage())
                 .findFirst()

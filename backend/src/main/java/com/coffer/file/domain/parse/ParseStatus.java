@@ -20,6 +20,12 @@ public enum ParseStatus {
     /** 不支持的格式。 */
     UNSUPPORTED,
 
+    /** The stream, page count, pixel count or extracted text exceeded the configured ceiling. */
+    LIMIT_EXCEEDED,
+
+    /** File bytes do not match the declared extension. */
+    TYPE_MISMATCH,
+
     /** 未知失败。 */
     FAILED
 }

@@ -22,6 +22,7 @@ public class ArchiveRollbackPersistenceService {
     private final ArchiveOperationBatchRepository batchRepository;
     private final ArchiveOperationItemRepository itemRepository;
     private final FileMetadataRepository fileMetadataRepository;
+    private final ArchiveSnapshotService snapshotService;
 
     @Transactional
     public boolean prepareBatch(String batchId) {
@@ -88,41 +89,64 @@ public class ArchiveRollbackPersistenceService {
 
     @Transactional
     public void markDbCommitting(Long itemId) {
-        setStatus(itemId, ArchiveOperationItemRollbackStatus.DB_COMMITTING, null, null, false);
+        ArchiveOperationItem item = lockItem(itemId);
+        item.setRollbackCopyVerified(true);
+        item.setRollbackStatus(ArchiveOperationItemRollbackStatus.DB_COMMITTING);
+        itemRepository.save(item);
     }
 
     @Transactional
-    public void restoreMetadata(Long itemId, String etag) {
+    public void restoreMetadata(Long itemId, String etag, String sha256) {
         ArchiveOperationItem item = lockItem(itemId);
         FileMetadata file = fileMetadataRepository.findByIdForUpdate(item.getFileId())
                 .orElseThrow(() -> new ArchiveRollbackNotReversibleException("正式文件已删除: " + item.getFileId()));
-        long expected = value(item.getPostExecuteRevision());
-        long current = value(file.getRevision());
-        boolean alreadyRestored = current == expected + 1
-                && Objects.equals(file.getStoragePath(), item.getSourcePath())
-                && Objects.equals(file.getFileName(), item.getSourceFileName())
-                && sameCategory(file.getCategory(), item.getSourceCategory());
-        if (!alreadyRestored) {
-            if (current != expected || !Objects.equals(file.getStoragePath(), item.getTargetPath())
-                    || !Objects.equals(file.getFileName(), item.getTargetFileName())
-                    || !sameCategory(file.getCategory(), item.getTargetCategory())) {
+        ArchiveFormalSnapshot before = snapshotService.requireSource(item);
+        ArchiveFormalSnapshot after = snapshotService.requireTarget(item);
+        if (!before.sha256().equalsIgnoreCase(sha256)
+                || !after.sha256().equalsIgnoreCase(sha256)) {
+            throw new ArchiveRollbackConflictException("撤销对象内容摘要与台账不一致");
+        }
+        long restoredRevision = after.revision() + 1;
+        if (snapshotService.matchesAfterRollback(file, before, restoredRevision)) {
+            if (!Objects.equals(file.getContentSha256(), sha256)) {
+                throw new ArchiveRollbackConflictException("撤销后的正文指纹与台账不一致");
+            }
+        } else {
+            if (!snapshotService.matches(file, after)
+                    || !Objects.equals(file.getContentSha256(), after.sha256())) {
                 throw new ArchiveRollbackConflictException("文件正式状态已变化，拒绝撤销");
             }
-            file.setFileName(item.getSourceFileName());
-            file.setCategory(CategoryType.fromLabel(item.getSourceCategory()));
-            file.setStoragePath(item.getSourcePath());
-            file.setArchived(false);
+            file.setFileName(before.fileName());
+            file.setCategory(CategoryType.fromLabel(before.category()));
+            file.setStoragePath(before.path());
+            file.setSummary(before.summary());
+            file.setArchived(before.archived());
+            file.setFileSize(before.size());
             file.setContentEtag(etag);
-            file.setRevision(current + 1);
+            file.setContentSha256(sha256);
+            file.setRevision(restoredRevision);
             file.setVectorIndexedAt(null);
-            fileMetadataRepository.save(file);
+            fileMetadataRepository.saveAndFlush(file);
+            snapshotService.replaceTags(file.getId(), before.tags());
+            if (!snapshotService.matchesAfterRollback(file, before, restoredRevision)) {
+                throw new IllegalStateException("撤销后的正式字段与原快照不一致");
+            }
         }
+        item.setRollbackResultRevision(restoredRevision);
         item.setRollbackStatus(ArchiveOperationItemRollbackStatus.CLEANUP_PENDING);
         itemRepository.save(item);
     }
 
     @Transactional
     public void markSucceeded(Long itemId) {
+        ArchiveOperationItem item = lockItem(itemId);
+        ArchiveFormalSnapshot before = snapshotService.requireSource(item);
+        FileMetadata file = fileMetadataRepository.findById(item.getFileId())
+                .orElseThrow(() -> new ArchiveRollbackNotReversibleException("正式文件已删除"));
+        if (!snapshotService.matchesAfterRollback(file, before, item.getRollbackResultRevision())
+                || !Objects.equals(file.getContentSha256(), before.sha256())) {
+            throw new ArchiveRollbackConflictException("撤销后的正式状态与原快照不一致");
+        }
         setStatus(itemId, ArchiveOperationItemRollbackStatus.SUCCEEDED, null, null, true);
     }
 
@@ -183,6 +207,7 @@ public class ArchiveRollbackPersistenceService {
 
     private void prepare(ArchiveOperationItem item) {
         item.setRollbackStatus(ArchiveOperationItemRollbackStatus.PENDING);
+        item.setRollbackCopyVerified(false);
         item.setRollbackStartedAt(null);
         item.setRollbackFinishedAt(null);
         item.setFailureCode(null);

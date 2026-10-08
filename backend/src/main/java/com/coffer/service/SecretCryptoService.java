@@ -40,8 +40,8 @@ public class SecretCryptoService {
     void initialize() {
         String masterKey = configuredMasterKey;
         if (masterKey == null || masterKey.isBlank()) {
-            if (environment.matchesProfiles("prod")) {
-                throw new IllegalStateException("COFFER_SECRET_KEY must be set when the prod profile is active");
+            if (environment.matchesProfiles("prod", "desktop")) {
+                throw new IllegalStateException("COFFER_SECRET_KEY must be set for prod and desktop profiles");
             }
             masterKey = DEV_FALLBACK;
         }
@@ -84,6 +84,14 @@ public class SecretCryptoService {
     }
 
     public String rewrap(String encrypted) { return encrypt(decrypt(encrypted)); }
+
+    public String currentKeyId() { return keyId; }
+    public boolean hasPreviousKey() { return decryptionKeys.size() > 1; }
+    public boolean usesCurrentKey(String encrypted) { return encrypted != null && encrypted.startsWith("v1:" + keyId + ":"); }
+    public boolean authenticatedWithCurrentKey(String encrypted) {
+        if (!usesCurrentKey(encrypted)) return false;
+        try { decryptWith(encrypted, secretKey); return true; } catch (Exception ignored) { return false; }
+    }
 
     private String decryptWith(String encrypted, SecretKeySpec key) throws Exception {
         try {

@@ -2,6 +2,9 @@ package com.coffer.tag.application;
 
 import com.coffer.annotation.LogModelCall;
 import com.coffer.model.provider.ChatProvider;
+import com.coffer.model.runtime.ModelContentGate;
+import com.coffer.model.runtime.ModelRuntimeCapability;
+import com.coffer.file.infrastructure.persistence.FileMetadataRepository;
 import com.coffer.tag.api.dto.TagCandidateResponse;
 import com.coffer.tag.infrastructure.persistence.FileTagMappingRepository;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -15,8 +18,11 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -58,6 +64,8 @@ public class TagSuggestionService {
     private final ChatProvider chatProvider;
     private final ObjectMapper objectMapper;
     private final FileTagMappingRepository fileTagMappingRepository;
+    private final FileMetadataRepository fileMetadataRepository;
+    private final ModelContentGate modelContentGate;
 
     /** Returns the confirmed tag pool used by both the HTTP API and semantic suggestions. */
     public List<TagCandidateResponse> listCandidates() {
@@ -94,7 +102,7 @@ public class TagSuggestionService {
             return List.of();
         }
         // 语义联想：仅从池中挑，池外名字丢弃
-        return pickByModel(q, pool);
+        return pickByModel(q, allowedRemoteCandidates(pool));
     }
 
     /** 候选池：CONFIRMED 标签名 + 覆盖文件数，按覆盖数倒序（Repository 已排）。 */
@@ -105,6 +113,46 @@ public class TagSuggestionService {
                         .fileCount(tc.getCnt())
                         .build())
                 .toList();
+    }
+
+    /** A confirmed label may come from file content; every source must pass the file's CHAT gate. */
+    private List<TagCandidateResponse> allowedRemoteCandidates(List<TagCandidateResponse> pool) {
+        List<TagCandidateResponse> window = pool.size() > LLM_CANDIDATE_WINDOW
+                ? pool.subList(0, LLM_CANDIDATE_WINDOW) : pool;
+        Set<String> names = new HashSet<>();
+        for (TagCandidateResponse candidate : window) names.add(candidate.getName());
+        Map<String, Set<Long>> sources = new HashMap<>();
+        for (var source : fileTagMappingRepository.findConfirmedTagSources(names)) {
+            sources.computeIfAbsent(source.getName(), ignored -> new HashSet<>()).add(source.getFileId());
+        }
+        Set<Long> fileIds = new HashSet<>();
+        sources.values().forEach(fileIds::addAll);
+        Map<Long, com.coffer.file.domain.FileMetadata> files = new HashMap<>();
+        fileMetadataRepository.findAllById(fileIds).forEach(file -> files.put(file.getId(), file));
+        Map<Long, Boolean> permitted = new HashMap<>();
+        List<TagCandidateResponse> allowed = new ArrayList<>();
+        for (TagCandidateResponse candidate : window) {
+            Set<Long> ids = sources.get(candidate.getName());
+            if (ids == null || ids.isEmpty()) continue;
+            boolean allAllowed = true;
+            for (Long id : ids) {
+                Boolean ok = permitted.get(id);
+                if (ok == null) {
+                    try {
+                        var file = files.get(id);
+                        if (file == null) throw new IllegalStateException("Missing tag source file");
+                        modelContentGate.requireFileAllowed(file, ModelRuntimeCapability.CHAT);
+                        ok = true;
+                    } catch (RuntimeException denied) {
+                        ok = false;
+                    }
+                    permitted.put(id, ok);
+                }
+                if (!ok) { allAllowed = false; break; }
+            }
+            if (allAllowed) allowed.add(candidate);
+        }
+        return allowed;
     }
 
     /**
@@ -132,6 +180,7 @@ public class TagSuggestionService {
 
     /** 语义联想：候选池按热度截断窗口 → 调模型挑 1~3 → 过滤池外名 → 按选择顺序返回。 */
     private List<TagCandidateResponse> pickByModel(String q, List<TagCandidateResponse> pool) {
+        if (pool.isEmpty()) return List.of();
         List<TagCandidateResponse> window = pool.size() > LLM_CANDIDATE_WINDOW
                 ? pool.subList(0, LLM_CANDIDATE_WINDOW)
                 : pool;

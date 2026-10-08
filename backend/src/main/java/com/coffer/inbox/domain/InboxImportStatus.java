@@ -22,5 +22,8 @@ public enum InboxImportStatus {
     FAILED,
 
     /** The file type is outside the first-version supported format list. */
-    UNSUPPORTED
+    UNSUPPORTED,
+
+    /** Automatic attempts were exhausted; the owner may retry after review. */
+    MANUAL_REVIEW
 }

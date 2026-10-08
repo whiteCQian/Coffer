@@ -4,6 +4,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, ref } from 'vue'
 
 import * as governanceApi from '@/api/governance'
+import * as fileOperations from '@/api/fileOperations'
+import type { WriteIntentView, DeletionView, RenameView, WorkSaveView } from '@/api/fileOperations'
 import type {
   ArchiveOperationBatchResponse,
   ArchiveOperationBatchSummaryResponse,
@@ -13,7 +15,7 @@ import type {
 import { toDisplayTime } from '@/utils/format'
 
 type BatchStatus = 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'PARTIAL_FAILED' | 'FAILED' | 'CANCELLED'
-type ItemStatus = 'PENDING' | 'VALIDATING' | 'COPYING' | 'DB_COMMITTING' | 'CLEANUP_PENDING' | 'SUCCEEDED' | 'FAILED' | 'CONFLICTED' | 'SKIPPED'
+type ItemStatus = 'PENDING' | 'VALIDATING' | 'COPYING' | 'DB_COMMITTING' | 'CLEANUP_PENDING' | 'SUCCEEDED' | 'FAILED' | 'MANUAL_REVIEW' | 'CONFLICTED' | 'SKIPPED'
 
 const STATUS_OPTIONS: { value: BatchStatus | ''; label: string }[] = [
   { value: '', label: '全部批次状态' },
@@ -40,6 +42,101 @@ const detailLoading = ref(false)
 const rollbackLoading = ref(false)
 const compensations = ref<GovernanceCompensationTaskResponse[]>([])
 const compensationLoading = ref(false)
+const writeIntents = ref<WriteIntentView[]>([])
+const deletionTasks = ref<DeletionView[]>([])
+const renameIntents = ref<RenameView[]>([])
+const workSaves = ref<WorkSaveView[]>([])
+const fileOperationLoading = ref(false)
+const fileOperationBusy = ref(false)
+const fileOperationPage = ref(0)
+const fileOperationHasMore = ref(false)
+function fileOperationStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    PREPARED: '已登记', OBJECT_WRITTEN: '正文已写入', REGISTERED: '已登记文件',
+    COMMITTED: '已保存', RECOVERED: '已恢复为新文件',
+    ABORTED: '未发布', PENDING: '等待清理', RUNNING: '执行中',
+    APPLIED: '已重命名', SUCCEEDED: '已清理', FAILED: '失败待重试',
+    MANUAL_REVIEW: '待人工处理', CONFLICTED: '冲突',
+    DISCARD_PENDING: '保留期内待清理', DISCARDING: '清理中', DISCARDED: '已放弃并清理',
+    RESOLVED: '已核对解决',
+  }
+  return labels[status] ?? status
+}
+
+function writeKindLabel(kind: string) {
+  return kind === 'VERSION_ANOMALY' ? '存储历史版本' : kind
+}
+
+function writeErrorLabel(code: string) {
+  const labels: Record<string, string> = {
+    DELETE_MARKER: '存在删除标记或隐藏的旧版本',
+    MULTIPLE_VERSIONS: '同一对象存在多个版本',
+    UNVERSIONED_OBJECT: '对象缺少可安全删除的版本身份',
+    VERSION_ANOMALY_CLEARED: '历史版本异常已核对解决',
+  }
+  return labels[code] ?? code
+}
+
+async function fetchFileOperations(nextPage: number) {
+  if (fileOperationLoading.value) return
+  fileOperationLoading.value = true
+  try {
+    const [writes, deletions, renames, saved] = await Promise.all([
+      fileOperations.listWriteIntents(nextPage), fileOperations.listDeletionTasks(nextPage),
+      fileOperations.listRenameIntents(nextPage), fileOperations.listWorkSaves(nextPage),
+    ])
+    const writePage = writes.data.data ?? []
+    const deletionPage = deletions.data.data ?? []
+    const renamePage = renames.data.data ?? []
+    const savePage = saved.data.data ?? []
+    writeIntents.value = nextPage === 0 ? writePage : [...writeIntents.value, ...writePage]
+    deletionTasks.value = nextPage === 0 ? deletionPage : [...deletionTasks.value, ...deletionPage]
+    renameIntents.value = nextPage === 0 ? renamePage : [...renameIntents.value, ...renamePage]
+    workSaves.value = nextPage === 0 ? savePage : [...workSaves.value, ...savePage]
+    fileOperationPage.value = nextPage
+    fileOperationHasMore.value = [writePage, deletionPage, renamePage, savePage]
+      .some(rows => rows.length === 100)
+  } finally { fileOperationLoading.value = false }
+}
+async function loadFileOperations() { await fetchFileOperations(0) }
+async function loadMoreFileOperations() {
+  if (fileOperationHasMore.value) await fetchFileOperations(fileOperationPage.value + 1)
+}
+
+async function runFileOperation(action: () => Promise<unknown>, success: string) {
+  if (fileOperationBusy.value) return
+  fileOperationBusy.value = true
+  try {
+    await action()
+    ElMessage.success(success)
+    await loadFileOperations()
+  } finally { fileOperationBusy.value = false }
+}
+
+async function restoreWrite(intent: WriteIntentView) {
+  await ElMessageBox.confirm('将保留的原始对象登记为失败文件供当前账号查看；不会自动发送模型。是否继续？',
+    '恢复孤儿文件', { type: 'warning' })
+  await runFileOperation(() => fileOperations.restoreWrite(intent.id), '原始文件已恢复，请查看文件列表')
+}
+
+async function discardWrite(intent: WriteIntentView) {
+  const { value } = await ElMessageBox.prompt(
+    `确认放弃这个未登记的原始对象。保留截止时间：${intent.retentionUntil ? toDisplayTime(intent.retentionUntil) : '确认后开始计算'}。请输入已核对的 64 位 SHA-256；截止前仍可由后台保留，但确认后不能再恢复为文件。`,
+    '确认放弃孤儿对象', { inputPattern: /^[0-9a-f]{64}$/, inputErrorMessage: '请输入 64 位小写 SHA-256' })
+  await runFileOperation(() => fileOperations.discardWrite(intent.id, value), '已登记放弃意图，保留期结束后清理')
+}
+
+async function restoreWorkSave(intent: WorkSaveView) {
+  await ElMessageBox.confirm('将冲突的工作副本保留为独立失败文件，原正式文件不会被覆盖。是否继续？',
+    '恢复工作副本', { type: 'warning' })
+  await runFileOperation(() => fileOperations.restoreWorkSave(intent.id), '工作副本已恢复为独立文件')
+}
+
+async function confirmDeletionIdentity(task: DeletionView) {
+  const { value } = await ElMessageBox.prompt('输入已核对对象的 64 位 SHA-256 指纹后，才能继续物理清理。',
+    '确认清理对象身份', { inputPattern: /^[0-9a-f]{64}$/, inputErrorMessage: '请输入 64 位小写 SHA-256' })
+  await runFileOperation(() => fileOperations.confirmDeletion(task.id, value), '对象身份已确认，清理任务已入队')
+}
 
 const totalPages = computed(() => Math.max(1, Math.ceil(totalElements.value / pageSize)))
 const canPrevious = computed(() => page.value > 0)
@@ -123,6 +220,14 @@ function compensationLabel(value?: string | null) {
   return labels[value ?? ''] ?? value ?? '未知补偿'
 }
 
+function compensationStatusLabel(value?: string | null) {
+  const labels: Record<string, string> = {
+    PENDING: '待执行', RUNNING: '执行中', SUCCEEDED: '已完成',
+    FAILED: '失败待重试', MANUAL_REVIEW: '待人工核对',
+  }
+  return labels[value ?? ''] ?? value ?? '未知状态'
+}
+
 function resetFilters() {
   batchId.value = ''
   fileId.value = ''
@@ -189,6 +294,7 @@ function itemStatusLabel(value?: string | null) {
     CLEANUP_PENDING: '待清理旧对象',
     SUCCEEDED: '已完成',
     FAILED: '失败',
+    MANUAL_REVIEW: '待人工处理',
     CONFLICTED: '版本冲突',
     SKIPPED: '已跳过',
   }
@@ -255,7 +361,7 @@ async function rollbackItem(item: ArchiveOperationItemResponse) {
   } finally { rollbackLoading.value = false }
 }
 
-onMounted(load)
+onMounted(() => { load(); loadFileOperations() })
 </script>
 
 <template>
@@ -280,6 +386,99 @@ onMounted(load)
         </button>
       </div>
     </header>
+
+    <section class="pg-panel file-operation-panel">
+      <div class="panel-heading">
+        <div>
+          <h2 class="panel-title">文件写入与清理</h2>
+          <p class="panel-note">当前账号最近的写入、工作副本保存、物理清理和重命名状态；异常可在此恢复。</p>
+        </div>
+        <button class="ghost-btn compact-btn" :disabled="fileOperationLoading || fileOperationBusy" @click="loadFileOperations">
+          {{ fileOperationLoading ? '读取中…' : '刷新状态' }}
+        </button>
+      </div>
+      <div class="file-operation-grid">
+        <div class="file-operation-group">
+          <strong>写入与导入 · {{ writeIntents.length }}</strong>
+          <p v-if="!writeIntents.length" class="panel-note">暂无未完成写入</p>
+          <article v-for="intent in writeIntents" :key="intent.id" class="file-operation-row">
+            <div class="file-operation-row-head">
+              <span class="file-operation-name">{{ intent.fileName }}</span>
+              <span class="item-status" :class="itemStatusClass(intent.status)">{{ fileOperationStatusLabel(intent.status) }}</span>
+            </div>
+            <p class="panel-note">{{ writeKindLabel(intent.kind) }} · 尝试 {{ intent.attempts }} 次 · {{ toDisplayTime(intent.createdAt) }}</p>
+            <p v-if="intent.retentionUntil" class="panel-note">保留至 {{ toDisplayTime(intent.retentionUntil) }}</p>
+            <p v-if="intent.discardedAt" class="panel-note">最终清理 {{ toDisplayTime(intent.discardedAt) }}</p>
+            <p v-if="intent.errorCode" class="detail-failure">{{ writeErrorLabel(intent.errorCode) }}</p>
+            <p v-if="intent.kind === 'VERSION_ANOMALY' && intent.status === 'MANUAL_REVIEW'" class="panel-note">请联系部署管理员核对历史对象版本；系统不会自动删除。处理完成后重新扫描。</p>
+            <div v-if="intent.kind === 'VERSION_ANOMALY' && intent.status === 'MANUAL_REVIEW'" class="file-operation-actions">
+              <button class="ghost-btn compact-btn" :disabled="fileOperationBusy" @click="runFileOperation(() => fileOperations.reconcileWrite(intent.id), '版本异常已重新扫描')">重新扫描版本</button>
+            </div>
+            <div v-else-if="intent.status === 'MANUAL_REVIEW' && intent.errorCode === 'ORPHAN_OBJECT'" class="file-operation-actions">
+              <button class="ghost-btn compact-btn" :disabled="fileOperationBusy" @click="restoreWrite(intent)">恢复原始文件</button>
+              <button class="ghost-btn compact-btn" :disabled="fileOperationBusy" @click="discardWrite(intent)">核对后放弃</button>
+            </div>
+            <div v-else-if="['PREPARED', 'OBJECT_WRITTEN', 'FAILED'].includes(intent.status)" class="file-operation-actions">
+              <button class="ghost-btn compact-btn" :disabled="fileOperationBusy" @click="runFileOperation(() => fileOperations.reconcileWrite(intent.id), '已重新对账')">重新对账</button>
+            </div>
+          </article>
+        </div>
+        <div class="file-operation-group">
+          <strong>物理清理 · {{ deletionTasks.length }}</strong>
+          <p v-if="!deletionTasks.length" class="panel-note">暂无清理任务</p>
+          <article v-for="task in deletionTasks" :key="task.id" class="file-operation-row">
+            <div class="file-operation-row-head">
+              <span class="file-operation-name">文件 #{{ task.fileId }}</span>
+              <span class="item-status" :class="itemStatusClass(task.status)">{{ fileOperationStatusLabel(task.status) }}</span>
+            </div>
+            <p class="panel-note">尝试 {{ task.attempts }} 次 · {{ task.retentionUntil ? `最早清理 ${toDisplayTime(task.retentionUntil)}` : '等待身份确认' }}</p>
+            <p v-if="task.errorCode" class="detail-failure">{{ task.errorCode }}</p>
+            <div v-if="task.status === 'MANUAL_REVIEW'" class="file-operation-actions">
+              <button v-if="task.errorCode === 'CONTENT_IDENTITY_UNKNOWN'" class="ghost-btn compact-btn" :disabled="fileOperationBusy" @click="confirmDeletionIdentity(task)">确认 SHA-256</button>
+              <button v-else class="ghost-btn compact-btn" :disabled="fileOperationBusy" @click="runFileOperation(() => fileOperations.retryDeletion(task.id), '清理任务已重新入队')">重试清理</button>
+            </div>
+          </article>
+        </div>
+        <div class="file-operation-group">
+          <strong>重命名 · {{ renameIntents.length }}</strong>
+          <p v-if="!renameIntents.length" class="panel-note">暂无重命名记录</p>
+          <article v-for="intent in renameIntents" :key="intent.id" class="file-operation-row">
+            <div class="file-operation-row-head">
+              <span class="file-operation-name">{{ intent.beforeName }} → {{ intent.afterName }}</span>
+              <span class="item-status" :class="itemStatusClass(intent.status)">{{ fileOperationStatusLabel(intent.status) }}</span>
+            </div>
+            <p class="panel-note">文件 #{{ intent.fileId }} · 尝试 {{ intent.attempts }} 次</p>
+            <p v-if="intent.errorCode" class="detail-failure">{{ intent.errorCode }}</p>
+            <div v-if="['MANUAL_REVIEW', 'CONFLICTED'].includes(intent.status)" class="file-operation-actions">
+              <button class="ghost-btn compact-btn" :disabled="fileOperationBusy" @click="runFileOperation(() => fileOperations.retryRename(intent.id), '重命名已重新入队')">重试重命名</button>
+            </div>
+          </article>
+        </div>
+        <div class="file-operation-group">
+          <strong>工作副本保存 · {{ workSaves.length }}</strong>
+          <p v-if="!workSaves.length" class="panel-note">暂无工作副本保存记录</p>
+          <article v-for="intent in workSaves" :key="intent.id" class="file-operation-row">
+            <div class="file-operation-row-head">
+              <span class="file-operation-name">{{ intent.fileName }}</span>
+              <span class="item-status" :class="itemStatusClass(intent.status)">{{ fileOperationStatusLabel(intent.status) }}</span>
+            </div>
+            <p class="panel-note">文件 #{{ intent.fileId }} · 原版本 {{ intent.expectedRevision }} · {{ toDisplayTime(intent.createdAt) }}</p>
+            <p v-if="intent.errorCode" class="detail-failure">{{ intent.errorCode }}</p>
+            <div v-if="['CONFLICTED', 'MANUAL_REVIEW'].includes(intent.status) && !['MISSING_TARGET', 'OBJECT_IDENTITY_CONFLICT'].includes(intent.errorCode ?? '')" class="file-operation-actions">
+              <button class="ghost-btn compact-btn" :disabled="fileOperationBusy" @click="restoreWorkSave(intent)">保留为独立文件</button>
+            </div>
+            <div v-else-if="['PREPARED', 'OBJECT_WRITTEN'].includes(intent.status)" class="file-operation-actions">
+              <button class="ghost-btn compact-btn" :disabled="fileOperationBusy" @click="runFileOperation(() => fileOperations.reconcileWorkSave(intent.id), '已重新对账')">重新对账</button>
+            </div>
+          </article>
+        </div>
+      </div>
+      <div v-if="fileOperationHasMore" class="file-operation-actions">
+        <button class="ghost-btn compact-btn" :disabled="fileOperationLoading" @click="loadMoreFileOperations">
+          {{ fileOperationLoading ? '读取中…' : '加载更早的操作' }}
+        </button>
+      </div>
+    </section>
 
     <section class="pg-panel filter-panel">
       <div class="filter-grid">
@@ -383,7 +582,7 @@ onMounted(load)
             </div>
             <div v-for="task in compensations" :key="task.id" class="compensation-row">
               <span>{{ compensationLabel(task.action) }} · 文件 {{ task.itemId }}</span>
-              <span class="item-status" :class="itemStatusClass(task.status)">{{ task.status }}</span>
+              <span class="item-status" :class="itemStatusClass(task.status)">{{ compensationStatusLabel(task.status) }}</span>
               <span>尝试 {{ task.attempts }} 次</span>
               <span v-if="task.lastError" class="detail-failure">{{ task.lastError }}</span>
             </div>
@@ -470,6 +669,27 @@ button:disabled {
 .filter-panel {
   flex: none;
 }
+.file-operation-panel { flex: none; }
+.file-operation-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+.file-operation-group {
+  min-width: 0;
+  max-height: 330px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-inner);
+  padding: 12px;
+  background: var(--panel-2);
+}
+.file-operation-group > strong { color: var(--text-1); font-size: 12px; }
+.file-operation-row { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 10px; }
+.file-operation-row-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.file-operation-name { min-width: 0; overflow-wrap: anywhere; color: var(--text-1); font-size: 12px; }
+.file-operation-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
 .filter-grid {
   display: grid;
   grid-template-columns: minmax(180px, 1.4fr) minmax(140px, 0.8fr) minmax(160px, 0.9fr) auto;
@@ -595,10 +815,13 @@ button:disabled {
   background: var(--warn-tint);
   color: var(--warn);
 }
+.item-status.is-object_written,
+.item-status.is-prepared { background: var(--warn-tint); color: var(--warn); }
 .status-pill.is-failed,
 .status-pill.is-partial_failed,
 .item-status.is-failed,
-.item-status.is-conflicted {
+.item-status.is-conflicted,
+.item-status.is-manual_review {
   background: rgb(var(--danger-rgb) / 0.12);
   color: var(--danger);
 }
@@ -741,6 +964,7 @@ button:disabled {
   font-size: 22px;
 }
 @media (max-width: 1050px) {
+  .file-operation-grid { grid-template-columns: 1fr; }
   .filter-grid {
     grid-template-columns: 1fr 1fr;
   }

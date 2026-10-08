@@ -43,6 +43,8 @@ public class FileResponseAssembler {
                 .fileName(metadata.getFileName())
                 .fileType(metadata.getFileType())
                 .fileSize(metadata.getFileSize())
+                .revision(metadata.getRevision())
+                .contentSha256(metadata.getContentSha256())
                 .uploadTime(metadata.getUploadTime())
                 .summary(metadata.getSummary())
                 .status(metadata.getStatus() == null ? null : metadata.getStatus().name())

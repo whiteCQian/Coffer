@@ -9,15 +9,20 @@ public final class ModeAwareEmbeddingProvider implements EmbeddingProvider {
 
     private final ModelRuntimeModeService modeService;
     private final ModelRuntimeProviderFactory providerFactory;
+    private final ModelExecutionSnapshotService snapshots;
 
     public ModeAwareEmbeddingProvider(ModelRuntimeModeService modeService,
-                                      ModelRuntimeProviderFactory providerFactory) {
+                                      ModelRuntimeProviderFactory providerFactory,
+                                      ModelExecutionSnapshotService snapshots) {
         this.modeService = modeService;
         this.providerFactory = providerFactory;
+        this.snapshots = snapshots;
     }
 
     private EmbeddingProvider delegate() {
-        return providerFactory.embedding(ModelExecutionContext.require().mode());
+        var snapshot = ModelExecutionContext.require();
+        snapshots.requireCurrent(snapshot);
+        return providerFactory.embedding(snapshot.mode());
     }
 
     @Override

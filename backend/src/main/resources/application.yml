@@ -13,6 +13,14 @@
 # ==================== 公共配置（所有环境共享） ====================
 server:
   port: 8080
+  error:
+    include-exception: false
+    include-message: never
+    include-binding-errors: never
+    include-stacktrace: never
+  tomcat:
+    accesslog:
+      enabled: false
   servlet:
     session:
       timeout: 30m
@@ -27,9 +35,10 @@ spring:
 
   # JPA 只校验实体与数据库结构，所有结构变更由 Flyway 迁移脚本负责
   jpa:
+    show-sql: false
+    open-in-view: false
     hibernate:
       ddl-auto: validate
-  open-in-view: false
   session:
     store-type: jdbc
     timeout: 30m
@@ -47,14 +56,17 @@ spring:
   # DevTools 热重启
   devtools:
     restart:
-      enabled: true
+      enabled: false
+  h2:
+    console:
+      enabled: false
 
-  # 文件上传大小限制（与 FileUploadRequest 的 50MB 校验保持一致，
+  # 文件上传大小限制（与 FileUploadRequest 的 32MB 校验保持一致，
   # 否则超过 1MB（默认值）的文件会在 servlet 层被直接拒绝）
   servlet:
     multipart:
-      max-file-size: 50MB
-      max-request-size: 50MB
+      max-file-size: 32MB
+      max-request-size: 34MB
 
   # ========== Redis 8（Spring Data Redis，默认 Lettuce 客户端） ==========
   # 懒连接：Redis 未启动不影响应用启动
@@ -76,25 +88,67 @@ spring:
 # 日志级别
 logging:
   level:
-    com.coffer: debug
+    com.coffer: info
 
 # Actuator
 management:
+  health:
+    db:
+      enabled: false
+    redis:
+      enabled: false
+    diskspace:
+      enabled: false
+    minioStorage:
+      enabled: false
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+      show-components: never
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,runtimeReadiness
   endpoints:
     web:
       exposure:
         include: health,info
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
 
 # ==================== MinIO 对象存储 ====================
 minio:
   endpoint: ${MINIO_ENDPOINT:http://127.0.0.1:9000}
   access-key: ${MINIO_ACCESS_KEY:}
   secret-key: ${MINIO_SECRET_KEY:}
-  bucket-name: ${MINIO_BUCKET:coffer-bucket}
+  bucket-name: ${MINIO_BUCKET:coffer-owned-v2}
   secure: ${MINIO_SECURE:false}        # HTTP=false / HTTPS=true
 
 # ==================== Coffer 业务配置 ====================
 coffer:
+  operations:
+    storage-volume: ${COFFER_STORAGE_VOLUME_PATH:}
+    backup-receipt: ${COFFER_BACKUP_RECEIPT:}
+    minimum-free-bytes: ${COFFER_MIN_FREE_BYTES:536870912}
+    minimum-free-percent: ${COFFER_MIN_FREE_PERCENT:5}
+    backup-max-age-hours: ${COFFER_BACKUP_MAX_AGE_HOURS:48}
+    backlog-warning-count: ${COFFER_BACKLOG_WARNING_COUNT:100}
+    backlog-max-age-minutes: ${COFFER_BACKLOG_MAX_AGE_MINUTES:30}
+  storage:
+    deletion-max-attempts: ${COFFER_DELETION_MAX_ATTEMPTS:2}
+    rename-max-attempts: ${COFFER_RENAME_MAX_ATTEMPTS:2}
+    work-save-max-attempts: ${COFFER_WORK_SAVE_MAX_ATTEMPTS:2}
+    write-recovery-max-attempts: ${COFFER_WRITE_RECOVERY_MAX_ATTEMPTS:2}
+    orphan-retention-hours: ${COFFER_ORPHAN_RETENTION_HOURS:24}
+    orphan-discard-max-attempts: ${COFFER_ORPHAN_DISCARD_MAX_ATTEMPTS:2}
+    orphan-discard-lease-seconds: ${COFFER_ORPHAN_DISCARD_LEASE_SECONDS:300}
   auth:
     # Set once before first startup. The setup endpoint closes permanently after
     # the first administrator is created; there is no public registration.
@@ -178,6 +232,7 @@ coffer:
       stable-observation-threshold: ${COFFER_INBOX_STABLE_OBSERVATIONS:2}
       max-files-per-scan: ${COFFER_INBOX_MAX_FILES_PER_SCAN:50}
       retry-delay-ms: ${COFFER_INBOX_RETRY_DELAY_MS:60000}
+      max-attempts: ${COFFER_INBOX_MAX_ATTEMPTS:2}
   # Dry-run governance preview retention and lifecycle.
   governance:
     preview:
@@ -186,7 +241,8 @@ coffer:
       analysis-model: ${COFFER_GOVERNANCE_PREVIEW_ANALYSIS_MODEL:configured-chat-model}
     archive:
       retry-delay-seconds: ${COFFER_GOVERNANCE_ARCHIVE_RETRY_DELAY_SECONDS:30}
-      max-attempts: ${COFFER_GOVERNANCE_ARCHIVE_MAX_ATTEMPTS:3}
+      max-attempts: ${COFFER_GOVERNANCE_ARCHIVE_MAX_ATTEMPTS:2}
+      compensation-max-attempts: ${COFFER_GOVERNANCE_COMPENSATION_MAX_ATTEMPTS:2}
   # 多模态视觉模型 Qwen-VL（DashScope OpenAI 兼容模式，非流式）
   # 第二模型必须按需临时构建（OpenAiChatModel.builder()），勿建显式 @Bean（与 starter 自动装配冲突）。
   qwen-vl:
@@ -224,7 +280,7 @@ spring:
 
   # H2 本地文件数据库（开发环境持久化模型凭据和业务数据）
   datasource:
-    url: jdbc:h2:file:./data/coffer;AUTO_SERVER=TRUE
+    url: jdbc:h2:file:./data/coffer;AUTO_SERVER=TRUE;WRITE_DELAY=0
     driver-class-name: org.h2.Driver
     username: sa
     password: ""
@@ -238,6 +294,13 @@ spring:
     console:
       enabled: true
       path: /h2-console
+
+# Contract generation is available only in an isolated development profile.
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
 
 # ==================== 生产环境 prod：MySQL 8 + Hikari 连接池 ====================
 ---
@@ -255,7 +318,8 @@ spring:
     hikari:
       maximum-pool-size: 10
       minimum-idle: 5
-      connection-timeout: 30000
+      connection-timeout: 2000
+      validation-timeout: 1000
       idle-timeout: 600000
       max-lifetime: 1800000
 
@@ -271,3 +335,22 @@ spring:
 coffer:
   auth:
     cookie-secure: ${COFFER_COOKIE_SECURE:true}
+
+# ==================== Desktop: a private H2 database and local library ====================
+---
+spring:
+  config:
+    activate:
+      on-profile: desktop
+  datasource:
+    url: "jdbc:h2:file:${COFFER_DESKTOP_USER_DATA_DIR}/coffer;AUTO_SERVER=TRUE;WRITE_DELAY=0"
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    show-sql: false
+
+coffer:
+  storage:
+    local:
+      root: "${COFFER_DESKTOP_USER_DATA_DIR}/library"

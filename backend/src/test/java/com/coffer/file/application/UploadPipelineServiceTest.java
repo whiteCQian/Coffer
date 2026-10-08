@@ -76,6 +76,15 @@ class UploadPipelineServiceTest {
         service = new UploadPipelineService(minioStorageService, documentParseService, tagGenerationTool,
                 visionModelService, fileMetadataRepository, tagRepository, fileTagMappingRepository,
                 taskRegistrationService, asyncTaskService, vectorIndexingService);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "modelContentGate",
+                mock(com.coffer.model.runtime.ModelContentGate.class));
+        var snapshots = mock(com.coffer.model.runtime.ModelExecutionSnapshotService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "modelSnapshots", snapshots);
+        when(taskRegistrationService.findSnapshotId(anyString())).thenReturn("test-snapshot");
+        org.mockito.Mockito.doAnswer(invocation -> {
+            invocation.getArgument(1, Runnable.class).run();
+            return null;
+        }).when(snapshots).with(eq("test-snapshot"), any(Runnable.class));
 
         // 通用默认：任务与文件可定位；save 返回入参同实例；标签去重视为不存在（每次新建）
         when(tagRepository.findByTagName(anyString())).thenReturn(Optional.empty());
@@ -100,8 +109,8 @@ class UploadPipelineServiceTest {
     void imageFileUsesVisionModelWithBase64AndMimeAndPersistsResult() {
         FileMetadata metadata = seedMetadata("t1", "photo.jpg", "jpg", 1000L);
         byte[] bytes = "fake-image-bytes".getBytes();
-        when(minioStorageService.getFileStream(any(), anyString()))
-                .thenReturn(new ByteArrayInputStream(bytes));
+        stubSource(metadata, bytes);
+        when(documentParseService.parseStructured(eq(metadata), any())).thenReturn(image(metadata));
         when(visionModelService.describeImage(anyString(), anyString(), anyString()))
                 .thenReturn(new VisionResult(CategoryType.IMAGE, List.of("风景", "天空"), "蓝天白云"));
 
@@ -116,7 +125,7 @@ class UploadPipelineServiceTest {
         assertThat(nameCaptor.getValue()).isEqualTo("photo.jpg");
 
         // 图片不触发文本解析
-        verify(documentParseService, never()).extractTextFromFile(anyString(), any());
+        verify(documentParseService).parseStructured(eq(metadata), any());
         // 标签入库（2 个新标签 → 2 次 save）+ 关联批量保存
         verify(tagRepository, times(2)).save(any());
         verify(fileTagMappingRepository).saveAll(any());
@@ -131,8 +140,8 @@ class UploadPipelineServiceTest {
     void imageMimeDerivedFromExtension() {
         // png → image/png；gif → image/gif（GIF 按图片走）
         FileMetadata metadata = seedMetadata("t2", "pic.png", "png", 100L);
-        when(minioStorageService.getFileStream(any(), anyString()))
-                .thenReturn(new ByteArrayInputStream(new byte[]{1, 2, 3}));
+        stubSource(metadata, new byte[]{1, 2, 3});
+        when(documentParseService.parseStructured(eq(metadata), any())).thenReturn(image(metadata));
         when(visionModelService.describeImage(anyString(), anyString(), anyString()))
                 .thenReturn(new VisionResult(CategoryType.OTHER, List.of("占位"), "描述"));
 
@@ -147,17 +156,16 @@ class UploadPipelineServiceTest {
     void textFileUsesTextPipelineAndNotVision() {
         FileMetadata metadata = seedMetadata("t3", "doc.txt", "txt", 100L);
         String content = "这是一份合同文本内容";
-        when(minioStorageService.getFileStream(any(), anyString()))
-                .thenReturn(new ByteArrayInputStream(content.getBytes()));
-        when(documentParseService.extractTextFromFile(anyString(), any()))
-                .thenReturn(ParseResult.success(content));
+        stubSource(metadata, content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        when(documentParseService.parseStructured(eq(metadata), any()))
+                .thenReturn(parsed(metadata, content));
         when(tagGenerationTool.generateTagAndCategory(content))
                 .thenReturn(new TagAndCategoryResult(CategoryType.CONTRACT, List.of("合同", "销售")));
 
         service.processUploadPipeline("t3");
 
         verify(visionModelService, never()).describeImage(anyString(), anyString(), anyString());
-        verify(documentParseService).extractTextFromFile(eq("doc.txt"), any());
+        verify(documentParseService).parseStructured(eq(metadata), any());
         verify(tagGenerationTool).generateTagAndCategory(content);
         verify(asyncTaskService).markAsCompleted(eq("t3"), eq(content));
         assertThat(metadata.getCategory()).isEqualTo(CategoryType.CONTRACT);
@@ -169,10 +177,9 @@ class UploadPipelineServiceTest {
     void vectorIndexFailureDoesNotChangeSuccessfulUploadStatus() {
         FileMetadata metadata = seedMetadata("t6", "offline.txt", "txt", 100L);
         String content = "Redis 离线时文件仍应正常完成";
-        when(minioStorageService.getFileStream(any(), anyString()))
-                .thenReturn(new ByteArrayInputStream(content.getBytes()));
-        when(documentParseService.extractTextFromFile(anyString(), any()))
-                .thenReturn(ParseResult.success(content));
+        stubSource(metadata, content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        when(documentParseService.parseStructured(eq(metadata), any()))
+                .thenReturn(parsed(metadata, content));
         when(tagGenerationTool.generateTagAndCategory(content))
                 .thenReturn(new TagAndCategoryResult(CategoryType.OTHER, List.of("离线测试")));
         when(vectorIndexingService.indexParsedText(metadata, content)).thenReturn(false);
@@ -199,8 +206,8 @@ class UploadPipelineServiceTest {
     @Test
     void emptyTagsFromVisionFailsTask() {
         FileMetadata metadata = seedMetadata("t5", "photo.png", "png", 100L);
-        when(minioStorageService.getFileStream(any(), anyString()))
-                .thenReturn(new ByteArrayInputStream(new byte[]{1, 2, 3}));
+        stubSource(metadata, new byte[]{1, 2, 3});
+        when(documentParseService.parseStructured(eq(metadata), any())).thenReturn(image(metadata));
         when(visionModelService.describeImage(anyString(), anyString(), anyString()))
                 .thenReturn(new VisionResult(CategoryType.OTHER, List.of(), ""));
 
@@ -208,5 +215,82 @@ class UploadPipelineServiceTest {
 
         verify(asyncTaskService).markAsFailed(eq("t5"), argThat(msg -> msg != null && msg.contains("无有效标签")));
         assertThat(metadata.getStatus()).isEqualTo(FileStatus.FAILED);
+    }
+
+    @Test
+    void missingModelSnapshotFailsBeforeAnyModelRequest() {
+        FileMetadata metadata = seedMetadata("missing-snapshot", "private.txt", "txt", 8L);
+        when(taskRegistrationService.findSnapshotId("missing-snapshot")).thenReturn(null);
+
+        service.processUploadPipeline("missing-snapshot");
+
+        verify(asyncTaskService).markAsFailed(eq("missing-snapshot"), anyString());
+        verify(tagGenerationTool, never()).generateTagAndCategory(anyString());
+        verify(visionModelService, never()).describeImage(anyString(), anyString(), anyString());
+        assertThat(metadata.getStatus()).isEqualTo(FileStatus.FAILED);
+    }
+
+    @Test
+    void inaccessibleSavedSnapshotFailsClaimedTaskImmediately() {
+        FileMetadata metadata = seedMetadata("revoked-snapshot", "private.txt", "txt", 8L);
+        var snapshots = (com.coffer.model.runtime.ModelExecutionSnapshotService)
+                org.springframework.test.util.ReflectionTestUtils.getField(service, "modelSnapshots");
+        org.mockito.Mockito.doThrow(new com.coffer.model.runtime.ModelConsentRequiredException())
+                .when(snapshots).with(eq("test-snapshot"), any(Runnable.class));
+
+        service.processUploadPipeline("revoked-snapshot");
+
+        verify(asyncTaskService).markAsFailed(eq("revoked-snapshot"),
+                argThat(message -> message != null && message.contains("模型目标确认已失效")));
+        verify(tagGenerationTool, never()).generateTagAndCategory(anyString());
+        verify(visionModelService, never()).describeImage(anyString(), anyString(), anyString());
+        assertThat(metadata.getStatus()).isEqualTo(FileStatus.FAILED);
+    }
+
+    @Test
+    void rejectedContentCannotReachTagModel() {
+        FileMetadata metadata = seedMetadata("blocked", "private.txt", "txt", 8L);
+        stubSource(metadata, "private".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        when(documentParseService.parseStructured(eq(metadata), any()))
+                .thenReturn(parsed(metadata, "private"));
+        var gate = (com.coffer.model.runtime.ModelContentGate)
+                org.springframework.test.util.ReflectionTestUtils.getField(service, "modelContentGate");
+        org.mockito.Mockito.doThrow(new com.coffer.model.runtime.ModelConsentRequiredException())
+                .when(gate).requireAllowed(eq(metadata), eq("private"), eq(true),
+                        eq(com.coffer.model.runtime.ModelRuntimeCapability.CHAT));
+
+        service.processUploadPipeline("blocked");
+
+        verify(asyncTaskService).markAsFailed(eq("blocked"), anyString());
+        verify(tagGenerationTool, never()).generateTagAndCategory(anyString());
+        assertThat(metadata.getStatus()).isEqualTo(FileStatus.FAILED);
+    }
+
+    private void stubSource(FileMetadata file, byte[] bytes) {
+        String digest;
+        try {
+            digest = java.util.HexFormat.of().formatHex(java.security.MessageDigest
+                    .getInstance("SHA-256").digest(bytes));
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+        file.setFileSize((long) bytes.length);
+        file.setContentSha256(digest);
+        var observed = new com.coffer.file.storage.FileStoragePort.StoredObject(
+                file.getStoragePath(), bytes.length, digest, "etag-1");
+        when(minioStorageService.stat(file.getStoragePath())).thenReturn(observed);
+        when(minioStorageService.readIfUnchanged(file.getStoragePath(), observed))
+                .thenReturn(new ByteArrayInputStream(bytes));
+    }
+
+    private static com.coffer.file.domain.parse.ParsedDocument parsed(FileMetadata file, String text) {
+        return new com.coffer.file.domain.parse.ParsedDocument(file.getId(), file.getRevision(), "txt", "test",
+                com.coffer.file.domain.parse.ParseStatus.SUCCESS, null,
+                List.of(new com.coffer.file.domain.parse.ParsedDocument.Chunk(text, "LINE", 1, 1, 1, text.length())));
+    }
+    private static com.coffer.file.domain.parse.ParsedDocument image(FileMetadata file) {
+        return new com.coffer.file.domain.parse.ParsedDocument(file.getId(), file.getRevision(), file.getFileType(), "test",
+                com.coffer.file.domain.parse.ParseStatus.SUCCESS, null,
+                List.of(new com.coffer.file.domain.parse.ParsedDocument.Chunk("", "ORIGINAL_IMAGE", 1, 1, 0, 0)));
     }
 }

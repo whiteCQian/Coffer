@@ -4,7 +4,7 @@ import com.coffer.config.EmbeddingProperties;
 import com.coffer.file.domain.FileMetadata;
 import com.coffer.file.domain.FileStatus;
 import com.coffer.file.infrastructure.persistence.FileMetadataRepository;
-import com.coffer.vector.VectorIndexingService;
+import com.coffer.vector.VectorIndexCoordinator;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
@@ -25,15 +25,15 @@ class VectorReindexTaskTest {
         EmbeddingProperties properties = new EmbeddingProperties();
         properties.setEnabled(true);
         FileMetadataRepository repository = mock(FileMetadataRepository.class);
-        VectorIndexingService indexingService = mock(VectorIndexingService.class);
+        VectorIndexCoordinator coordinator = mock(VectorIndexCoordinator.class);
         FileMetadata successful = metadata(1L);
         FileMetadata failed = metadata(2L);
         when(repository.findByStatusAndVectorIndexedAtIsNull(eq(FileStatus.COMPLETED), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(successful, failed)));
-        when(indexingService.reindex(successful)).thenReturn(true);
-        when(indexingService.reindex(failed)).thenReturn(false);
+        when(coordinator.reindex(successful)).thenReturn(true);
+        when(coordinator.reindex(failed)).thenReturn(false);
 
-        new VectorReindexTask(properties, repository, indexingService).reindexPendingFiles();
+        new VectorReindexTask(properties, repository, coordinator).reindexPendingFiles();
 
         verify(repository).save(successful);
         verify(repository, never()).save(failed);
@@ -43,12 +43,12 @@ class VectorReindexTaskTest {
     void disabledFeatureDoesNotQueryPendingFiles() {
         EmbeddingProperties properties = new EmbeddingProperties();
         FileMetadataRepository repository = mock(FileMetadataRepository.class);
-        VectorIndexingService indexingService = mock(VectorIndexingService.class);
+        VectorIndexCoordinator coordinator = mock(VectorIndexCoordinator.class);
 
-        new VectorReindexTask(properties, repository, indexingService).reindexPendingFiles();
+        new VectorReindexTask(properties, repository, coordinator).reindexPendingFiles();
 
         verify(repository, never()).findByStatusAndVectorIndexedAtIsNull(any(), any());
-        verify(indexingService, never()).reindex(any());
+        verify(coordinator, never()).reindex(any());
     }
 
     private FileMetadata metadata(long id) {

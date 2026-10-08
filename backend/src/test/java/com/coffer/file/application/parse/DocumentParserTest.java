@@ -87,7 +87,7 @@ class DocumentParserTest extends com.coffer.auth.OwnerTestSupport {
     @Test
     void testCorruptedWord() {
         ParseResult result = documentParseService.extractTextFromFile("corrupted.docx", load("corrupted.docx"));
-        assertThat(result.getStatus()).isEqualTo(ParseStatus.CORRUPTED);
+        assertThat(result.getStatus()).isEqualTo(ParseStatus.TYPE_MISMATCH);
     }
 
     @Test

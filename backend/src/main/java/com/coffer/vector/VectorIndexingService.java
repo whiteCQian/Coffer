@@ -4,7 +4,7 @@ import com.coffer.config.EmbeddingProperties;
 import com.coffer.file.domain.FileMetadata;
 import com.coffer.exception.EmbeddingRetryException;
 import com.coffer.file.application.parse.DocumentParseService;
-import com.coffer.service.MinioStorageService;
+import com.coffer.file.storage.FileStoragePort;
 import com.coffer.service.RetryableModelService;
 import com.coffer.model.provider.EmbeddingProvider;
 import com.coffer.file.domain.parse.ParseResult;
@@ -33,10 +33,12 @@ public class VectorIndexingService {
     private final ObjectProvider<EmbeddingProvider> embeddingProvider;
     private final RedisVectorStore redisVectorStore;
     private final RetryableModelService retryableModelService;
-    private final MinioStorageService minioStorageService;
+    private final FileStoragePort minioStorageService;
     private final DocumentParseService documentParseService;
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @org.springframework.beans.factory.annotation.Autowired
     private com.coffer.model.runtime.ModelExecutionSnapshotService snapshots;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.coffer.model.runtime.ModelContentGate contentGate;
 
     /**
      * Indexes an already parsed document. All chunks must reach Redis before the
@@ -59,6 +61,8 @@ public class VectorIndexingService {
             if (chunks.isEmpty()) {
                 return false;
             }
+            java.util.Objects.requireNonNull(contentGate, "模型内容授权组件不可用").requireAllowed(metadata, text, true,
+                    com.coffer.model.runtime.ModelRuntimeCapability.EMBEDDING);
             List<String> documentIds = new ArrayList<>(chunks.size());
             for (int index = 0; index < chunks.size(); index++) {
                 String chunk = chunks.get(index);
@@ -94,11 +98,12 @@ public class VectorIndexingService {
     }
 
     public boolean reindex(FileMetadata metadata, String generation) {
-        if (snapshots != null && com.coffer.model.runtime.ModelExecutionContext.current() == null) {
+        if (com.coffer.model.runtime.ModelExecutionContext.current() == null) {
             if (metadata.getModelSnapshotId() == null) return false;
-            return snapshots.with(metadata.getModelSnapshotId(), () -> reindex(metadata, generation));
+            return java.util.Objects.requireNonNull(snapshots, "模型执行快照组件不可用")
+                    .with(metadata.getModelSnapshotId(), () -> reindex(metadata, generation));
         }
-        try (InputStream input = minioStorageService.getFileStream(null, metadata.getStoragePath())) {
+        try (InputStream input = com.coffer.file.application.VerifiedFileSource.open(minioStorageService, metadata)) {
             ParseResult result = documentParseService.extractTextFromFile(metadata.getFileName(), input);
             if (result.getStatus() != ParseStatus.SUCCESS) {
                 log.warn("向量补偿跳过无法解析的文件 fileId={}, status={}", metadata.getId(), result.getStatus());

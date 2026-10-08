@@ -34,6 +34,16 @@ public class ModelExecutionSnapshotService {
         return new Material(mode, Arrays.stream(ModelRuntimeCapability.values()).map(c -> configuration.resolve(mode, c)).toList());
     }
     public TargetPreview preview() { return view(material()); }
+    /** A queued task must not keep sending to a destination after the owner changes model settings. */
+    public void requireCurrent(ModelExecutionContext.Snapshot snapshot) {
+        var status = modes.status();
+        if (snapshot == null || status.getActiveMode() != snapshot.mode()
+                || !status.isCurrentModeValidated()) throw new ModelConsentRequiredException();
+        Material current = new Material(status.getActiveMode(),
+                Arrays.stream(ModelRuntimeCapability.values())
+                        .map(capability -> configuration.resolve(status.getActiveMode(), capability)).toList());
+        if (!version(current).equals(snapshot.version())) throw new ModelConsentRequiredException();
+    }
     private TargetPreview view(Material material) {
         return new TargetPreview(version(material), material.mode(), material.endpoints().stream()
                 .map(e -> new Target(e.capability().name(), e.baseUrl(), e.modelName())).toList());

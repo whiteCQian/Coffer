@@ -48,4 +48,20 @@ class ChatCitationCollectorTest {
 
         assertThat(collector.finish()).isEmpty();
     }
+
+    @Test
+    void separateParsedPagesKeepSeparateSourceLocations() {
+        FileMetadata file = FileMetadata.builder().id(9L).fileName("pages.pdf").fileType("pdf").build();
+        org.mockito.Mockito.when(access.requireVersion(9L, 0L)).thenReturn(file);
+        var first = new com.coffer.file.domain.parse.ParsedDocument.Chunk("first", "PAGE", 1, 1, 1, 5);
+        var second = new com.coffer.file.domain.parse.ParsedDocument.Chunk("second", "PAGE", 2, 2, 1, 6);
+        var parsed = new com.coffer.file.domain.parse.ParsedDocument(9L, 0, "pdf", "bounded-1",
+                com.coffer.file.domain.parse.ParseStatus.SUCCESS, null, java.util.List.of(first, second));
+        collector.begin();
+        collector.captureParsed(file, 1d, parsed, first);
+        collector.captureParsed(file, 1d, parsed, second);
+        var citations = collector.finish();
+        assertThat(citations).extracting(c -> c.getSourceStart()).containsExactly(1, 2);
+        assertThat(citations).extracting(c -> c.getSnippet()).containsExactly("first", "second");
+    }
 }

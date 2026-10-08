@@ -6,6 +6,7 @@ import com.coffer.file.domain.FileStatus;
 import com.coffer.file.infrastructure.persistence.FileMetadataRepository;
 import com.coffer.tag.infrastructure.persistence.FileTagMappingRepository;
 import com.coffer.service.VectorCleanupService;
+import com.coffer.file.storage.FileStoragePort;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -30,12 +31,17 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class FileOperationService {
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.coffer.file.application.parse.ParsedDocumentStore parsedStore;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private FileRenameIntentService renameIntents;
 
     private final FileMetadataRepository fileMetadataRepository;
     private final TaskRegistrationService taskRegistrationService;
     private final FileTagMappingRepository fileTagMappingRepository;
     private final VectorCleanupService vectorCleanupService;
     private final StorageDeletionTaskService storageDeletionTaskService;
+    private final FileStoragePort storage;
 
     /**
      * 失败文件重试：仅 {@code FileStatus.FAILED} 可重试，事务内重建 PENDING 任务并回退文件状态。
@@ -76,7 +82,8 @@ public class FileOperationService {
         fm.setStatus(FileStatus.PENDING);
         fm.setSummary(null);
         fm.setModelSnapshotId(com.coffer.model.runtime.ModelExecutionContext.currentId());
-        fm.setRevision(fm.getRevision() + 1);
+        // A processing retry does not change the formal file or its bytes. Keeping the
+        // revision stable lets a per-file approval remain scoped to the same content.
         fm.setVectorIndexedAt(null);
         fileMetadataRepository.save(fm);
 
@@ -106,7 +113,17 @@ public class FileOperationService {
         // Persist the cleanup intent in the same transaction as the DB deletion.
         // Redis is deliberately not required for user-visible deletion.
         vectorCleanupService.enqueue(id);
-        storageDeletionTaskService.enqueue(id, storagePath);
+        String contentSha256 = fm.getContentSha256();
+        if (contentSha256 == null && storagePath != null && !storagePath.isBlank()) {
+            try { contentSha256 = storage.stat(storagePath).sha256(); }
+            catch (RuntimeException unavailable) {
+                // Preserve the user's logical deletion even when a legacy object cannot
+                // be fingerprinted; physical cleanup stays visible for manual review.
+                log.warn("旧文件正文未能核对，清理转人工处理 fileId={} exceptionType={}",
+                        id, unavailable.getClass().getSimpleName());
+            }
+        }
+        storageDeletionTaskService.enqueue(id, storagePath, contentSha256);
 
         // 1) 删文件-标签关联
         fileTagMappingRepository.deleteAll(fileTagMappingRepository.findByFileId(fm.getId()));
@@ -115,6 +132,7 @@ public class FileOperationService {
         taskRegistrationService.deleteTaskIfPresent(taskId);
 
         // 3) 删文件元数据
+        if (parsedStore != null) parsedStore.deleteFile(id);
         fileMetadataRepository.delete(fm);
 
         log.info("文件删除登记完成 fileId={}, taskId={}", id, taskId);
@@ -141,7 +159,7 @@ public class FileOperationService {
             throw new IllegalArgumentException("文件名不能超过255个字符");
         }
 
-        FileMetadata fm = fileMetadataRepository.findById(id)
+        FileMetadata fm = fileMetadataRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new com.coffer.auth.service.ResourceNotFoundException());
 
         // 同名幂等：不做无谓更新直接返回
@@ -150,10 +168,13 @@ public class FileOperationService {
             return fm.getId();
         }
 
+        String intentId = renameIntents == null ? null : renameIntents.prepare(fm, normalized);
+
         fm.setFileName(normalized);
         fm.setRevision(fm.getRevision() + 1);
         fm.setVectorIndexedAt(null);
         fileMetadataRepository.save(fm);
+        if (intentId != null) renameIntents.applied(intentId, fm);
         log.info("文件重命名完成 fileId={}", id);
         return fm.getId();
     }

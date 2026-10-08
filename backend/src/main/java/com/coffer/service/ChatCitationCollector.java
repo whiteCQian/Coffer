@@ -24,7 +24,7 @@ public class ChatCitationCollector {
     private final com.coffer.auth.service.OwnerAuthorization authorization;
     private final ThreadLocal<Long> owner = new ThreadLocal<>();
 
-    private final ThreadLocal<LinkedHashMap<Long, ChatCitation>> current = new ThreadLocal<>();
+    private final ThreadLocal<LinkedHashMap<String, ChatCitation>> current = new ThreadLocal<>();
 
     /** 开始收集一轮对话的引用。 */
     public void begin() {
@@ -63,18 +63,42 @@ public class ChatCitationCollector {
                 .contentUrl("/api/files/" + file.getId() + "/content?revision=" + file.getRevision())
                 .fileName(file.getFileName())
                 .fileType(file.getFileType())
-                .snippet(snippet)
+                // Search summaries can be model-generated. They are never evidence excerpts.
+                .snippet(null)
                 .score(score)
                 .retrievalType(retrievalType)
                 .build();
-        current.get().merge(file.getId(), incoming, this::merge);
+        current.get().merge(file.getId().toString(), incoming, this::merge);
+    }
+
+    /** Only parser-produced source chunks may be exposed as quoted excerpts. */
+    public void captureParsed(FileMetadata file, Double score,
+                              com.coffer.file.domain.parse.ParsedDocument document,
+                              com.coffer.file.domain.parse.ParsedDocument.Chunk chunk) {
+        if (current.get() == null || document == null || chunk == null || file == null) return;
+        if (!java.util.Objects.equals(document.fileId(), file.getId())
+                || document.revision() != file.getRevision()
+                || !document.chunks().contains(chunk)) return;
+        checkOwner();
+        file = access.requireVersion(file.getId(), file.getRevision());
+        String excerpt = chunk.text().substring(0, Math.min(120, chunk.text().length()));
+        ChatCitation incoming = ChatCitation.builder().fileId(file.getId()).revision(file.getRevision())
+                .contentUrl("/api/files/" + file.getId() + "/content?revision=" + file.getRevision())
+                .fileName(file.getFileName()).fileType(file.getFileType()).score(score)
+                .retrievalType("PARSE").snippet(excerpt)
+                .sourceKind(chunk.sourceKind()).sourceStart(chunk.start()).sourceEnd(chunk.end())
+                .startCharacter(chunk.startCharacter()).endCharacter(chunk.endCharacter())
+                .parserVersion(document.parserVersion()).build();
+        String location = file.getId() + ":" + chunk.sourceKind() + ":" + chunk.start()
+                + ":" + chunk.startCharacter();
+        current.get().merge(location, incoming, this::merge);
     }
 
     /** 返回本轮引用并清理线程本地状态。 */
     public List<ChatCitation> finish() {
         try {
             checkOwner();
-            Map<Long, ChatCitation> captured = current.get();
+            Map<String, ChatCitation> captured = current.get();
             return captured == null ? List.of() : captured.values().stream()
                     .filter(c -> access.current(c.getFileId(), c.getRevision())).toList();
         } finally { clear(); }
@@ -97,6 +121,12 @@ public class ChatCitationCollector {
                 .score(score)
                 .retrievalType(retrievalType)
                 .snippet(snippet)
+                .sourceKind(isBlank(previous.getSourceKind()) ? incoming.getSourceKind() : previous.getSourceKind())
+                .sourceStart(previous.getSourceStart() == null ? incoming.getSourceStart() : previous.getSourceStart())
+                .sourceEnd(previous.getSourceEnd() == null ? incoming.getSourceEnd() : previous.getSourceEnd())
+                .startCharacter(previous.getStartCharacter() == null ? incoming.getStartCharacter() : previous.getStartCharacter())
+                .endCharacter(previous.getEndCharacter() == null ? incoming.getEndCharacter() : previous.getEndCharacter())
+                .parserVersion(isBlank(previous.getParserVersion()) ? incoming.getParserVersion() : previous.getParserVersion())
                 .build();
     }
 

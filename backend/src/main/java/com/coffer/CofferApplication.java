@@ -25,6 +25,11 @@ public class CofferApplication {
      * @param args 命令行参数
      */
     public static void main(String[] args) {
+        if (args.length > 0 && "--coffer-parse-worker".equals(args[0])) {
+            System.exit(com.coffer.file.application.parse.ParserWorkerMain.run(
+                    java.util.Arrays.copyOfRange(args, 1, args.length)));
+            return;
+        }
         SpringApplication.run(CofferApplication.class, args);
     }
 }

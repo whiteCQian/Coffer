@@ -106,6 +106,18 @@ public interface FileTagMappingRepository extends com.coffer.auth.infrastructure
             "GROUP BY t.tagName ORDER BY cnt DESC")
     List<TagCandidate> findTagCandidates();
 
+    /** Sources behind candidate labels, so remote suggestions can authorize every contributing file. */
+    @Query("SELECT t.tagName AS name, ftm.fileId AS fileId " +
+            "FROM FileTagMapping ftm JOIN Tag t ON ftm.tagId = t.id " +
+            "WHERE ftm.confirmationStatus = com.coffer.tag.domain.ConfirmationStatus.CONFIRMED " +
+            "AND t.tagName IN :names")
+    List<TagCandidateSource> findConfirmedTagSources(@Param("names") Collection<String> names);
+
+    interface TagCandidateSource {
+        String getName();
+        Long getFileId();
+    }
+
     /**
      * 标签候选投影：别名 name/cnt 对应查询中 {@code AS name}/{@code AS cnt}。
      */

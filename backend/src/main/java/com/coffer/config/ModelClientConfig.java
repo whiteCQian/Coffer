@@ -30,15 +30,17 @@ public class ModelClientConfig {
     @Bean
     @Primary
     public ChatProvider chatProvider(ModelRuntimeModeService modeService,
-                                     ModelRuntimeProviderFactory providerFactory) {
-        return new ModeAwareChatProvider(modeService, providerFactory);
+                                     ModelRuntimeProviderFactory providerFactory,
+                                     com.coffer.model.runtime.ModelExecutionSnapshotService snapshots) {
+        return new ModeAwareChatProvider(modeService, providerFactory, snapshots);
     }
 
     @Bean
     public VisionProvider visionProvider(
             ModelRuntimeModeService modeService,
-            ModelRuntimeProviderFactory providerFactory) {
-        return new ModeAwareVisionProvider(modeService, providerFactory);
+            ModelRuntimeProviderFactory providerFactory,
+            com.coffer.model.runtime.ModelExecutionSnapshotService snapshots) {
+        return new ModeAwareVisionProvider(modeService, providerFactory, snapshots);
     }
 
     /** Builds a short-lived provider used only by the model credential connectivity test. */

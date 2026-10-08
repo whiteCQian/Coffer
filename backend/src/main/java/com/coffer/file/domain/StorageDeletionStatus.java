@@ -4,5 +4,6 @@ public enum StorageDeletionStatus {
     PENDING,
     RUNNING,
     FAILED,
-    SUCCEEDED
+    SUCCEEDED,
+    MANUAL_REVIEW
 }

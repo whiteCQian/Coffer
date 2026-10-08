@@ -14,7 +14,6 @@ import com.coffer.tag.domain.Tag;
 import com.coffer.file.infrastructure.persistence.FileMetadataRepository;
 import com.coffer.tag.infrastructure.persistence.FileTagMappingRepository;
 import com.coffer.tag.infrastructure.persistence.TagRepository;
-import com.coffer.service.MinioStorageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -40,7 +39,6 @@ public class FileService {
     private final FileMetadataRepository fileMetadataRepository;
     private final FileTagMappingRepository fileTagMappingRepository;
     private final TagRepository tagRepository;
-    private final MinioStorageService minioStorageService;
     private final FileResponseAssembler fileResponseAssembler;
 
     /**

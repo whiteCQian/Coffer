@@ -34,6 +34,7 @@ public interface FileMetadataRepository extends com.coffer.auth.infrastructure.O
      * @return 关联的文件元数据（可能为空）
      */
     Optional<FileMetadata> findByTaskId(String taskId);
+    boolean existsByStoragePath(String storagePath);
 
     /** 已完成但尚未成功写入向量索引的文件，供后台补偿任务分批处理。 */
     Page<FileMetadata> findByStatusAndVectorIndexedAtIsNull(FileStatus status, Pageable pageable);

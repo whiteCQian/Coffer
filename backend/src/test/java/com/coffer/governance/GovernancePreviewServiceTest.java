@@ -52,6 +52,8 @@ import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class GovernancePreviewServiceTest {
+    private static final byte[] SOURCE_BYTES = "合同正文".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    private static final String SOURCE_SHA256 = sha256(SOURCE_BYTES);
 
     @Mock
     private GovernancePreviewBatchRepository batchRepository;
@@ -83,6 +85,8 @@ class GovernancePreviewServiceTest {
         service = new GovernancePreviewService(batchRepository, itemRepository, fileMetadataRepository,
                 minioStorageService, documentParseService, tagGenerationTool, visionModelService,
                 archiveObjectNameService, properties, new ObjectMapper());
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "contentGate",
+                org.mockito.Mockito.mock(com.coffer.model.runtime.ModelContentGate.class));
         lenient().when(batchRepository.saveAndFlush(any(GovernancePreviewBatch.class))).thenAnswer(invocation -> {
             savedBatch = invocation.getArgument(0);
             return savedBatch;
@@ -102,9 +106,12 @@ class GovernancePreviewServiceTest {
                 .filter(item -> invocation.getArgument(0, String.class).equals(item.getPreviewId()))
                 .toList());
         lenient().when(batchRepository.findByRequestId(anyString())).thenReturn(Optional.empty());
-        lenient().when(minioStorageService.statFile(any(), anyString()))
-                .thenReturn(new MinioStorageService.ObjectSnapshot("etag-1", 12));
-        lenient().when(minioStorageService.objectExists(any(), anyString())).thenReturn(false);
+        lenient().when(minioStorageService.stat(anyString())).thenAnswer(invocation ->
+                new com.coffer.file.storage.FileStoragePort.StoredObject(invocation.getArgument(0),
+                        SOURCE_BYTES.length, SOURCE_SHA256, "etag-1"));
+        lenient().when(minioStorageService.readIfUnchanged(anyString(), any())).thenAnswer(invocation ->
+                new ByteArrayInputStream(SOURCE_BYTES));
+        lenient().when(minioStorageService.exists(anyString())).thenReturn(false);
         lenient().when(archiveObjectNameService.generateArchivePath(any(), anyString(), any()))
                 .thenReturn("contracts/2026/09/20/preview.txt");
     }
@@ -113,8 +120,6 @@ class GovernancePreviewServiceTest {
     void createsPreviewWithoutMutatingFormalFileMetadataOrTags() {
         FileMetadata metadata = metadata(1L, "note.txt", "files/note.txt");
         when(fileMetadataRepository.findById(1L)).thenReturn(Optional.of(metadata));
-        when(minioStorageService.getFileStream(any(), anyString()))
-                .thenReturn(new ByteArrayInputStream("合同正文".getBytes()));
         when(documentParseService.extractTextWithFallback(anyString(), any()))
                 .thenReturn(ParseResult.builder().status(ParseStatus.SUCCESS).content("合同正文").build());
         when(tagGenerationTool.generateTagAndCategory("合同正文"))
@@ -138,8 +143,6 @@ class GovernancePreviewServiceTest {
     void reanalyzeCreatesNewPreviewWithReanalyzeSourceWithoutFormalWrite() {
         FileMetadata metadata = metadata(1L, "note.txt", "files/note.txt");
         when(fileMetadataRepository.findById(1L)).thenReturn(Optional.of(metadata));
-        when(minioStorageService.getFileStream(any(), anyString()))
-                .thenReturn(new ByteArrayInputStream("合同正文".getBytes()));
         when(documentParseService.extractTextWithFallback(anyString(), any()))
                 .thenReturn(ParseResult.builder().status(ParseStatus.SUCCESS).content("合同正文").build());
         when(tagGenerationTool.generateTagAndCategory("合同正文"))
@@ -160,8 +163,6 @@ class GovernancePreviewServiceTest {
     void recordsPartialFailureAndKeepsSuccessfulItemPreviewable() {
         FileMetadata metadata = metadata(1L, "note.txt", "files/note.txt");
         when(fileMetadataRepository.findById(1L)).thenReturn(Optional.of(metadata), Optional.empty());
-        when(minioStorageService.getFileStream(any(), anyString()))
-                .thenReturn(new ByteArrayInputStream("合同正文".getBytes()));
         when(documentParseService.extractTextWithFallback(anyString(), any()))
                 .thenReturn(ParseResult.builder().status(ParseStatus.SUCCESS).content("合同正文").build());
         when(tagGenerationTool.generateTagAndCategory("合同正文"))
@@ -206,8 +207,6 @@ class GovernancePreviewServiceTest {
     void returnsExistingPreviewForAnIdempotentRetry() {
         FileMetadata metadata = metadata(1L, "note.txt", "files/note.txt");
         when(fileMetadataRepository.findById(1L)).thenReturn(Optional.of(metadata));
-        when(minioStorageService.getFileStream(any(), anyString()))
-                .thenReturn(new ByteArrayInputStream("合同正文".getBytes()));
         when(documentParseService.extractTextWithFallback(anyString(), any()))
                 .thenReturn(ParseResult.builder().status(ParseStatus.SUCCESS).content("合同正文").build());
         when(tagGenerationTool.generateTagAndCategory("合同正文"))
@@ -225,8 +224,6 @@ class GovernancePreviewServiceTest {
     void regeneratesAFreshPreviewFromThePreviousFileSet() {
         FileMetadata metadata = metadata(1L, "note.txt", "files/note.txt");
         when(fileMetadataRepository.findById(1L)).thenReturn(Optional.of(metadata));
-        when(minioStorageService.getFileStream(any(), anyString()))
-                .thenReturn(new ByteArrayInputStream("合同正文".getBytes()));
         when(documentParseService.extractTextWithFallback(anyString(), any()))
                 .thenReturn(ParseResult.builder().status(ParseStatus.SUCCESS).content("合同正文").build());
         when(tagGenerationTool.generateTagAndCategory("合同正文"))
@@ -248,13 +245,11 @@ class GovernancePreviewServiceTest {
     void marksTargetPathConflictAsPartialReadyInsteadOfReady() {
         FileMetadata metadata = metadata(1L, "note.txt", "files/note.txt");
         when(fileMetadataRepository.findById(1L)).thenReturn(Optional.of(metadata));
-        when(minioStorageService.getFileStream(any(), anyString()))
-                .thenReturn(new ByteArrayInputStream("合同正文".getBytes()));
         when(documentParseService.extractTextWithFallback(anyString(), any()))
                 .thenReturn(ParseResult.builder().status(ParseStatus.SUCCESS).content("合同正文").build());
         when(tagGenerationTool.generateTagAndCategory("合同正文"))
                 .thenReturn(new TagAndCategoryResult(CategoryType.CONTRACT, List.of("合同")));
-        when(minioStorageService.objectExists(any(), anyString())).thenReturn(true);
+        when(minioStorageService.exists(anyString())).thenReturn(true);
 
         GovernancePreviewResponse response = service.create(request(List.of(1L), "preview-request-conflict"));
 
@@ -266,8 +261,6 @@ class GovernancePreviewServiceTest {
     void editsSuggestionAndKeepsFormalMetadataUntouched() {
         FileMetadata metadata = metadata(1L, "note.txt", "files/note.txt");
         when(fileMetadataRepository.findById(1L)).thenReturn(Optional.of(metadata));
-        when(minioStorageService.getFileStream(any(), anyString()))
-                .thenReturn(new ByteArrayInputStream("合同正文".getBytes()));
         when(documentParseService.extractTextWithFallback(anyString(), any()))
                 .thenReturn(ParseResult.builder().status(ParseStatus.SUCCESS).content("合同正文").build());
         when(tagGenerationTool.generateTagAndCategory("合同正文"))
@@ -296,8 +289,6 @@ class GovernancePreviewServiceTest {
         FileMetadata second = metadata(2L, "second.txt", "files/second.txt");
         when(fileMetadataRepository.findById(1L)).thenReturn(Optional.of(first));
         when(fileMetadataRepository.findById(2L)).thenReturn(Optional.of(second));
-        when(minioStorageService.getFileStream(any(), anyString()))
-                .thenReturn(new ByteArrayInputStream("合同正文".getBytes()));
         when(documentParseService.extractTextWithFallback(anyString(), any()))
                 .thenReturn(ParseResult.builder().status(ParseStatus.SUCCESS).content("合同正文").build());
         when(tagGenerationTool.generateTagAndCategory("合同正文"))
@@ -323,8 +314,6 @@ class GovernancePreviewServiceTest {
         FileMetadata second = metadata(2L, "second.txt", "files/second.txt");
         when(fileMetadataRepository.findById(1L)).thenReturn(Optional.of(first));
         when(fileMetadataRepository.findById(2L)).thenReturn(Optional.of(second));
-        when(minioStorageService.getFileStream(any(), anyString()))
-                .thenReturn(new ByteArrayInputStream("合同正文".getBytes()));
         when(documentParseService.extractTextWithFallback(anyString(), any()))
                 .thenReturn(ParseResult.builder().status(ParseStatus.SUCCESS).content("合同正文").build());
         when(tagGenerationTool.generateTagAndCategory("合同正文"))
@@ -347,8 +336,6 @@ class GovernancePreviewServiceTest {
     void revalidationMarksChangedSourceAsConflictInsteadOfConfirming() {
         FileMetadata metadata = metadata(1L, "note.txt", "files/note.txt");
         when(fileMetadataRepository.findById(1L)).thenReturn(Optional.of(metadata));
-        when(minioStorageService.getFileStream(any(), anyString()))
-                .thenReturn(new ByteArrayInputStream("合同正文".getBytes()));
         when(documentParseService.extractTextWithFallback(anyString(), any()))
                 .thenReturn(ParseResult.builder().status(ParseStatus.SUCCESS).content("合同正文").build());
         when(tagGenerationTool.generateTagAndCategory("合同正文"))
@@ -358,8 +345,8 @@ class GovernancePreviewServiceTest {
         GovernancePreviewItem item = savedItems.get(0);
         item.setId(401L);
         when(batchRepository.findByPreviewId(created.previewId())).thenReturn(Optional.of(savedBatch));
-        when(minioStorageService.statFile(any(), anyString()))
-                .thenReturn(new MinioStorageService.ObjectSnapshot("etag-changed", 12));
+        when(minioStorageService.stat(anyString()))
+                .thenReturn(new com.coffer.file.storage.FileStoragePort.StoredObject("files/source.txt", 12, "sha-changed", "etag-changed"));
 
         GovernancePreviewResponse result = service.confirm(created.previewId(),
                 new ConfirmGovernancePreviewRequest(List.of(401L), false));
@@ -372,8 +359,6 @@ class GovernancePreviewServiceTest {
     void cancelsPreviewAndAllUnconfirmedItems() {
         FileMetadata metadata = metadata(1L, "note.txt", "files/note.txt");
         when(fileMetadataRepository.findById(1L)).thenReturn(Optional.of(metadata));
-        when(minioStorageService.getFileStream(any(), anyString()))
-                .thenReturn(new ByteArrayInputStream("合同正文".getBytes()));
         when(documentParseService.extractTextWithFallback(anyString(), any()))
                 .thenReturn(ParseResult.builder().status(ParseStatus.SUCCESS).content("合同正文").build());
         when(tagGenerationTool.generateTagAndCategory("合同正文"))
@@ -398,6 +383,7 @@ class GovernancePreviewServiceTest {
                 .id(id)
                 .fileName(fileName)
                 .fileSize(12L)
+                .contentSha256(SOURCE_SHA256)
                 .fileType("txt")
                 .storagePath(storagePath)
                 .category(CategoryType.REPORT)
@@ -405,5 +391,14 @@ class GovernancePreviewServiceTest {
                 .revision(0L)
                 .archived(false)
                 .build();
+    }
+
+    private static String sha256(byte[] bytes) {
+        try {
+            return java.util.HexFormat.of().formatHex(java.security.MessageDigest
+                    .getInstance("SHA-256").digest(bytes));
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException(impossible);
+        }
     }
 }

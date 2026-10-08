@@ -14,6 +14,12 @@ import java.util.Optional;
 
 public interface StorageDeletionTaskRepository extends com.coffer.auth.infrastructure.OwnedRepository<StorageDeletionTask, Long> {
 
+    Optional<StorageDeletionTask> findByTaskKey(String taskKey);
+    boolean existsByObjectPathAndStatusNot(String objectPath, StorageDeletionStatus status);
+
+    List<StorageDeletionTask> findTop100ByOrderByCreatedAtDesc();
+    List<StorageDeletionTask> findByOrderByCreatedAtDescIdDesc(Pageable pageable);
+
     @Query("""
             select t from StorageDeletionTask t
             where (t.status = :pending or t.status = :failed or (t.status = :running and t.nextAttemptAt <= :now))

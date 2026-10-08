@@ -82,6 +82,22 @@ public class ArchiveOperationItem extends com.coffer.auth.domain.TenantOwnedEnti
     @Column(name = "source_size")
     private Long sourceSize;
 
+    /** A complete formal snapshot is required for automatic rollback. Null identifies a legacy ledger. */
+    @Column(name = "snapshot_version")
+    private Integer snapshotVersion;
+
+    @Column(name = "source_snapshot_json", columnDefinition = "TEXT")
+    private String sourceSnapshotJson;
+
+    @Column(name = "target_snapshot_json", columnDefinition = "TEXT")
+    private String targetSnapshotJson;
+
+    @Column(name = "source_sha256", length = 64)
+    private String sourceSha256;
+
+    @Column(name = "target_sha256", length = 64)
+    private String targetSha256;
+
     @Column(name = "target_etag", length = 255)
     private String targetEtag;
 
@@ -93,6 +109,14 @@ public class ArchiveOperationItem extends com.coffer.auth.domain.TenantOwnedEnti
 
     @Column(name = "post_execute_revision")
     private Long postExecuteRevision;
+
+    @Column(name = "rollback_result_revision")
+    private Long rollbackResultRevision;
+
+    /** Durable proof that this rollback copied and verified the restored object. */
+    @Builder.Default
+    @Column(name = "rollback_copy_verified", nullable = false)
+    private boolean rollbackCopyVerified = false;
 
     @Enumerated(EnumType.STRING)
     @Builder.Default

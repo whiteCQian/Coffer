@@ -6,6 +6,7 @@ import org.springframework.http.ResponseEntity;
 
 /** Compatibility route: user content must use the consent-gated chat endpoint. */
 @RestController @RequestMapping("/api/test")
+@org.springframework.context.annotation.Profile("dev & !prod & !desktop")
 public class DeepSeekTestController {
     @GetMapping("/hello")
     public ResponseEntity<Result<Void>> hello() {

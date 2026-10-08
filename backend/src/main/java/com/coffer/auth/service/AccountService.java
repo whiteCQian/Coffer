@@ -198,10 +198,9 @@ public class AccountService {
     }
 
     private void validatePassword(String password) {
-        int byteLength = password.getBytes(StandardCharsets.UTF_8).length;
-        if (password.length() < 12 || byteLength > 72) {
+        if (password == null || password.length() < 6 || password.length() > 16) {
             throw new AuthFailureException(HttpStatus.BAD_REQUEST,
-                    "密码长度须至少 12 个字符且不超过 72 个 UTF-8 字节");
+                    "密码长度须为 6–16 个字符");
         }
     }
 

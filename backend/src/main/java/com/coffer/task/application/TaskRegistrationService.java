@@ -20,7 +20,7 @@ public class TaskRegistrationService {
 
     private final AsyncTaskRepository asyncTaskRepository;
 
-    @Autowired(required = false)
+    @Autowired
     private ModelRuntimeModeService runtimeModeService;
 
     @Transactional

@@ -80,7 +80,7 @@ class ArchiveReanalysisTagReplacementTest extends com.coffer.auth.OwnerTestSuppo
         Scenario scenario = seed(GovernancePreviewSource.REANALYZE);
 
         persistenceService.applyFormalState(scenario.item().getId(), "new-etag", 12,
-                "new summary", List.of("new-tag"));
+                "legacy-sha", "new summary", List.of("new-tag"));
 
         List<String> tagNames = mappingRepository.findByFileId(scenario.file().getId()).stream()
                 .map(mapping -> tagRepository.findById(mapping.getTagId()).orElseThrow().getTagName())
@@ -95,7 +95,7 @@ class ArchiveReanalysisTagReplacementTest extends com.coffer.auth.OwnerTestSuppo
         Scenario scenario = seed(GovernancePreviewSource.UPLOAD);
 
         persistenceService.applyFormalState(scenario.item().getId(), "new-etag", 12,
-                "new summary", List.of("new-tag"));
+                "legacy-sha", "new summary", List.of("new-tag"));
 
         List<String> tagNames = mappingRepository.findByFileId(scenario.file().getId()).stream()
                 .map(mapping -> tagRepository.findById(mapping.getTagId()).orElseThrow().getTagName())
@@ -109,7 +109,7 @@ class ArchiveReanalysisTagReplacementTest extends com.coffer.auth.OwnerTestSuppo
         Scenario scenario = seed(GovernancePreviewSource.REANALYZE);
 
         persistenceService.applyFormalState(scenario.item().getId(), "new-etag", 12,
-                "new summary", List.of("new-tag"));
+                "legacy-sha", "new summary", List.of("new-tag"));
 
         Tag staleTag = tagRepository.saveAndFlush(Tag.builder().tagName("stale-tag").build());
         mappingRepository.saveAndFlush(FileTagMapping.builder()
@@ -118,7 +118,7 @@ class ArchiveReanalysisTagReplacementTest extends com.coffer.auth.OwnerTestSuppo
 
         // The second call enters the alreadyCommitted/idempotent branch.
         persistenceService.applyFormalState(scenario.item().getId(), "new-etag", 12,
-                "new summary", List.of("new-tag"));
+                "legacy-sha", "new summary", List.of("new-tag"));
 
         List<String> tagNames = mappingRepository.findByFileId(scenario.file().getId()).stream()
                 .map(mapping -> tagRepository.findById(mapping.getTagId()).orElseThrow().getTagName())

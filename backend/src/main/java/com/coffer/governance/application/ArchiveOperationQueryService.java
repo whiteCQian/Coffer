@@ -8,8 +8,11 @@ import com.coffer.governance.domain.ArchiveOperationItem;
 import com.coffer.governance.domain.ArchiveOperationItemExecutionStatus;
 import com.coffer.governance.infrastructure.persistence.ArchiveOperationBatchRepository;
 import com.coffer.governance.infrastructure.persistence.ArchiveOperationItemRepository;
+import com.coffer.auth.service.OwnerAuthorization;
+import com.coffer.auth.service.ResourceNotFoundException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -17,6 +20,9 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -34,6 +40,10 @@ public class ArchiveOperationQueryService {
     private final ArchiveOperationBatchRepository batchRepository;
     private final ArchiveOperationItemRepository itemRepository;
     private final ObjectMapper objectMapper;
+    private final OwnerAuthorization authorization;
+
+    @Value("${coffer.governance.export.max-bytes:8388608}")
+    private int maxExportBytes;
 
     @Transactional(readOnly = true)
     public Page<ArchiveOperationBatchSummaryResponse> searchBatches(String batchId,
@@ -76,12 +86,15 @@ public class ArchiveOperationQueryService {
                     "archive-operations.csv",
                     csv(items));
         }
+        LimitedOutput output = new LimitedOutput(maxExportBytes);
         try {
+            objectMapper.writeValue(output, items);
             return new ExportedOperationLedger(
                     "application/json;charset=UTF-8",
                     "archive-operations.json",
-                    objectMapper.writeValueAsBytes(items));
+                    output.toByteArray());
         } catch (Exception e) {
+            if (output.exceeded()) throw new IllegalArgumentException("导出内容超过大小上限，请缩小筛选范围", e);
             throw new IllegalStateException("操作台账 JSON 导出失败", e);
         }
     }
@@ -96,6 +109,7 @@ public class ArchiveOperationQueryService {
     }
 
     private ArchiveOperationItemResponse toItemResponse(ArchiveOperationItem item) {
+        if (!authorization.requireOwner().equals(item.getOwnerId())) throw new ResourceNotFoundException();
         return new ArchiveOperationItemResponse(
                 item.getId(), item.getBatchId(), item.getFileId(), item.getExpectedRevision(),
                 item.getSourceFileName(), item.getTargetFileName(), item.getSourceCategory(),
@@ -109,13 +123,13 @@ public class ArchiveOperationQueryService {
     }
 
     private byte[] csv(List<ArchiveOperationItemResponse> items) {
-        StringBuilder builder = new StringBuilder("\uFEFF");
-        builder.append("batchId,fileId,sourceFileName,targetFileName,sourcePath,targetPath,")
+        LimitedOutput output = new LimitedOutput(maxExportBytes);
+        output.append("\uFEFFbatchId,fileId,sourceFileName,targetFileName,sourcePath,targetPath,")
                 .append("sourceCategory,targetCategory,executionStatus,executionStep,rollbackStatus,attempts,")
                 .append("sourceEtag,targetEtag,preExecuteRevision,postExecuteRevision,")
                 .append("failureCode,failureMessage,createdAt,startedAt,finishedAt,rollbackStartedAt,rollbackFinishedAt\n");
         for (ArchiveOperationItemResponse item : items) {
-            appendCsvRow(builder,
+            appendCsvRow(output,
                     item.batchId(), item.fileId(), item.sourceFileName(), item.targetFileName(),
                     item.sourcePath(), item.targetPath(), item.sourceCategory(), item.targetCategory(),
                     item.executionStatus(), item.executionStep(), item.rollbackStatus(), item.attempts(), item.sourceEtag(),
@@ -123,21 +137,40 @@ public class ArchiveOperationQueryService {
                     item.failureCode(), item.failureMessage(), item.createdAt(), item.startedAt(),
                     item.finishedAt(), item.rollbackStartedAt(), item.rollbackFinishedAt());
         }
-        return builder.toString().getBytes(StandardCharsets.UTF_8);
+        return output.toByteArray();
     }
 
-    private void appendCsvRow(StringBuilder builder, Object... values) {
+    private void appendCsvRow(LimitedOutput output, Object... values) {
+        StringBuilder row = new StringBuilder();
         for (int i = 0; i < values.length; i++) {
             if (i > 0) {
-                builder.append(',');
+                row.append(',');
             }
             String value = Objects.toString(values[i], "")
                     .replace("\r", " ")
                     .replace("\n", " ")
+                    .replace("\t", " ")
                     .replace("\"", "\"\"");
-            builder.append('"').append(value).append('"');
+            // Spreadsheet programs can evaluate a quoted CSV cell as a formula.
+            // Prefix text even when whitespace or invisible format characters lead the payload.
+            if (startsWithFormula(value)) value = "'" + value;
+            row.append('"').append(value).append('"');
         }
-        builder.append('\n');
+        row.append('\n');
+        output.append(row.toString());
+    }
+
+    private boolean startsWithFormula(String value) {
+        int index = 0;
+        while (index < value.length()) {
+            int codePoint = value.codePointAt(index);
+            if (!Character.isWhitespace(codePoint)
+                    && Character.getType(codePoint) != Character.SPACE_SEPARATOR
+                    && Character.getType(codePoint) != Character.FORMAT) break;
+            index += Character.charCount(codePoint);
+        }
+        if (index == value.length()) return false;
+        return "=+-@".indexOf(value.charAt(index)) >= 0;
     }
 
     private String normalize(String value) {
@@ -145,5 +178,36 @@ public class ArchiveOperationQueryService {
     }
 
     public record ExportedOperationLedger(String contentType, String fileName, byte[] content) {
+    }
+
+    /** Limits encoded bytes while the serializer is writing, before a large response is allocated. */
+    private static final class LimitedOutput extends OutputStream {
+        private final int maximum;
+        private final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        private boolean exceeded;
+
+        private LimitedOutput(int maximum) {
+            if (maximum <= 0) throw new IllegalStateException("导出大小上限必须大于零");
+            this.maximum = maximum;
+        }
+
+        @Override public void write(int value) throws IOException { check(1); bytes.write(value); }
+        @Override public void write(byte[] value, int offset, int length) throws IOException {
+            check(length);
+            bytes.write(value, offset, length);
+        }
+        private void check(int length) throws IOException {
+            if (length > maximum - bytes.size()) {
+                exceeded = true;
+                throw new IOException("导出大小超限");
+            }
+        }
+        private LimitedOutput append(String value) {
+            try { write(value.getBytes(StandardCharsets.UTF_8)); }
+            catch (IOException tooLarge) { throw new IllegalArgumentException("导出内容超过大小上限，请缩小筛选范围", tooLarge); }
+            return this;
+        }
+        private boolean exceeded() { return exceeded; }
+        private byte[] toByteArray() { return bytes.toByteArray(); }
     }
 }

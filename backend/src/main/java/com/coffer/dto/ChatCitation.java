@@ -31,6 +31,14 @@ public class ChatCitation {
     /** 当前第一版使用文件摘要作为文件级命中片段。 */
     private String snippet;
 
+    /** Exact source position for excerpts produced by the bounded parser. */
+    private String sourceKind;
+    private Integer sourceStart;
+    private Integer sourceEnd;
+    private Integer startCharacter;
+    private Integer endCharacter;
+    private String parserVersion;
+
     /** 检索相关性分数；不同检索类型的分数只用于当前结果内排序，不跨查询比较。 */
     private Double score;
 

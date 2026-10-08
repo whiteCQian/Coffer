@@ -114,7 +114,7 @@ npm run dev     # http://localhost:5173 （/api 已代理到 8080）
 | 端口 | 服务 |
 |---|---|
 | 5173 | 前端 Vite dev |
-| 8080 | 后端 API / Knife4j(`/doc.html`) / actuator |
+| 8080 | 后端 API / 受限健康端点（生产关闭 API 调试文档） |
 | 9000 / 9001 | MinIO API / 控制台 |
 | 6379 | Redis |
 
@@ -125,6 +125,7 @@ npm run dev     # http://localhost:5173 （/api 已代理到 8080）
 - [架构图与模块关系](docs/架构图与模块关系.md)
 - [已知问题与技术债务](docs/已知问题与技术债务.md)
 - [最终落地执行计划](docs/plans/AgentFS最终落地执行计划.md)
+- [R26 隐私、错误、运行状态与密钥轮换](docs/plans/R26-隐私错误与运行状态验收.md)
 - [需求追踪矩阵](docs/plans/需求追踪矩阵.md)
 - [M0 存量数据保护记录](docs/plans/M0-存量数据盘点与保护记录.md)
 - [最终产品合同 ADR-001](docs/decisions/ADR-001-最终产品合同与存储架构.md)

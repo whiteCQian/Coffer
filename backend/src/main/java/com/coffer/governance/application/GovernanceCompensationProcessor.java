@@ -3,7 +3,8 @@ package com.coffer.governance.application;
 import com.coffer.governance.domain.*;
 import com.coffer.governance.infrastructure.persistence.GovernanceCompensationTaskRepository;
 import com.coffer.governance.infrastructure.persistence.ArchiveOperationItemRepository;
-import com.coffer.service.MinioStorageService;
+import com.coffer.file.storage.FileStoragePort;
+import com.coffer.file.storage.StorageObjectNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
@@ -24,7 +25,7 @@ public class GovernanceCompensationProcessor {
     private final ArchiveRollbackPersistenceService rollbackPersistence;
     private final ArchiveOperationService archiveService;
     private final ArchiveRollbackService rollbackService;
-    private final MinioStorageService minioStorageService;
+    private final FileStoragePort storage;
     private final ArchiveOperationItemRepository itemRepository;
 
     @com.coffer.auth.service.OwnerScheduled
@@ -43,12 +44,16 @@ public class GovernanceCompensationProcessor {
                     archivePersistence.prepareRecovery(task.getItemId());
                     archiveService.executeItem(task.getItemId());
                     ArchiveOperationItem item = requireItem(task.getItemId());
-                    if (item.getExecutionStatus() == ArchiveOperationItemExecutionStatus.FAILED) {
+                    if (item.getExecutionStatus() == ArchiveOperationItemExecutionStatus.FAILED
+                            || item.getExecutionStatus() == ArchiveOperationItemExecutionStatus.MANUAL_REVIEW) {
                         throw new IllegalStateException("归档恢复执行仍然失败: " + item.getFailureMessage());
                     }
+                    archivePersistence.recomputeBatch(task.getBatchId());
                 }
                 case DELETE_ARCHIVE_SOURCE -> {
-                    minioStorageService.deleteFile(null, task.getObjectPath());
+                    ArchiveOperationItem item = requireItem(task.getItemId());
+                    requireExpectedContent(item.getTargetPath(), item.getTargetSha256());
+                    deleteIfPresent(task.getObjectPath(), item.getSourceSha256());
                     archivePersistence.markSucceeded(task.getItemId());
                     archivePersistence.recomputeBatch(task.getBatchId());
                 }
@@ -59,9 +64,12 @@ public class GovernanceCompensationProcessor {
                     if (item.getRollbackStatus() == ArchiveOperationItemRollbackStatus.FAILED) {
                         throw new IllegalStateException("撤销恢复执行仍然失败: " + item.getFailureMessage());
                     }
+                    rollbackPersistence.recomputeBatch(task.getBatchId());
                 }
                 case DELETE_ROLLBACK_TARGET -> {
-                    minioStorageService.deleteFile(null, task.getObjectPath());
+                    ArchiveOperationItem item = requireItem(task.getItemId());
+                    requireExpectedContent(item.getSourcePath(), item.getSourceSha256());
+                    deleteIfPresent(task.getObjectPath(), item.getTargetSha256());
                     rollbackPersistence.markSucceeded(task.getItemId());
                     rollbackPersistence.recomputeBatch(task.getBatchId());
                 }
@@ -75,5 +83,17 @@ public class GovernanceCompensationProcessor {
 
     private ArchiveOperationItem requireItem(Long id) {
         return itemRepository.findById(id).orElseThrow(() -> new com.coffer.auth.service.ResourceNotFoundException());
+    }
+
+    private void requireExpectedContent(String path, String expectedSha256) {
+        if (expectedSha256 == null || !expectedSha256.equalsIgnoreCase(storage.stat(path).sha256())) {
+            throw new IllegalStateException("治理对象内容与台账不一致，拒绝完成补偿");
+        }
+    }
+
+    private void deleteIfPresent(String path, String expectedSha256) {
+        if (expectedSha256 == null) throw new IllegalStateException("治理台账缺少对象内容摘要，需人工处理");
+        try { storage.delete(path, expectedSha256); }
+        catch (StorageObjectNotFoundException alreadyRemoved) { /* prior cleanup completed */ }
     }
 }

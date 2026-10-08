@@ -36,10 +36,12 @@ public interface InboxImportRecordRepository extends com.coffer.auth.infrastruct
     @Query("UPDATE InboxImportRecord r SET r.status = :targetStatus, "
             + "r.importStartedAt = :now, r.importFinishedAt = null, "
             + "r.attemptCount = r.attemptCount + 1, r.updatedAt = :now "
-            + "WHERE r.id = :id AND r.ownerId = :ownerId AND r.status IN :claimableStatuses")
+            + "WHERE r.id = :id AND r.ownerId = :ownerId AND r.status IN :claimableStatuses "
+            + "AND r.attemptCount < :maxAttempts")
     int claimForImport(@Param("id") Long id,
                        @Param("ownerId") Long ownerId,
                        @Param("targetStatus") InboxImportStatus targetStatus,
                        @Param("claimableStatuses") Collection<InboxImportStatus> claimableStatuses,
+                       @Param("maxAttempts") int maxAttempts,
                        @Param("now") LocalDateTime now);
 }

@@ -117,7 +117,8 @@ class FileOperationServiceTest extends com.coffer.auth.OwnerTestSupport {
         FileMetadata fm = fileMetadataRepository.save(FileMetadata.builder()
                 .fileName("待删除合同.pdf").fileSize(10L).fileType("pdf")
                 .status(FileStatus.COMPLETED).taskId(taskId).summary("摘要")
-                .storagePath(ownerPath("contracts/del-uuid.pdf")).build());
+                .storagePath(ownerPath("contracts/del-uuid.pdf"))
+                .contentSha256("a".repeat(64)).build());
         asyncTaskRepository.save(AsyncTask.builder().taskId(taskId).fileName("待删除合同.pdf")
                 .status(AsyncTaskStatus.COMPLETED).progress(100).result("摘要").build());
         Long tagId = tagRepository.save(Tag.builder().tagName("合同").build()).getId();
@@ -138,7 +139,8 @@ class FileOperationServiceTest extends com.coffer.auth.OwnerTestSupport {
         String taskId = "task-del-processing";
         FileMetadata fm = fileMetadataRepository.save(FileMetadata.builder()
                 .fileName("处理中文件.pdf").fileSize(10L).fileType("pdf")
-                .status(FileStatus.PROCESSING).taskId(taskId).storagePath(ownerPath("files/p.pdf")).build());
+                .status(FileStatus.PROCESSING).taskId(taskId).storagePath(ownerPath("files/p.pdf"))
+                .contentSha256("b".repeat(64)).build());
         asyncTaskRepository.save(AsyncTask.builder().taskId(taskId).fileName("处理中文件.pdf")
                 .status(AsyncTaskStatus.PROCESSING).progress(10).build());
 

@@ -45,7 +45,7 @@ public class FileTagController {
         } catch (IllegalArgumentException e) {
             // 业务异常（关联不存在、参数非法）：返回 400 + 明确错误信息
             log.warn("标签确认业务异常");
-            return Result.error(400, e.getMessage());
+            return Result.error(400, "请求参数不符合要求，请检查输入后重试");
         } catch (Exception e) {
             log.error("确认标签失败，异常类型={}", e.getClass().getSimpleName());
             return Result.error(500, "确认标签失败");
@@ -67,7 +67,7 @@ public class FileTagController {
         } catch (IllegalArgumentException e) {
             // 业务异常（关联不存在、参数非法）：返回 400 + 明确错误信息
             log.warn("拒绝标签业务异常");
-            return Result.error(400, e.getMessage());
+            return Result.error(400, "请求参数不符合要求，请检查输入后重试");
         } catch (Exception e) {
             log.error("拒绝标签失败，异常类型={}", e.getClass().getSimpleName());
             return Result.error(500, "拒绝标签失败");

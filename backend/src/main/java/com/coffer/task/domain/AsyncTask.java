@@ -77,6 +77,14 @@ public class AsyncTask extends com.coffer.auth.domain.TenantOwnedEntity {
     @Column(name = "result", columnDefinition = "TEXT")
     private String result;
 
+    /** Separate committed lease, so a lost in-memory event cannot leave PENDING forever. */
+    @Column(name = "lease_until")
+    private LocalDateTime leaseUntil;
+
+    @Builder.Default
+    @Column(name = "attempts", nullable = false)
+    private int attempts = 0;
+
     /** 创建时间。 */
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)

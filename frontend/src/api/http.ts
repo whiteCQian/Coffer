@@ -3,6 +3,7 @@ import axios from 'axios'
 import { currentBoundary } from './sessionBoundary'
 
 declare module 'axios' {
+  interface AxiosRequestConfig { quietError?: boolean }
   interface InternalAxiosRequestConfig { identityEpoch?: number }
 }
 
@@ -10,7 +11,7 @@ import type { Result } from './types'
 
 /**
  * axios 实例：统一 baseURL（dev 经 Vite 代理 /api → 后端 8080）与
- * Result<T> 拦截。业务错误（HTTP 恒 200、body.code!==0）在此统一弹错并 reject，
+ * Result<T> 拦截。HTTP 错误及旧接口的 body.code!==0 均统一弹错并 reject，
  * 组件内仅处理成功分支与网络/框架级异常。
  */
 const http = axios.create({
@@ -27,7 +28,7 @@ http.interceptors.request.use(async (config) => {
   config.identityEpoch = boundary.epoch
   config.signal = boundary.signal
   const { needsModelConsent, confirmModelTarget } = await import('./modelConsent')
-  if (needsModelConsent(config.method, config.url)) {
+  if (needsModelConsent(config.method, config.url) && !config.headers.has('X-Coffer-Model-Version')) {
     config.headers.set('X-Coffer-Model-Version', await confirmModelTarget(config.url === '/model-execution/inbox'))
     config.headers.set('X-Coffer-Allow-Sensitive', 'true')
   }
@@ -40,7 +41,7 @@ http.interceptors.response.use(
     if (response.config.identityEpoch !== currentBoundary().epoch) return Promise.reject(new axios.CanceledError('账号已变化'))
     const body = response.data as Result<unknown>
     if (body && typeof body.code === 'number' && body.code !== 0) {
-      ElMessage.error(body.msg || '请求失败')
+      if (!response.config.quietError) ElMessage.error(body.msg || '请求失败')
       return Promise.reject(new Error(body.msg || '请求失败'))
     }
     return response
@@ -59,7 +60,7 @@ http.interceptors.response.use(
     }
     const msg =
       error.response?.data?.msg || error.message || '网络异常，请稍后重试'
-    ElMessage.error(msg)
+    if (!error.config?.quietError) ElMessage.error(msg)
     return Promise.reject(error)
   },
 )

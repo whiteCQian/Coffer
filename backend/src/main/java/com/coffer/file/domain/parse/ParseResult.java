@@ -26,6 +26,9 @@ public class ParseResult {
     /** 解析失败时的错误信息。 */
     private String errorMessage;
 
+    /** Structured source positions, when produced by a bounded parser. */
+    private ParsedDocument document;
+
     /**
      * 解析成功。
      *

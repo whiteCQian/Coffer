@@ -20,8 +20,8 @@ import org.springframework.web.multipart.MultipartFile;
 @AllArgsConstructor
 public class FileUploadRequest {
 
-    /** 单文件大小上限：50MB。 */
-    public static final long MAX_FILE_SIZE = 50L * 1024 * 1024;
+    /** 单文件大小上限与解析和工作副本处理一致：32MB。 */
+    public static final long MAX_FILE_SIZE = 32L * 1024 * 1024;
 
     /** 上传文件，不允许为空。 */
     @NotNull(message = "上传文件不能为空")
@@ -33,9 +33,9 @@ public class FileUploadRequest {
     /**
      * 文件大小校验（替代 @Size）。
      *
-     * @return 文件为空或未超过 50MB 时返回 true
+     * @return 文件为空或未超过 32MB 时返回 true
      */
-    @AssertTrue(message = "文件大小不能超过50MB")
+    @AssertTrue(message = "文件大小不能超过32MB")
     public boolean isFileSizeValid() {
         return file == null || file.getSize() <= MAX_FILE_SIZE;
     }

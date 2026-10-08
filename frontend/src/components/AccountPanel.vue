@@ -35,8 +35,8 @@ async function loadAdminData() {
 }
 
 async function updatePassword() {
-  if (newPassword.value.length < 12) {
-    ElMessage.warning('新密码至少 12 个字符')
+  if (newPassword.value.length < 6 || newPassword.value.length > 16) {
+    ElMessage.warning('新密码须为 6–16 个字符')
     return
   }
   busy.value = true
@@ -55,8 +55,8 @@ async function addUser() {
     ElMessage.warning('账号只能使用 3–64 位字母、数字、点、下划线或短横线')
     return
   }
-  if (initialPassword.value.length < 12) {
-    ElMessage.warning('初始密码至少 12 个字符')
+  if (initialPassword.value.length < 6 || initialPassword.value.length > 16) {
+    ElMessage.warning('初始密码须为 6–16 个字符')
     return
   }
   busy.value = true
@@ -72,10 +72,10 @@ async function addUser() {
 }
 
 async function resetPassword(user: AuthUser) {
-  const { value } = await ElMessageBox.prompt(`为 ${user.username} 设置新密码（至少 12 个字符）`, '重置账号密码', {
+  const { value } = await ElMessageBox.prompt(`为 ${user.username} 设置新密码（6–16 个字符）`, '重置账号密码', {
     inputType: 'password',
-    inputPattern: /^.{12,72}$/,
-    inputErrorMessage: '密码长度须为 12–72 个字符',
+    inputPattern: /^.{6,16}$/,
+    inputErrorMessage: '密码长度须为 6–16 个字符',
     confirmButtonText: '重置',
     cancelButtonText: '取消',
   })
@@ -111,7 +111,7 @@ function formatDate(value: string) {
 
     <form class="form-grid" @submit.prevent="updatePassword">
       <label class="field"><span>当前密码</span><input v-model="currentPassword" type="password" autocomplete="current-password" required /></label>
-      <label class="field"><span>新密码（至少 12 个字符）</span><input v-model="newPassword" type="password" autocomplete="new-password" minlength="12" maxlength="72" required /></label>
+      <label class="field"><span>新密码（6–16 个字符）</span><input v-model="newPassword" type="password" autocomplete="new-password" minlength="6" maxlength="16" required /></label>
       <button class="action-button primary" type="submit" :disabled="busy">更新密码</button>
     </form>
 
@@ -121,7 +121,7 @@ function formatDate(value: string) {
       <p class="note">管理员只管理账号状态与凭据。用户文件、标签、对话和任务按账号隔离。</p>
       <form class="form-grid create-grid" @submit.prevent="addUser">
         <label class="field"><span>新账号</span><input v-model="username" type="text" autocomplete="off" minlength="3" maxlength="64" required /></label>
-        <label class="field"><span>初始密码</span><input v-model="initialPassword" type="password" autocomplete="new-password" minlength="12" maxlength="72" required /></label>
+        <label class="field"><span>初始密码（6–16 个字符）</span><input v-model="initialPassword" type="password" autocomplete="new-password" minlength="6" maxlength="16" required /></label>
         <button class="action-button primary" type="submit" :disabled="busy">创建用户</button>
       </form>
       <div class="user-list">

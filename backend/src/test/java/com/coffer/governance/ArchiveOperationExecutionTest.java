@@ -5,6 +5,7 @@ import com.coffer.file.domain.FileMetadata;
 import com.coffer.file.domain.FileStatus;
 import com.coffer.file.infrastructure.persistence.FileMetadataRepository;
 import com.coffer.governance.application.ArchiveOperationService;
+import com.coffer.governance.application.ArchiveOperationPersistenceService;
 import com.coffer.governance.domain.ArchiveOperationBatch;
 import com.coffer.governance.domain.ArchiveOperationBatchStatus;
 import com.coffer.governance.domain.ArchiveOperationItem;
@@ -37,6 +38,8 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 
 /** C07 integration coverage for copy, metadata commit, per-item failure and retry state. */
 @SpringBootTest(properties = {
@@ -49,6 +52,8 @@ class ArchiveOperationExecutionTest extends com.coffer.auth.OwnerTestSupport {
 
     @Autowired
     private ArchiveOperationService archiveOperationService;
+    @Autowired
+    private ArchiveOperationPersistenceService persistenceService;
     @Autowired
     private FileMetadataRepository fileMetadataRepository;
     @Autowired
@@ -78,16 +83,14 @@ class ArchiveOperationExecutionTest extends com.coffer.auth.OwnerTestSupport {
         String batchId = "archive-c07-success";
         seedOperation(batchId, "preview-c07-success", metadata, "整理后.txt",
                 "contracts/整理后.txt", CategoryType.CONTRACT, "etag-source");
-        when(minioStorageService.statFile(isNull(), anyString()))
+        when(minioStorageService.stat(anyString()))
                 .thenAnswer(invocation -> {
-                    String path = invocation.getArgument(1, String.class);
+                    String path = invocation.getArgument(0, String.class);
                     return path.equals("files/source.txt")
-                            ? new MinioStorageService.ObjectSnapshot("etag-source", 12)
-                            : new MinioStorageService.ObjectSnapshot("etag-target", 12);
+                            ? new com.coffer.file.storage.FileStoragePort.StoredObject(path, 12, "sha-source", "etag-source")
+                            : new com.coffer.file.storage.FileStoragePort.StoredObject(path, 12, "sha-source", "etag-target");
                 });
-        when(minioStorageService.objectExists(isNull(), eq("contracts/整理后.txt"))).thenReturn(false);
-        doNothing().when(minioStorageService).copyObject(anyString(), anyString());
-        doNothing().when(minioStorageService).deleteFile(isNull(), anyString());
+        when(minioStorageService.exists(eq("contracts/整理后.txt"))).thenReturn(false);
 
         archiveOperationService.executeBatch(batchId);
 
@@ -115,13 +118,16 @@ class ArchiveOperationExecutionTest extends com.coffer.auth.OwnerTestSupport {
                 "contracts/success-归档.txt", CategoryType.CONTRACT, "etag-success");
         seedOperation(batchId, "preview-c07-partial", failed, "failed-归档.txt",
                 "contracts/failed-归档.txt", CategoryType.CONTRACT, "etag-failed");
-        when(minioStorageService.statFile(isNull(), anyString()))
-                .thenAnswer(invocation -> new MinioStorageService.ObjectSnapshot("etag-" +
-                        invocation.getArgument(1, String.class).replace("files/", "").replace(".txt", ""), 12));
-        when(minioStorageService.objectExists(isNull(), anyString())).thenReturn(false);
-        doNothing().when(minioStorageService).copyObject("files/success.txt", "contracts/success-归档.txt");
+        when(minioStorageService.stat(anyString()))
+                .thenAnswer(invocation -> {
+                    String path = invocation.getArgument(0, String.class);
+                    String id = path.contains("success") ? "success" : "failed";
+                    return new com.coffer.file.storage.FileStoragePort.StoredObject(path, 12,
+                            "sha-" + id, "etag-" + id);
+                });
+        when(minioStorageService.exists(anyString())).thenReturn(false);
         doThrow(new RuntimeException("copy failed"))
-                .when(minioStorageService).copyObject("files/failed.txt", "contracts/failed-归档.txt");
+                .when(minioStorageService).copy("files/failed.txt", "contracts/failed-归档.txt", "sha-failed");
 
         archiveOperationService.executeBatch(batchId);
 
@@ -146,8 +152,9 @@ class ArchiveOperationExecutionTest extends com.coffer.auth.OwnerTestSupport {
         ArchiveOperationItem staleItem = itemRepository.findByBatchIdOrderByIdAsc(batchId).get(0);
         staleItem.setExpectedRevision(0L);
         itemRepository.saveAndFlush(staleItem);
-        when(minioStorageService.statFile(isNull(), eq("files/changed.txt")))
-                .thenReturn(new MinioStorageService.ObjectSnapshot("etag-source", 12));
+        when(minioStorageService.stat(eq("files/changed.txt")))
+                .thenReturn(new com.coffer.file.storage.FileStoragePort.StoredObject("files/changed.txt", 12,
+                        "sha-source", "etag-source"));
 
         archiveOperationService.executeBatch(batchId);
 
@@ -158,6 +165,51 @@ class ArchiveOperationExecutionTest extends com.coffer.auth.OwnerTestSupport {
         assertThat(saved.getStoragePath()).isEqualTo("files/changed.txt");
         assertThat(saved.getFileName()).isEqualTo("changed.txt");
         assertThat(saved.getRevision()).isEqualTo(1L);
+    }
+
+    @Test
+    void explicitRetryResetsBoundedAttemptSeries() {
+        FileMetadata metadata = saveFile("retry.txt", "files/retry.txt", CategoryType.REPORT, 0L);
+        String batchId = "archive-c07-retry-reset";
+        seedOperation(batchId, "preview-c07-retry-reset", metadata, "retry-archived.txt",
+                "contracts/retry-archived.txt", CategoryType.CONTRACT, "etag-source");
+        ArchiveOperationItem item = itemRepository.findByBatchIdOrderByIdAsc(batchId).get(0);
+        item.setExecutionStatus(ArchiveOperationItemExecutionStatus.MANUAL_REVIEW);
+        item.setAttempts(2);
+        itemRepository.saveAndFlush(item);
+
+        assertThat(persistenceService.resetFailedItems(batchId)).isEqualTo(1);
+        ArchiveOperationItem retried = itemRepository.findById(item.getId()).orElseThrow();
+        assertThat(retried.getExecutionStatus()).isEqualTo(ArchiveOperationItemExecutionStatus.PENDING);
+        assertThat(retried.getAttempts()).isZero();
+    }
+
+    @Test
+    void twoExecutionFailuresRequireManualRetryAndNeverCopyAgainAutomatically() {
+        FileMetadata metadata = saveFile("manual.txt", "files/manual.txt", CategoryType.REPORT, 0L);
+        String batchId = "archive-c07-manual";
+        seedOperation(batchId, "preview-c07-manual", metadata, "manual-archived.txt",
+                "contracts/manual-archived.txt", CategoryType.CONTRACT, "etag-source");
+        when(minioStorageService.stat(anyString())).thenAnswer(invocation -> {
+            String path = invocation.getArgument(0, String.class);
+            return new com.coffer.file.storage.FileStoragePort.StoredObject(path, 12,
+                    "sha-source", "etag-source");
+        });
+        when(minioStorageService.exists(anyString())).thenReturn(false);
+        doThrow(new IllegalStateException("copy unavailable"))
+                .when(minioStorageService).copy("files/manual.txt", "contracts/manual-archived.txt", "sha-source");
+
+        archiveOperationService.executeBatch(batchId);
+        ArchiveOperationItem item = itemRepository.findByBatchIdOrderByIdAsc(batchId).get(0);
+        assertThat(item.getExecutionStatus()).isEqualTo(ArchiveOperationItemExecutionStatus.FAILED);
+        archiveOperationService.executeBatch(batchId);
+        item = itemRepository.findById(item.getId()).orElseThrow();
+        assertThat(item.getExecutionStatus()).isEqualTo(ArchiveOperationItemExecutionStatus.MANUAL_REVIEW);
+        assertThat(item.getAttempts()).isEqualTo(2);
+        assertThat(item.getNextAttemptAt()).isNull();
+        archiveOperationService.executeBatch(batchId);
+        verify(minioStorageService, times(2)).copy("files/manual.txt", "contracts/manual-archived.txt", "sha-source");
+        assertThat(itemRepository.findById(item.getId()).orElseThrow().getAttempts()).isEqualTo(2);
     }
 
     private FileMetadata saveFile(String name, String path, CategoryType category, long revision) {

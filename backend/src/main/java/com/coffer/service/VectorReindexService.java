@@ -40,7 +40,7 @@ public class VectorReindexService {
     private final EmbeddingProperties embeddingProperties;
     @Value("${coffer.vector-store.reindex.page-size:100}") private int pageSize;
     @Autowired @Qualifier("vectorIndexExecutor") private Executor vectorExecutor;
-    @Autowired(required = false) private com.coffer.model.runtime.ModelExecutionSnapshotService snapshots;
+    @Autowired private com.coffer.model.runtime.ModelExecutionSnapshotService snapshots;
 
     @Transactional
     @com.coffer.auth.service.OwnerOnly
@@ -50,9 +50,11 @@ public class VectorReindexService {
         }
         var running = jobs.findByStatus(VectorReindexStatus.RUNNING);
         if (!running.isEmpty()) return running.get(0);
+        String snapshotId = com.coffer.model.runtime.ModelExecutionContext.currentId();
+        if (snapshotId == null) throw new com.coffer.model.runtime.ModelConsentRequiredException();
         String id = UUID.randomUUID().toString();
         VectorReindexJob job = VectorReindexJob.builder().jobId(id).status(VectorReindexStatus.RUNNING)
-                .modelSnapshotId(com.coffer.model.runtime.ModelExecutionContext.currentId())
+                .modelSnapshotId(snapshotId)
                 .totalCount((int) files.countByStatus(FileStatus.COMPLETED)).startedAt(LocalDateTime.now()).build();
         jobs.save(job);
         Long ownerId = com.coffer.auth.service.TenantContext.requireOwnerId();
@@ -79,12 +81,20 @@ public class VectorReindexService {
 
     @com.coffer.auth.service.OwnerOnly
     public void runAsync(String jobId) {
-        if (snapshots != null) {
-            var job = jobs.findById(jobId).orElseThrow(com.coffer.auth.service.ResourceNotFoundException::new);
-            snapshots.with(job.getModelSnapshotId(), () -> coordinator.withRebuildLock(() -> { run(jobId); return null; }));
-            return;
+        var job = jobs.findById(jobId).orElseThrow(com.coffer.auth.service.ResourceNotFoundException::new);
+        try {
+            if (job.getModelSnapshotId() == null) throw new com.coffer.model.runtime.ModelConsentRequiredException();
+            java.util.Objects.requireNonNull(snapshots, "模型执行快照组件不可用")
+                    .with(job.getModelSnapshotId(), () -> coordinator.withRebuildLock(() -> { run(jobId); return null; }));
+        } catch (RuntimeException failure) {
+            if (job.getStatus() == VectorReindexStatus.RUNNING) {
+                job.setStatus(VectorReindexStatus.FAILED);
+                job.setErrorSummary("模型执行目标失效，请重新确认后发起重建");
+                job.setFinishedAt(LocalDateTime.now());
+                jobs.save(job);
+            }
+            log.warn("向量重建无法恢复，异常类型={}", failure.getClass().getSimpleName());
         }
-        coordinator.withRebuildLock(() -> { run(jobId); return null; });
     }
 
     private void run(String jobId) {

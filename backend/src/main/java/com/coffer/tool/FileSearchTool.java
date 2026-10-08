@@ -27,6 +27,8 @@ public class FileSearchTool {
     private final PrivateFileAccess access;
     private final OwnerAuthorization authorization;
     private final ChatCitationCollector citations;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.coffer.model.runtime.ModelContentGate contentGate;
 
     @Tool(name = "search_files", value = "按关键词搜索本账号文件与已确认标签")
     public String searchFiles(@P("关键词") String keyword) { return searchFiles(authorization.requireOwner(), keyword); }
@@ -34,14 +36,17 @@ public class FileSearchTool {
         require(ownerId);
         if (keyword == null || keyword.isBlank()) return "搜索关键词不能为空";
         List<String> result = new ArrayList<>();
+        boolean consentRequired = false;
         for (var hit : search.searchWithEvidence(ownerId, keyword.trim())) {
             try {
                 var file = access.requireVersion(hit.file().getId(), hit.file().getRevision());
                 result.add(format(file, ownerId, hit.score(), hit.retrievalType()));
+            } catch (com.coffer.model.runtime.ModelConsentRequiredException blocked) {
+                consentRequired = true;
             } catch (ResourceNotFoundException | FileVersionConflictException ignored) { }
             if (result.size() == 10) break;
         }
-        return result.isEmpty() ? "未找到匹配的文件" : String.join("\n", result);
+        return describeResults(result, consentRequired, "未找到匹配的文件");
     }
 
     @Tool(name = "get_recent_uploads", value = "获取本账号最近上传的 8 个文件")
@@ -49,30 +54,34 @@ public class FileSearchTool {
     public String getRecentUploads(Long ownerId) {
         require(ownerId);
         List<String> result = new ArrayList<>();
+        boolean consentRequired = false;
         for (var candidate : files.findRecentFiles(PageRequest.of(0, 8))) {
             try {
                 var file = access.requireVersion(candidate.getId(), candidate.getRevision());
                 result.add(format(file, ownerId, 1d / (result.size() + 1), "RECENT_UPLOAD"));
+            } catch (com.coffer.model.runtime.ModelConsentRequiredException blocked) {
+                consentRequired = true;
             } catch (ResourceNotFoundException | FileVersionConflictException ignored) { }
         }
-        return result.isEmpty() ? "当前还没有上传任何文件" : String.join("\n", result);
+        return describeResults(result, consentRequired, "当前还没有上传任何文件");
+    }
+    private String describeResults(List<String> result, boolean consentRequired, String emptyText) {
+        String visible = result.isEmpty() ? emptyText : String.join("\n", result);
+        return consentRequired ? visible + "\n部分文件尚未授权当前聊天模型。请在文件详情中查看目标并授权后重试。" : visible;
     }
     private void require(Long owner) {
         if (!authorization.requireOwner().equals(owner)) throw new AccessDeniedException("无权执行此操作");
     }
     private String format(FileMetadata file, Long owner, double score, String type) {
-        List<Long> ids = mappings.findByFileIdAndConfirmationStatus(file.getId(), ConfirmationStatus.CONFIRMED).stream()
-                .filter(m -> owner.equals(m.getOwnerId()) && file.getId().equals(m.getFileId()))
-                .map(m -> m.getTagId()).distinct().toList();
-        String names = ids.isEmpty() ? "暂无" : tags.findAllById(ids).stream()
-                .filter(t -> owner.equals(t.getOwnerId())).map(t -> t.getTagName()).collect(Collectors.joining(","));
-        String summary = file.getSummary() == null ? "暂无" : file.getSummary();
-        String snippet = summary.substring(0, Math.min(120, summary.length()));
+        // A search hit can enter a remote chat prompt. Classify its actual local
+        // parse result instead of treating an empty placeholder as a safe source.
+        java.util.Objects.requireNonNull(contentGate, "模型内容授权组件不可用").requireFileAllowed(file,
+                com.coffer.model.runtime.ModelRuntimeCapability.CHAT);
         // Revalidate after the tag queries, immediately before exposing the result.
         access.requireVersion(file.getId(), file.getRevision());
-        citations.capture(file, score, type, snippet);
+        citations.capture(file, score, type, null);
         return "文件ID：" + file.getId() + "，版本：" + file.getRevision() + "，文件名：" + file.getFileName()
                 + "，类型：" + file.getFileType() + "，上传时间：" + file.getUploadTime()
-                + "，状态：" + file.getStatus() + "，标签：" + names + "，摘要：" + summary;
+                + "，状态：" + file.getStatus();
     }
 }

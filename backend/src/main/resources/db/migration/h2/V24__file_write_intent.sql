@@ -1,0 +1,25 @@
+CREATE TABLE file_write_intent (
+    id VARCHAR(36) PRIMARY KEY,
+    owner_id BIGINT NOT NULL,
+    task_id VARCHAR(64) NOT NULL,
+    kind VARCHAR(16) NOT NULL,
+    object_key VARCHAR(500) NOT NULL,
+    file_name TEXT NOT NULL,
+    file_type VARCHAR(50),
+    content_type VARCHAR(255),
+    declared_size BIGINT NOT NULL,
+    content_sha256 VARCHAR(64),
+    model_snapshot_id VARCHAR(36),
+    file_id BIGINT,
+    status VARCHAR(24) NOT NULL,
+    attempts INT NOT NULL,
+    lease_until TIMESTAMP,
+    next_attempt_at TIMESTAMP,
+    last_error_code VARCHAR(64),
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
+    CONSTRAINT uk_file_write_intent_task UNIQUE (owner_id, task_id),
+    CONSTRAINT uk_file_write_intent_key UNIQUE (owner_id, object_key),
+    CONSTRAINT fk_file_write_intent_owner FOREIGN KEY (owner_id) REFERENCES app_user(id)
+);
+CREATE INDEX idx_file_write_intent_due ON file_write_intent(owner_id,status,next_attempt_at);

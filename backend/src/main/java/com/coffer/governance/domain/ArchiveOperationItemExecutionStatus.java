@@ -9,6 +9,7 @@ public enum ArchiveOperationItemExecutionStatus {
     CLEANUP_PENDING,
     SUCCEEDED,
     FAILED,
+    MANUAL_REVIEW,
     CONFLICTED,
     SKIPPED
 }

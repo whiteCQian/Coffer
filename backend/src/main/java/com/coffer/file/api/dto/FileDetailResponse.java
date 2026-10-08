@@ -32,6 +32,10 @@ public class FileDetailResponse {
     /** 文件大小（字节）。 */
     private Long fileSize;
 
+    /** Current formal version and content identity for conflict-safe working-copy saves. */
+    private Long revision;
+    private String contentSha256;
+
     /** 上传时间。 */
     private LocalDateTime uploadTime;
 

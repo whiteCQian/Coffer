@@ -21,9 +21,14 @@ import com.coffer.file.application.FileService;
 import com.coffer.file.application.FileUploadApplicationService;
 import com.coffer.governance.domain.GovernanceRunMode;
 import com.coffer.model.runtime.ModelRuntimeModeService;
-import com.coffer.service.MinioStorageService;
+import com.coffer.file.storage.FileStoragePort;
+import com.coffer.file.storage.StorageConflictException;
+import com.coffer.file.storage.StorageObjectNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -39,6 +44,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.io.InputStream;
+import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -58,6 +64,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
@@ -76,7 +84,7 @@ class FileControllerTest extends com.coffer.auth.OwnerModelSubmissionTestSupport
 
     /** 上传链路外部依赖 Mock：MinIO 不真实上传，异步管道不真实执行。 */
     @MockitoBean
-    private MinioStorageService minioStorageService;
+    private FileStoragePort storage;
 
     @MockitoBean
     private FileUploadApplicationService fileUploadApplicationService;
@@ -179,9 +187,9 @@ class FileControllerTest extends com.coffer.auth.OwnerModelSubmissionTestSupport
                 .thenThrow(new IllegalArgumentException("非法排序参数: bogus"));
 
         mockMvc.perform(get("/api/files").param("sort", "bogus"))
-                .andExpect(status().isOk())
+                .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(400))
-                .andExpect(jsonPath("$.msg").value("非法排序参数: bogus"));
+                .andExpect(jsonPath("$.msg").value("请求参数不符合要求，请检查输入后重试"));
     }
 
     @Test
@@ -192,9 +200,9 @@ class FileControllerTest extends com.coffer.auth.OwnerModelSubmissionTestSupport
                 .thenThrow(new IllegalArgumentException("非法分类参数: NOPE"));
 
         mockMvc.perform(get("/api/files").param("category", "NOPE"))
-                .andExpect(status().isOk())
+                .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(400))
-                .andExpect(jsonPath("$.msg").value("非法分类参数: NOPE"));
+                .andExpect(jsonPath("$.msg").value("请求参数不符合要求，请检查输入后重试"));
     }
 
     @Test
@@ -234,9 +242,9 @@ class FileControllerTest extends com.coffer.auth.OwnerModelSubmissionTestSupport
                 .status(FileStatus.COMPLETED).build());
 
         mockMvc.perform(post("/api/files/" + completed.getId() + "/retry"))
-                .andExpect(status().isOk())
+                .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(400))
-                .andExpect(jsonPath("$.msg").value("仅失败文件可重试"));
+                .andExpect(jsonPath("$.msg").value("请求参数不符合要求，请检查输入后重试"));
 
         verify(asyncFileProcessor, never()).processFileAsync(anyString());
     }
@@ -247,7 +255,8 @@ class FileControllerTest extends com.coffer.auth.OwnerModelSubmissionTestSupport
         FileMetadata fm = fileMetadataRepository.save(FileMetadata.builder()
                 .fileName("待删合同.pdf").fileSize(12L).fileType("pdf")
                 .status(FileStatus.COMPLETED).taskId(taskId).summary("摘要")
-                .storagePath(ownerPath("archive/contracts/del-uuid.pdf")).build());
+                .storagePath(ownerPath("archive/contracts/del-uuid.pdf"))
+                .contentSha256("a".repeat(64)).build());
         asyncTaskRepository.save(AsyncTask.builder().taskId(taskId).fileName("待删合同.pdf")
                 .status(AsyncTaskStatus.COMPLETED).progress(100).result("摘要").build());
         Long tagId = tagRepository.save(Tag.builder().tagName("合同").build()).getId();
@@ -263,7 +272,7 @@ class FileControllerTest extends com.coffer.auth.OwnerModelSubmissionTestSupport
                 .filter(task -> task.getFileId().equals(fm.getId())).findFirst().orElseThrow();
         assertThat(cleanup.getObjectPath()).isEqualTo(ownerPath("archive/contracts/del-uuid.pdf"));
         assertThat(cleanup.getStatus()).isEqualTo(StorageDeletionStatus.PENDING);
-        verify(minioStorageService, never()).deleteFile(anyString(), anyString());
+        verify(storage, never()).delete(anyString(), anyString());
         assertThat(fileMetadataRepository.findById(fm.getId())).isEmpty();
         assertThat(asyncTaskRepository.findByTaskId(taskId)).isEmpty();
         assertThat(fileTagMappingRepository.findByFileId(fm.getId())).isEmpty();
@@ -276,14 +285,15 @@ class FileControllerTest extends com.coffer.auth.OwnerModelSubmissionTestSupport
                 .andExpect(jsonPath("$.code").value(404))
                 .andExpect(jsonPath("$.msg").value("资源不存在"));
 
-        verify(minioStorageService, never()).deleteFile(anyString(), anyString());
+        verify(storage, never()).delete(anyString(), anyString());
     }
 
     @Test
     void deleteRegistersDurableStorageCleanup() throws Exception {
         FileMetadata fm = fileMetadataRepository.save(FileMetadata.builder()
                 .fileName("孤儿源.pdf").fileSize(12L).fileType("pdf")
-                .status(FileStatus.FAILED).storagePath(ownerPath("files/orphan.pdf")).build());
+                .status(FileStatus.FAILED).storagePath(ownerPath("files/orphan.pdf"))
+                .contentSha256("b".repeat(64)).build());
         mockMvc.perform(delete("/api/files/" + fm.getId()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0));
@@ -294,7 +304,7 @@ class FileControllerTest extends com.coffer.auth.OwnerModelSubmissionTestSupport
             assertThat(task.getFileId()).isEqualTo(fm.getId());
             assertThat(task.getStatus()).isEqualTo(StorageDeletionStatus.PENDING);
         });
-        verify(minioStorageService, never()).deleteFile(anyString(), anyString());
+        verify(storage, never()).delete(anyString(), anyString());
     }
 
     @Test
@@ -302,7 +312,7 @@ class FileControllerTest extends com.coffer.auth.OwnerModelSubmissionTestSupport
         MockMultipartFile multipart = new MockMultipartFile(
                 "file", "需求报告.pdf", "application/pdf", "fake-content".getBytes(StandardCharsets.UTF_8));
 
-        when(fileUploadApplicationService.upload(any(FileUploadRequest.class)))
+        when(fileUploadApplicationService.upload(any(FileUploadRequest.class), anyString()))
                 .thenReturn(com.coffer.file.api.dto.FileUploadResponse.builder()
                         .taskId("task-1")
                         .fileName("需求报告.pdf")
@@ -310,26 +320,28 @@ class FileControllerTest extends com.coffer.auth.OwnerModelSubmissionTestSupport
                         .status("PENDING")
                         .build());
 
-        mockMvc.perform(multipart("/api/files/upload").file(multipart))
+        mockMvc.perform(multipart("/api/files/upload").file(multipart)
+                        .header("Idempotency-Key", "00000000-0000-0000-0000-000000000001"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0))
                 .andExpect(jsonPath("$.data.taskId").value("task-1"))
                 .andExpect(jsonPath("$.data.fileName").value("需求报告.pdf"))
                 .andExpect(jsonPath("$.data.fileSize").value(12))
                 .andExpect(jsonPath("$.data.status").value("PENDING"));
-        verify(fileUploadApplicationService).upload(any(FileUploadRequest.class));
+        verify(fileUploadApplicationService).upload(any(FileUploadRequest.class), anyString());
     }
 
     @Test
     void uploadFileMissingFileReturns400() throws Exception {
-        mockMvc.perform(multipart(HttpMethod.POST, "/api/files/upload"))
+        mockMvc.perform(multipart(HttpMethod.POST, "/api/files/upload")
+                        .header("Idempotency-Key", "00000000-0000-0000-0000-000000000002"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(400));
     }
 
     @Test
     void uploadFileOver50MibReturns400() throws Exception {
-        // 自定义 MultipartFile：getSize 超过 50MB 上限，避免真实分配 50MB 堆内存
+        // 自定义 MultipartFile：getSize 超过 32MB 上限，避免真实分配大块堆内存
         MockMultipartFile oversized = new MockMultipartFile(
                 "file", "big.bin", "application/octet-stream", new byte[0]) {
             @Override
@@ -338,7 +350,8 @@ class FileControllerTest extends com.coffer.auth.OwnerModelSubmissionTestSupport
             }
         };
 
-        mockMvc.perform(multipart("/api/files/upload").file(oversized))
+        mockMvc.perform(multipart("/api/files/upload").file(oversized)
+                        .header("Idempotency-Key", "00000000-0000-0000-0000-000000000003"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(400));
     }
@@ -361,9 +374,98 @@ class FileControllerTest extends com.coffer.auth.OwnerModelSubmissionTestSupport
                 .thenThrow(new IllegalArgumentException("文件不存在: 999"));
 
         mockMvc.perform(get("/api/files/999"))
-                .andExpect(status().isOk())
+                .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value(404))
-                .andExpect(jsonPath("$.msg").value("文件不存在: 999"));
+                .andExpect(jsonPath("$.msg").value("资源不存在或已不可用"));
+    }
+
+    @Test
+    void contentStreamsCurrentObjectSizeWithSafeHeadersAndDownloadMode() throws Exception {
+        String path = stubContentFile(6L, 6L);
+        when(storage.readIfUnchanged(eq(path), any()))
+                .thenReturn(new ByteArrayInputStream("ABCDEF".getBytes(StandardCharsets.UTF_8)));
+
+        mockMvc.perform(get("/api/files/6/content").param("download", "true"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Length", "6"))
+                .andExpect(header().string("Accept-Ranges", "bytes"))
+                .andExpect(header().string("Cache-Control", "private, no-store"))
+                .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+                .andExpect(header().string("Cross-Origin-Resource-Policy", "same-origin"))
+                .andExpect(header().string("Content-Disposition", org.hamcrest.Matchers.startsWith("attachment;")))
+                .andExpect(content().bytes("ABCDEF".getBytes(StandardCharsets.UTF_8)));
+        verify(storage).readIfUnchanged(eq(path), eq(contentObject(path)));
+    }
+
+    @ParameterizedTest
+    @CsvSource({"bytes=1-3, 1, 3, BCD", "bytes=4-, 4, 2, EF", "bytes=-2, 4, 2, EF",
+            "bytes=0-99, 0, 6, ABCDEF"})
+    void contentSupportsSingleByteRanges(String requested, long offset, long length, String expected) throws Exception {
+        String path = stubContentFile(7L, 6L);
+        when(storage.readRangeIfUnchanged(eq(path), any(), eq(offset), eq(length)))
+                .thenReturn(new ByteArrayInputStream(expected.getBytes(StandardCharsets.UTF_8)));
+
+        mockMvc.perform(get("/api/files/7/content").header("Range", requested))
+                .andExpect(status().isPartialContent())
+                .andExpect(header().string("Content-Range", "bytes " + offset + "-" + (offset + length - 1) + "/6"))
+                .andExpect(header().string("Content-Length", Long.toString(length)))
+                .andExpect(content().string(expected));
+        verify(storage).readRangeIfUnchanged(eq(path), eq(contentObject(path)), eq(offset), eq(length));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"bytes=6-7", "bytes=4-2", "bytes=-0", "bytes=1-2,4-5", "bytes=wat"})
+    void unsatisfiableOrUnsupportedRangeNeverOpensObject(String requested) throws Exception {
+        String path = stubContentFile(8L, 6L);
+        mockMvc.perform(get("/api/files/8/content").header("Range", requested))
+                .andExpect(status().isRequestedRangeNotSatisfiable())
+                .andExpect(header().string("Content-Range", "bytes */6"));
+        verify(storage, never()).readIfUnchanged(eq(path), any());
+        verify(storage, never()).readRangeIfUnchanged(eq(path), any(), anyLong(), anyLong());
+    }
+
+    @Test
+    void contentDoesNotReadWhenObjectWasDeleted() throws Exception {
+        String path = ownerPath("files/deleted.pdf");
+        when(fileService.requireFileForContent(9L)).thenReturn(FileMetadata.builder()
+                .fileName("deleted.pdf").fileType("pdf").storagePath(path).build());
+        when(storage.stat(path)).thenThrow(new StorageObjectNotFoundException());
+        mockMvc.perform(get("/api/files/9/content")).andExpect(status().isNotFound());
+        verify(storage, never()).readIfUnchanged(eq(path), any());
+    }
+
+    @Test
+    void contentRefusesAnObjectChangedAfterStat() throws Exception {
+        String path = stubContentFile(11L, 6L);
+        when(storage.readIfUnchanged(eq(path), any()))
+                .thenThrow(new StorageConflictException("对象在校验后已变化"));
+        mockMvc.perform(get("/api/files/11/content")).andExpect(status().isConflict());
+        verify(storage).readIfUnchanged(eq(path), eq(contentObject(path)));
+    }
+
+    @Test
+    void contentRefusesAStaleOrMissingRecordedFingerprint() throws Exception {
+        String path = stubContentFile(10L, 999L);
+        mockMvc.perform(get("/api/files/10/content")).andExpect(status().isConflict());
+        verify(storage, never()).readIfUnchanged(eq(path), any());
+
+        when(fileService.requireFileForContent(10L)).thenReturn(FileMetadata.builder()
+                .fileName("content-10.pdf").fileType("pdf").storagePath(path).fileSize(6L).build());
+        mockMvc.perform(get("/api/files/10/content")).andExpect(status().isConflict());
+        verify(storage, never()).readIfUnchanged(eq(path), any());
+    }
+
+    private String stubContentFile(Long fileId, Long staleMetadataSize) {
+        String path = ownerPath("files/content-" + fileId + ".pdf");
+        when(fileService.requireFileForContent(fileId)).thenReturn(FileMetadata.builder()
+                .fileName("content-" + fileId + ".pdf").fileType("pdf")
+                .storagePath(path).fileSize(staleMetadataSize).contentSha256("a".repeat(64)).build());
+        when(storage.stat(path)).thenReturn(contentObject(path));
+        return path;
+    }
+
+    private FileStoragePort.StoredObject contentObject(String path) {
+        return new FileStoragePort.StoredObject(path, 6L, "a".repeat(64), "etag-6");
     }
 
     @Test
@@ -393,7 +495,7 @@ class FileControllerTest extends com.coffer.auth.OwnerModelSubmissionTestSupport
                         .content("{\"fileName\":\"\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value(400))
-                .andExpect(jsonPath("$.msg").value("fileName: 文件名不能为空"));
+                .andExpect(jsonPath("$.msg").value("请求字段校验失败，请检查必填项、格式和长度"));
     }
 
     @Test

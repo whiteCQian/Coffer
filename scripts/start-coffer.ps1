@@ -44,7 +44,8 @@ function Import-LocalSettings {
         }
     }
     foreach ($name in @('MYSQL_PASSWORD','MYSQL_USERNAME','MINIO_ROOT_USER','MINIO_ROOT_PASSWORD',
-            'MINIO_ACCESS_KEY','MINIO_SECRET_KEY','COFFER_SECRET_KEY','COFFER_ADMIN_SETUP_TOKEN')) {
+            'MINIO_ACCESS_KEY','MINIO_SECRET_KEY','COFFER_SECRET_KEY','COFFER_SECRET_PREVIOUS_KEY','COFFER_ADMIN_SETUP_TOKEN',
+            'COFFER_STORAGE_VOLUME_PATH','COFFER_BACKUP_RECEIPT')) {
         if ([string]::IsNullOrWhiteSpace((Get-ProcessEnvironment $name))) {
             $value = [Environment]::GetEnvironmentVariable($name, 'User')
             if ([string]::IsNullOrWhiteSpace($value)) {
@@ -98,6 +99,28 @@ function Wait-Http([string]$Url, [int]$Seconds, [string]$Name, [scriptblock]$Che
         Start-Sleep -Milliseconds 750
     }
     throw "$Name did not become healthy. See logs for its log."
+}
+
+function Wait-BackendHealth {
+    $deadline = [DateTime]::UtcNow.AddSeconds(90)
+    $downSince = $null
+    while ([DateTime]::UtcNow -lt $deadline) {
+        try {
+            $response = Invoke-RestMethod -Uri 'http://127.0.0.1:8080/actuator/health' -TimeoutSec 3
+            if ($response.status -eq 'UP') { return }
+        } catch {
+            $status = $null
+            if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode }
+            if ($status -eq 503) {
+                if ($null -eq $downSince) { $downSince = [DateTime]::UtcNow }
+                if (([DateTime]::UtcNow - $downSince).TotalSeconds -ge 10) {
+                    throw 'Backend is running but readiness is DOWN. Check database, Redis, storage access/versioning and configured storage capacity. See logs\backend.out.log and the runtime status page for fixed failure codes and next actions.'
+                }
+            }
+        }
+        Start-Sleep -Milliseconds 750
+    }
+    throw 'Backend did not become healthy. Check logs\backend.out.log and logs\backend.err.log.'
 }
 
 function Get-JavaRuntime {
@@ -248,6 +271,9 @@ try {
         $minioArgs = 'server "{0}" --config-dir "{1}" --address "127.0.0.1:9000" --console-address "127.0.0.1:9001"' -f $minioData, $minioConfig
         Start-Process -FilePath $minioExe -ArgumentList $minioArgs -WorkingDirectory (Split-Path -Parent $minioExe) `
             -WindowStyle Hidden -RedirectStandardOutput $minioOut -RedirectStandardError $minioErr | Out-Null
+        if ([string]::IsNullOrWhiteSpace((Get-ProcessEnvironment 'COFFER_STORAGE_VOLUME_PATH'))) {
+            Set-ProcessEnvironment 'COFFER_STORAGE_VOLUME_PATH' $minioData
+        }
         Wait-TcpPort $minioPort 30 'MinIO'
         Write-Host 'MinIO is ready.'
     } else { Write-Host 'MinIO is already listening; reusing it.' }
@@ -268,7 +294,12 @@ try {
         $buildOut = Join-Path $logDir 'backend-build.out.log'
         $buildErr = Join-Path $logDir 'backend-build.err.log'
         $mavenRepo = Join-Path $env:USERPROFILE '.m2\repository'
-        $build = Start-Process -FilePath $maven -ArgumentList @("-Dmaven.repo.local=$mavenRepo", 'package', '-DskipTests') `
+        # Run the .cmd wrapper through cmd.exe. Windows PowerShell can surface JVM
+        # stderr warnings from a batch child as terminating NativeCommandError when
+        # ErrorActionPreference is Stop, even though Maven itself is healthy.
+        # All diagnostics are captured in the two build logs; only ExitCode decides success.
+        $buildCommand = '""{0}" "-Dmaven.repo.local={1}" -ntp -Dmaven.test.skip=true package"' -f $maven, $mavenRepo
+        $build = Start-Process -FilePath $env:ComSpec -ArgumentList @('/d', '/s', '/c', $buildCommand) `
             -WorkingDirectory $backendDir -WindowStyle Hidden -Wait -PassThru `
             -RedirectStandardOutput $buildOut -RedirectStandardError $buildErr
         $buildExit = $build.ExitCode
@@ -286,7 +317,7 @@ try {
         Add-ManagedProcess $state 'backend' $backend $javaExe
         Write-Host 'Starting the backend and waiting for its health check...'
     } else { Write-Host 'Port 8080 is already serving a listener; checking that it is Coffer.' }
-    Wait-Http 'http://127.0.0.1:8080/actuator/health' 90 'Backend' { param($r) $r.status -eq 'UP' } | Out-Null
+    Wait-BackendHealth
     Write-Host 'Backend health is UP.'
 
     try {
@@ -338,6 +369,7 @@ try {
     Write-Host 'Logs are in logs. Run stop-all.bat to stop only processes launched by this workspace.'
     if ($env:COFFER_OPEN_BROWSER -ne '0') { Start-Process 'http://localhost:5173/' | Out-Null }
 } catch {
-    Write-Error ("Startup failed at script line {0}: {1}" -f $_.InvocationInfo.ScriptLineNumber, $_.Exception.Message)
+    [Console]::Error.WriteLine(("Coffer startup failed (script line {0}): {1}" -f `
+        $_.InvocationInfo.ScriptLineNumber, $_.Exception.Message))
     exit 1
 }

@@ -20,7 +20,7 @@ import org.springframework.stereotype.Service;
 public class AsyncFileProcessor {
 
     private final UploadPipelineService uploadPipelineService;
-    private final com.coffer.task.infrastructure.persistence.AsyncTaskRepository tasks;
+    private final com.coffer.task.application.AsyncTaskLeaseService leases;
     @org.springframework.beans.factory.annotation.Autowired
     @org.springframework.beans.factory.annotation.Qualifier("taskExecutor")
     private java.util.concurrent.Executor executor;
@@ -31,14 +31,18 @@ public class AsyncFileProcessor {
      * @param taskId 异步任务 ID（FileMetadata.taskId）
      */
     public void processFileAsync(String taskId) {
-        var task = tasks.findByTaskId(taskId)
-                .orElseThrow(com.coffer.auth.service.ResourceNotFoundException::new);
-        Long ownerId = task.getOwnerId();
-        executor.execute(() -> com.coffer.auth.service.TenantContext.runAs(ownerId, () -> {
-            try { uploadPipelineService.processUploadPipeline(taskId); }
-            catch (Exception failure) {
-                log.warn("文件处理任务未执行，异常类型={}", failure.getClass().getSimpleName());
-            }
-        }));
+        Long ownerId = leases.claimPending(taskId);
+        if (ownerId == null) return;
+        try {
+            executor.execute(() -> com.coffer.auth.service.TenantContext.runAs(ownerId, () -> {
+                try { uploadPipelineService.processUploadPipeline(taskId); }
+                catch (Exception failure) {
+                    log.warn("文件处理任务未执行，异常类型={}", failure.getClass().getSimpleName());
+                }
+            }));
+        } catch (RuntimeException rejected) {
+            leases.failedToDispatch(taskId);
+            throw rejected;
+        }
     }
 }

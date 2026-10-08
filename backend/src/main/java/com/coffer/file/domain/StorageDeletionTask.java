@@ -42,6 +42,9 @@ public class StorageDeletionTask extends TenantOwnedEntity {
     @Column(name = "object_path", nullable = false, length = 500)
     private String objectPath;
 
+    @Column(name = "content_sha256", length = 64)
+    private String contentSha256;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private StorageDeletionStatus status = StorageDeletionStatus.PENDING;
@@ -51,6 +54,12 @@ public class StorageDeletionTask extends TenantOwnedEntity {
 
     @Column(name = "next_attempt_at")
     private LocalDateTime nextAttemptAt;
+
+    @Column(name = "retention_until")
+    private LocalDateTime retentionUntil;
+
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
 
     @Column(name = "last_error_code", length = 64)
     private String lastErrorCode;

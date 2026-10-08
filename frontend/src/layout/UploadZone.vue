@@ -8,6 +8,7 @@ import { uploadFile } from '@/api/files'
 const router = useRouter()
 const inputRef = ref<HTMLInputElement>()
 const uploading = ref(false)
+const lastUpload = ref<{ signature: string; requestId: string } | null>(null)
 
 function pickFile() {
   inputRef.value?.click()
@@ -21,8 +22,13 @@ async function onPicked(e: Event) {
   uploading.value = true
   const fd = new FormData()
   fd.append('file', file)
+  const signature = `${file.name}\0${file.size}\0${file.lastModified}`
+  if (lastUpload.value?.signature !== signature) {
+    lastUpload.value = { signature, requestId: crypto.randomUUID() }
+  }
   try {
-    await uploadFile(fd)
+    await uploadFile(fd, lastUpload.value.requestId)
+    lastUpload.value = null
     ElMessage.success(`「${file.name}」已上传，AI 开始解析…`)
     // 首页其余模块仍走 mock，跳「全部文件」页查看真实解析进度
     router.push({ name: 'files' })
@@ -50,7 +56,7 @@ async function onPicked(e: Event) {
           @change="onPicked"
         />
       </div>
-      <p class="uz-hint">单文件 ≤ 50MB，AI 自动分类、打标、摘要</p>
+      <p class="uz-hint">单文件 ≤ 32MB，AI 自动分类、打标、摘要</p>
     </div>
   </section>
 </template>

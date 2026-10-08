@@ -30,7 +30,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest(classes = PrivacyIntegrationTest.Config.class, properties = {
         "spring.datasource.url=jdbc:h2:mem:r15;DB_CLOSE_DELAY=-1", "spring.jpa.open-in-view=false", "spring.jpa.show-sql=false",
-        "spring.session.jdbc.initialize-schema=never"})
+        "spring.session.jdbc.initialize-schema=never", "coffer.privacy.export.max-files=1"})
 @org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
 class PrivacyIntegrationTest {
     @Configuration(proxyBeanMethods = false) @EnableAutoConfiguration @EnableAspectJAutoProxy @EntityScan("com.coffer")
@@ -62,11 +62,20 @@ class PrivacyIntegrationTest {
         a=users.save(new AppUser("a-"+suffix,"x",AuthRole.USER)); b=users.save(new AppUser("b-"+suffix,"x",AuthRole.USER));
         admin=users.save(new AppUser("admin-"+suffix,"x",AuthRole.ADMIN));
         sa=seed(a,"A_PRIVATE"); sb=seed(b,"B_SECRET");
-        when(storage.getFileStream(isNull(), anyString())).thenAnswer(i -> new ByteArrayInputStream(("BODY:"+i.getArgument(1)).getBytes(StandardCharsets.UTF_8)));
+        when(storage.readIfUnchanged(anyString(), any())).thenAnswer(i ->
+                new ByteArrayInputStream(("BODY:" + i.getArgument(0)).getBytes(StandardCharsets.UTF_8)));
+        when(storage.stat(anyString())).thenAnswer(i -> {
+            String path = i.getArgument(0);
+            byte[] body = ("BODY:" + path).getBytes(StandardCharsets.UTF_8);
+            return new com.coffer.file.storage.FileStoragePort.StoredObject(path, body.length, digest(body), "etag");
+        });
     }
     String seed(AppUser owner,String marker) {
         return TenantContext.supplyAs(owner.getId(), () -> {
-            files.saveAndFlush(FileMetadata.builder().fileName(marker).fileType("txt").fileSize(12L).storagePath("users/"+owner.getId()+"/files/"+marker).status(FileStatus.COMPLETED).build());
+            String path = "users/"+owner.getId()+"/files/"+marker;
+            byte[] body = ("BODY:" + path).getBytes(StandardCharsets.UTF_8);
+            files.saveAndFlush(FileMetadata.builder().fileName(marker).fileType("txt").fileSize((long)body.length)
+                    .storagePath(path).contentSha256(digest(body)).status(FileStatus.COMPLETED).build());
             String session=sessions.create();
             messages.saveAndFlush(ChatMessage.builder().sessionId(session).userMessage(marker).aiResponse("reply").timestamp(java.time.LocalDateTime.now()).build());
             return session;
@@ -90,6 +99,57 @@ class PrivacyIntegrationTest {
         assertThat(entries.values().toString()).contains("BODY:users/"+a.getId()).doesNotContain("BODY:users/"+b.getId());
         mvc.perform(get("/api/privacy/export").cookie(cookie(admin))).andExpect(status().isForbidden());
         mvc.perform(get("/api/privacy/export")).andExpect(status().isUnauthorized());
+    }
+    @Test void exportRejectsChangedObjectAndDoesNotOpenItsBody() throws Exception {
+        String path = "users/" + a.getId() + "/files/A_PRIVATE";
+        when(storage.stat(path)).thenReturn(new com.coffer.file.storage.FileStoragePort.StoredObject(
+                path, ("BODY:" + path).getBytes(StandardCharsets.UTF_8).length, "a".repeat(64), "etag"));
+        mvc.perform(get("/api/privacy/export").cookie(cookie(a))).andExpect(status().isConflict());
+        verify(storage, never()).readIfUnchanged(eq(path), any());
+    }
+    @Test void exportRejectsBytesChangedAfterTheInitialStat() throws Exception {
+        String path = "users/" + a.getId() + "/files/A_PRIVATE";
+        when(storage.readIfUnchanged(eq(path), any())).thenReturn(new ByteArrayInputStream(
+                "X".repeat(("BODY:" + path).getBytes(StandardCharsets.UTF_8).length)
+                        .getBytes(StandardCharsets.UTF_8)));
+
+        mvc.perform(get("/api/privacy/export").cookie(cookie(a))).andExpect(status().isConflict());
+        verify(storage).readIfUnchanged(eq(path), any());
+    }
+    @Test void exportRefusesMoreThanTheConfiguredFileLimit() throws Exception {
+        TenantContext.runAs(a.getId(), () -> {
+            String path = "users/" + a.getId() + "/files/second";
+            byte[] body = ("BODY:" + path).getBytes(StandardCharsets.UTF_8);
+            files.saveAndFlush(FileMetadata.builder().fileName("second").fileType("txt")
+                    .fileSize((long)body.length).storagePath(path).contentSha256(digest(body))
+                    .status(FileStatus.COMPLETED).build());
+        });
+        mvc.perform(get("/api/privacy/export").cookie(cookie(a))).andExpect(status().isBadRequest());
+        verify(storage, never()).readIfUnchanged(anyString(), any());
+    }
+    @Test void exportRefusesManifestPastItsByteLimit() throws Exception {
+        Object target = org.springframework.test.util.AopTestUtils.getUltimateTargetObject(privacy);
+        org.springframework.test.util.ReflectionTestUtils.setField(target, "maxExportBytes", 1L);
+        try {
+            mvc.perform(get("/api/privacy/export").cookie(cookie(a))).andExpect(status().isBadRequest());
+            verify(storage, never()).readIfUnchanged(anyString(), any());
+        } finally {
+            org.springframework.test.util.ReflectionTestUtils.setField(target, "maxExportBytes", 536870912L);
+        }
+    }
+    @Test void exportRefusesTooManyMetadataRows() throws Exception {
+        Object target = org.springframework.test.util.AopTestUtils.getUltimateTargetObject(privacy);
+        org.springframework.test.util.ReflectionTestUtils.setField(target, "maxExportRecords", 1);
+        try {
+            mvc.perform(get("/api/privacy/export").cookie(cookie(a))).andExpect(status().isBadRequest());
+            verify(storage, never()).readIfUnchanged(anyString(), any());
+        } finally {
+            org.springframework.test.util.ReflectionTestUtils.setField(target, "maxExportRecords", 50000);
+        }
+    }
+    private static String digest(byte[] value) {
+        try { return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(value)); }
+        catch (java.security.NoSuchAlgorithmException impossible) { throw new AssertionError(impossible); }
     }
     @Test void deletionImmediatelyInvalidatesSessionsAndRetriesOnlyTheirExactMemoryKeys() throws Exception {
         var csrf=new jakarta.servlet.http.Cookie("XSRF-TOKEN","token");
