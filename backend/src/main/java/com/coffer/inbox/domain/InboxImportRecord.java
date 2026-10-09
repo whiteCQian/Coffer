@@ -51,6 +51,8 @@ public class InboxImportRecord extends com.coffer.auth.domain.TenantOwnedEntity 
 
     @Column(name = "source_file_name", nullable = false, length = 255)
     private String sourceFileName;
+    @Column(name = "source_file_key", length = 512) private String sourceFileKey;
+    @Column(name = "target_path", length = 1024) private String targetPath;
 
     @Column(name = "source_size", nullable = false)
     private Long sourceSize;

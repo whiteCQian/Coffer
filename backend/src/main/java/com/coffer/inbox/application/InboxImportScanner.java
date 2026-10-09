@@ -59,9 +59,14 @@ public class InboxImportScanner {
     private final FileMetadataRepository fileMetadataRepository;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.coffer.model.runtime.ModelExecutionSnapshotService modelSnapshots;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private InboxDirectoryResolver directories;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.coffer.file.infrastructure.storage.PathGenerator paths;
 
     private final ReentrantLock scanLock = new ReentrantLock();
-    private final AtomicReference<LocalDateTime> lastScanAt = new AtomicReference<>();
+    private final java.util.concurrent.ConcurrentHashMap<Long, LocalDateTime> lastScanAt = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<Long, String> scanCursors = new java.util.concurrent.ConcurrentHashMap<>();
 
     /** Scheduler entry point. The feature is a no-op until explicitly enabled. */
     @com.coffer.auth.service.OwnerScheduled
@@ -72,7 +77,7 @@ public class InboxImportScanner {
 
     /** Runs one scan, primarily exposed for deterministic tests and diagnostics. */
     public ScanSummary scanOnce() {
-        if (modelSnapshots != null && com.coffer.model.runtime.ModelExecutionContext.current() == null) {
+        if (!requiresConfirmation() && modelSnapshots != null && com.coffer.model.runtime.ModelExecutionContext.current() == null) {
             String snapshotId = modelSnapshots.inboxSnapshotId();
             if (snapshotId == null) return ScanSummary.empty();
             return modelSnapshots.with(snapshotId, this::scanOnce);
@@ -87,7 +92,7 @@ public class InboxImportScanner {
         }
 
         LocalDateTime scanTime = LocalDateTime.now();
-        lastScanAt.set(scanTime);
+        lastScanAt.put(TenantContext.requireOwnerId(), scanTime);
         int discovered = 0;
         int stable = 0;
         int imported = 0;
@@ -100,14 +105,10 @@ public class InboxImportScanner {
                 return ScanSummary.empty();
             }
 
-            List<Path> candidates;
-            try (Stream<Path> paths = Files.list(directory)) {
-                candidates = paths
-                        .filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
-                        .sorted()
-                        .limit(Math.max(1, properties.getMaxFilesPerScan()))
-                        .toList();
-            }
+            long owner = TenantContext.requireOwnerId();
+            List<Path> candidates = candidatePage(directory, scanCursors.get(owner));
+            if (candidates.isEmpty() && scanCursors.containsKey(owner)) candidates = candidatePage(directory, null);
+            if (!candidates.isEmpty()) scanCursors.put(owner, candidates.get(candidates.size() - 1).getFileName().toString());
 
             for (Path candidate : candidates) {
                 try {
@@ -131,6 +132,22 @@ public class InboxImportScanner {
         return new ScanSummary(discovered, stable, imported, duplicate, failed, unsupported);
     }
 
+    /** Keeping originals in inbox must not starve files after the first full page. */
+    private List<Path> candidatePage(Path directory, String cursor) throws IOException {
+        var order = java.util.Comparator.comparing((Path path) -> path.getFileName().toString());
+        int limit = Math.max(1, properties.getMaxFilesPerScan());
+        var page = new java.util.PriorityQueue<Path>(limit, order.reversed());
+        try (var entries = Files.list(directory)) {
+            entries.filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
+                    .filter(path -> cursor == null || path.getFileName().toString().compareTo(cursor) > 0)
+                    .forEach(path -> {
+                        if (page.size() < limit) page.add(path);
+                        else if (order.compare(path, page.peek()) < 0) { page.poll(); page.add(path); }
+                    });
+        }
+        return page.stream().sorted(order).toList();
+    }
+
     /** Returns database-backed counts and recent rows for the UI progress panel. */
     public InboxImportProgressResponse getProgress() {
         int discovered = count(InboxImportStatus.DISCOVERED);
@@ -141,12 +158,21 @@ public class InboxImportScanner {
         int failed = count(InboxImportStatus.FAILED);
         int unsupported = count(InboxImportStatus.UNSUPPORTED);
         int manualReview = count(InboxImportStatus.MANUAL_REVIEW);
-        int total = discovered + stable + importing + imported + duplicate + failed + unsupported + manualReview;
+        int awaiting = count(InboxImportStatus.AWAITING_CONFIRMATION);
+        int total = discovered + stable + importing + imported + duplicate + failed + unsupported + manualReview + awaiting;
 
-        List<InboxImportItemResponse> items = recordRepository.findTop50ByOrderByUpdatedAtDesc().stream()
+        var visible = new java.util.LinkedHashMap<Long, InboxImportRecord>();
+        if (requiresConfirmation()) recordRepository.findTop50ByStatusOrderByUpdatedAtDesc(InboxImportStatus.AWAITING_CONFIRMATION)
+                .forEach(record -> visible.put(record.getId(), record));
+        for (var record : recordRepository.findTop50ByOrderByUpdatedAtDesc()) {
+            if (visible.size() >= 50) break;
+            visible.putIfAbsent(record.getId(), record);
+        }
+        List<InboxImportItemResponse> items = visible.values().stream()
                 .map(record -> InboxImportItemResponse.builder()
                         .id(record.getId())
                         .fileName(record.getSourceFileName())
+                        .targetPath(record.getTargetPath())
                         .status(record.getStatus())
                         .stableObservations(record.getStableObservations())
                         .attemptCount(record.getAttemptCount())
@@ -157,10 +183,12 @@ public class InboxImportScanner {
                 .toList();
 
         return InboxImportProgressResponse.builder()
+                .requiresPathConfirmation(requiresConfirmation())
+                .awaitingConfirmationCount(awaiting)
                 .awaitingModelConsent(modelSnapshots != null && modelSnapshots.inboxSnapshotId() == null)
                 .enabled(isOwnerScopedInboxEnabled())
                 .directory(resolveOwnerDirectory() == null ? "" : resolveOwnerDirectory().toString())
-                .lastScanAt(lastScanAt.get())
+                .lastScanAt(lastScanAt.get(TenantContext.requireOwnerId()))
                 .totalCount(total)
                 .discoveredCount(discovered)
                 .stableCount(stable)
@@ -175,6 +203,7 @@ public class InboxImportScanner {
     }
 
     private Path resolveOwnerDirectory() {
+        if (directories != null) return directories.resolve();
         String template = properties.getDirectory();
         if (!isOwnerScopedInboxEnabled()) {
             return null;
@@ -185,7 +214,7 @@ public class InboxImportScanner {
         } catch (IllegalStateException missingOwner) {
             return null;
         }
-        return Path.of(template.replace("{ownerId}", ownerId.toString())).toAbsolutePath().normalize();
+        return InboxDirectoryResolver.resolveTemplate(template);
     }
 
     private boolean isOwnerScopedInboxEnabled() {
@@ -194,17 +223,20 @@ public class InboxImportScanner {
                 && template.contains("{ownerId}");
     }
 
+    private boolean requiresConfirmation() { return directories != null && directories.requiresConfirmation(); }
+
     private ProcessResult processCandidate(Path candidate, LocalDateTime now) throws IOException {
         FileSnapshot snapshot = captureSnapshot(candidate);
         String extension = extensionOf(snapshot.fileName());
         InboxImportRecord record = observeSnapshot(snapshot, now);
 
-        if (!SUPPORTED_EXTENSIONS.contains(extension)) {
+        if (!SUPPORTED_EXTENSIONS.contains(extension) || snapshot.size() > com.coffer.file.application.parse.BoundedDocumentParser.MAX_BYTES) {
             if (record.getStatus() != InboxImportStatus.UNSUPPORTED) {
                 record.setStatus(InboxImportStatus.UNSUPPORTED);
                 record.setUpdatedAt(now);
                 record.setImportFinishedAt(now);
-                record.setLastError("不支持的文件类型: " + extension);
+                record.setLastError(snapshot.size() > com.coffer.file.application.parse.BoundedDocumentParser.MAX_BYTES
+                        ? "文件超过 32MB 处理上限" : "不支持的文件类型");
                 recordRepository.save(record);
             }
             return ProcessResult.unsupportedOnly();
@@ -215,6 +247,7 @@ public class InboxImportScanner {
         }
         if (record.getStatus() == InboxImportStatus.IMPORTED
                 || record.getStatus() == InboxImportStatus.DUPLICATE
+                || record.getStatus() == InboxImportStatus.AWAITING_CONFIRMATION
                 || record.getStatus() == InboxImportStatus.MANUAL_REVIEW) {
             return ProcessResult.terminal(record.getStatus());
         }
@@ -232,7 +265,7 @@ public class InboxImportScanner {
             return ProcessResult.failedOnly();
         }
 
-        String contentSha256 = sha256(candidate);
+        String contentSha256 = snapshot.sha256();
         verifySnapshot(candidate, snapshot);
         record.setContentSha256(contentSha256);
         record.setUpdatedAt(now);
@@ -248,6 +281,16 @@ public class InboxImportScanner {
             record.setUpdatedAt(now);
             recordRepository.save(record);
             return ProcessResult.duplicateOnly();
+        }
+
+        if (requiresConfirmation()) {
+            if (record.getTargetPath() == null)
+                record.setTargetPath(paths.generateStoragePath(snapshot.fileName(), extension));
+            record.setStatus(InboxImportStatus.AWAITING_CONFIRMATION);
+            record.setNextAttemptAt(null);
+            record.setLastError(null);
+            recordRepository.save(record);
+            return ProcessResult.empty();
         }
 
         int claimed = recordRepository.claimForImport(
@@ -301,6 +344,7 @@ public class InboxImportScanner {
                     .snapshotKey(snapshotKey)
                     .sourcePath(snapshot.fileName())
                     .sourceFileName(snapshot.fileName())
+                    .sourceFileKey(snapshot.fileKey())
                     .sourceSize(snapshot.size())
                     .sourceModifiedAt(toLocalDateTime(snapshot.modifiedMillis()))
                     .status(threshold <= 1 ? InboxImportStatus.STABLE : InboxImportStatus.DISCOVERED)
@@ -320,6 +364,7 @@ public class InboxImportScanner {
         record.setUpdatedAt(now);
         if (record.getStatus() == InboxImportStatus.IMPORTED
                 || record.getStatus() == InboxImportStatus.DUPLICATE
+                || record.getStatus() == InboxImportStatus.AWAITING_CONFIRMATION
                 || record.getStatus() == InboxImportStatus.UNSUPPORTED
                 || record.getStatus() == InboxImportStatus.MANUAL_REVIEW) {
             recordRepository.save(record);
@@ -348,42 +393,34 @@ public class InboxImportScanner {
 
     private FileSnapshot captureSnapshot(Path candidate) throws IOException {
         Path normalized = candidate.toAbsolutePath().normalize();
-        BasicFileAttributes attributes = Files.readAttributes(normalized,
-                BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-        if (!attributes.isRegularFile()) throw new IOException("收件箱条目不是普通文件");
+        if (directories != null) normalized = directories.requireSource(normalized);
+        com.coffer.file.storage.StorageKey.requireOwned("users/" + TenantContext.requireOwnerId() + "/inbox/" + normalized.getFileName());
+        BasicFileAttributes attributes = com.coffer.file.infrastructure.storage.SafeLocalPaths.file(normalized);
+        String digest = null;
+        if (SUPPORTED_EXTENSIONS.contains(extensionOf(normalized.getFileName().toString()))
+                && attributes.size() <= com.coffer.file.application.parse.BoundedDocumentParser.MAX_BYTES) {
+            try (var source = com.coffer.file.application.LocalImportSource.open(normalized, attributes.size(),
+                    attributes.lastModifiedTime().toMillis(), com.coffer.file.application.LocalImportSource.key(attributes))) {
+                digest = source.sha256();
+            }
+        }
         return new FileSnapshot(normalized.getFileName().toString(),
-                attributes.size(), attributes.lastModifiedTime().toMillis());
+                attributes.size(), attributes.lastModifiedTime().toMillis(),
+                com.coffer.file.application.LocalImportSource.key(attributes), digest);
     }
 
     private void verifySnapshot(Path candidate, FileSnapshot expected) throws IOException {
-        BasicFileAttributes attributes = Files.readAttributes(candidate,
-                BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        BasicFileAttributes attributes = com.coffer.file.infrastructure.storage.SafeLocalPaths.file(candidate);
         if (!attributes.isRegularFile() || attributes.size() != expected.size()
+                || !com.coffer.file.application.LocalImportSource.key(attributes).equals(expected.fileKey())
                 || attributes.lastModifiedTime().toMillis() != expected.modifiedMillis()) {
-            throw new IllegalStateException("文件在哈希期间发生变化: " + candidate);
-        }
-    }
-
-    private String sha256(Path path) throws IOException {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            try (InputStream inputStream = Files.newInputStream(path, LinkOption.NOFOLLOW_LINKS)) {
-                byte[] buffer = new byte[8192];
-                int read;
-                while ((read = inputStream.read(buffer)) >= 0) {
-                    if (read > 0) {
-                        digest.update(buffer, 0, read);
-                    }
-                }
-            }
-            return HexFormat.of().formatHex(digest.digest());
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("JDK 不支持 SHA-256", e);
+            throw new IllegalStateException("文件在哈希期间发生变化");
         }
     }
 
     private String snapshotKey(FileSnapshot snapshot) {
-        return sha256Text(snapshot.fileName() + "|" + snapshot.size() + "|" + snapshot.modifiedMillis());
+        return sha256Text(snapshot.fileName() + "|" + snapshot.size() + "|" + snapshot.modifiedMillis()
+                + "|" + snapshot.fileKey() + "|" + snapshot.sha256());
     }
 
     private String sha256Text(String value) {
@@ -402,10 +439,8 @@ public class InboxImportScanner {
     private int maxAttempts() { return Math.max(1, properties.getMaxAttempts()); }
 
     private boolean hasSymbolicAncestor(Path path) {
-        for (Path part = path; part != null; part = part.getParent()) {
-            if (Files.isSymbolicLink(part)) return true;
-        }
-        return false;
+        try { com.coffer.file.infrastructure.storage.SafeLocalPaths.directory(path); return false; }
+        catch (IOException | RuntimeException unsafe) { return true; }
     }
 
     /** Resume one exhausted snapshot after the owner has checked the source file. */
@@ -427,7 +462,7 @@ public class InboxImportScanner {
             throw new IllegalStateException("收件箱源文件不可用", error);
         }
         record.setAttemptCount(0);
-        record.setStatus(InboxImportStatus.STABLE);
+        record.setStatus(requiresConfirmation() ? InboxImportStatus.AWAITING_CONFIRMATION : InboxImportStatus.STABLE);
         record.setNextAttemptAt(null);
         record.setLastError(null);
         record.setUpdatedAt(LocalDateTime.now());
@@ -453,7 +488,38 @@ public class InboxImportScanner {
         return "文件导入失败，将自动重试";
     }
 
-    private record FileSnapshot(String fileName, long size, long modifiedMillis) {
+    private record FileSnapshot(String fileName, long size, long modifiedMillis, String fileKey, String sha256) {
+    }
+
+    /** The target is exactly the persisted preview. Claiming prevents concurrent duplicate copies. */
+    public void confirm(Long id, String target) {
+        if (!requiresConfirmation()) throw new IllegalStateException("此导入方式不支持路径确认");
+        var record = recordRepository.findById(id).orElseThrow(com.coffer.auth.service.ResourceNotFoundException::new);
+        if (target == null || !target.equals(record.getTargetPath())) throw new com.coffer.file.storage.StorageConflictException("目标路径与导入预览不一致");
+        com.coffer.file.storage.StorageKey.requireOwned(target);
+        if (!target.startsWith("users/" + TenantContext.requireOwnerId() + "/managed/"))
+            throw new SecurityException("导入目标不属于受控文件目录");
+        if (record.getStatus() == InboxImportStatus.IMPORTED) return;
+        if (record.getStatus() != InboxImportStatus.AWAITING_CONFIRMATION)
+            throw new com.coffer.file.storage.StorageConflictException("请等待新的导入预览或核对后重试");
+        Path source = directories.requireSource(resolveOwnerDirectory().resolve(record.getSourceFileName()));
+        int claimed = recordRepository.claimForImport(id, TenantContext.requireOwnerId(), InboxImportStatus.IMPORTING,
+                List.of(InboxImportStatus.AWAITING_CONFIRMATION), maxAttempts(), LocalDateTime.now());
+        if (claimed != 1) throw new com.coffer.file.storage.StorageConflictException("导入已被执行，请刷新进度");
+        try {
+            fileUploadApplicationService.importInboxFile(source, record.getSourceSize(),
+                    record.getSourceModifiedAt().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli(), id);
+        } catch (RuntimeException failed) {
+            var latest = recordRepository.findById(id).orElseThrow();
+            if (latest.getStatus() != InboxImportStatus.IMPORTED) {
+                latest.setStatus(InboxImportStatus.MANUAL_REVIEW);
+                latest.setNextAttemptAt(null);
+                latest.setLastError("导入未完成；原文件保留，请核对来源和目标后重试");
+                latest.setUpdatedAt(LocalDateTime.now());
+                recordRepository.save(latest);
+            }
+            throw failed;
+        }
     }
 
     private record ProcessResult(boolean discovered, boolean stable, boolean imported,

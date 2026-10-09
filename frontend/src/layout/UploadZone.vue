@@ -4,6 +4,8 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { uploadFile } from '@/api/files'
+import DesktopImportPanel from '@/components/DesktopImportPanel.vue'
+import { desktopBridge } from '@/api/desktop'
 
 const router = useRouter()
 const inputRef = ref<HTMLInputElement>()
@@ -41,7 +43,8 @@ async function onPicked(e: Event) {
 </script>
 
 <template>
-  <section class="upload-zone">
+  <DesktopImportPanel v-if="desktopBridge" @queued="router.push({ name: 'files' })" />
+  <section v-else class="upload-zone">
     <div class="uz-inner">
       <div class="uz-main">
         <p class="uz-title">拖拽文件到此处，或</p>

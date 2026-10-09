@@ -343,14 +343,48 @@ spring:
     activate:
       on-profile: desktop
   datasource:
-    url: "jdbc:h2:file:${COFFER_DESKTOP_USER_DATA_DIR}/coffer;AUTO_SERVER=TRUE;WRITE_DELAY=0"
+    # DesktopEnvironmentPostProcessor binds this to the validated user data directory.
+    url: "jdbc:h2:file:${coffer.desktop.data-directory}/database/coffer;IFEXISTS=TRUE;DB_CLOSE_ON_EXIT=FALSE;WRITE_DELAY=0"
     driver-class-name: org.h2.Driver
     username: sa
     password: ""
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 1
+      connection-timeout: 2000
+  flyway:
+    baseline-on-migrate: false
+    validate-on-migrate: true
+    clean-disabled: true
+    locations: classpath:db/migration/h2
+  h2:
+    console:
+      enabled: false
+  devtools:
+    restart:
+      enabled: false
+    livereload:
+      enabled: false
   jpa:
     show-sql: false
+    hibernate:
+      ddl-auto: validate
+
+server:
+  address: 127.0.0.1
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
 
 coffer:
+  auth:
+    cookie-secure: false
   storage:
     local:
-      root: "${COFFER_DESKTOP_USER_DATA_DIR}/library"
+      root: "${coffer.desktop.data-directory}/library"
+  import:
+    inbox:
+      enabled: ${COFFER_INBOX_ENABLED:true}

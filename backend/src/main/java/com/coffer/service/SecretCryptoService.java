@@ -37,7 +37,7 @@ public class SecretCryptoService {
     }
 
     @PostConstruct
-    void initialize() {
+    public void initialize() {
         String masterKey = configuredMasterKey;
         if (masterKey == null || masterKey.isBlank()) {
             if (environment.matchesProfiles("prod", "desktop")) {

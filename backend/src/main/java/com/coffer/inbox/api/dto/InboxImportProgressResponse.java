@@ -15,6 +15,8 @@ import java.util.List;
 @AllArgsConstructor
 public class InboxImportProgressResponse {
     private boolean awaitingModelConsent;
+    private boolean requiresPathConfirmation;
+    private int awaitingConfirmationCount;
 
     private boolean enabled;
     private String directory;

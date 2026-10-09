@@ -31,6 +31,11 @@ public class WorkSaveApplicationService {
 
     public Result save(Long fileId, long expectedRevision, String expectedSha256,
                        String idempotencyKey, MultipartFile edited) {
+        return save(fileId, expectedRevision, expectedSha256, idempotencyKey, edited, null);
+    }
+
+    public Result save(Long fileId, long expectedRevision, String expectedSha256,
+                       String idempotencyKey, MultipartFile edited, FileStoragePort.LocalIdentity expectedLocal) {
         if (edited == null || edited.getSize() < 0 || edited.getSize() >
                 com.coffer.file.application.parse.BoundedDocumentParser.MAX_BYTES)
             throw new IllegalArgumentException("工作副本超过 32MB 上限");
@@ -67,12 +72,15 @@ public class WorkSaveApplicationService {
         var before = storage.stat(formal.getStoragePath());
         if (!expectedSha256.equals(before.sha256()) || !Objects.equals(formal.getFileSize(), before.size()))
             throw new StorageConflictException("正式文件正文已变化");
+        if (expectedLocal != null && !expectedLocal.equals(storage.localIdentity(formal.getStoragePath())))
+            throw new StorageConflictException("正式文件大小、修改时间或文件身份已变化");
         String taskId = UUID.randomUUID().toString();
         String targetKey = paths.generateStoragePath(formal.getFileName(), formal.getFileType());
         intents.prepare(operationId, formal, expectedRevision, expectedSha256, targetKey,
                 edited.getSize(), requestSha256, taskId, model.id(), model.mode());
+        if (!intents.verifyLocalBaseline(operationId, expectedLocal)) throw new StorageConflictException("正式文件身份已变化");
         try (InputStream input = edited.getInputStream()) {
-            var object = storage.write(targetKey, input, edited.getContentType(), edited.getSize());
+            var object = storage.writeVerified(targetKey, input, edited.getContentType(), edited.getSize(), requestSha256);
             intents.objectWritten(operationId, object);
             if (!intents.commit(operationId)) throw new StorageConflictException("正式文件已变化，工作副本保留待恢复");
             return new Result(operationId, fileId, expectedRevision + 1, taskId);

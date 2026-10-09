@@ -54,7 +54,11 @@ public final class FileCrashProbeMain {
         try (var context = new SpringApplicationBuilder(CofferApplication.class)
                 .profiles("desktop")
                 .properties("spring.main.banner-mode=off")
-                .run("--server.port=0", "--spring.h2.console.enabled=false")) {
+                .run("--server.port=0", "--spring.profiles.active=desktop",
+                        "--spring.data.redis.host=127.0.0.1", "--spring.data.redis.port=1",
+                        "--spring.data.redis.connect-timeout=100ms", "--spring.data.redis.timeout=100ms",
+                        "--minio.endpoint=http://127.0.0.1:1", "--coffer.import.inbox.enabled=false", "--coffer.embedding.enabled=false",
+                        "--coffer.desktop.initialize=" + "crash".equals(args[0]))) {
             AppUserRepository users = context.getBean(AppUserRepository.class);
             Long owner = "crash".equals(args[0])
                     ? users.saveAndFlush(new AppUser(USERNAME, "disabled-test-login", AuthRole.USER)).getId()

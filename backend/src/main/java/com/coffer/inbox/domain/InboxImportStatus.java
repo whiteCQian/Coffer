@@ -9,6 +9,9 @@ public enum InboxImportStatus {
     /** The file is stable and waiting to be claimed for import. */
     STABLE,
 
+    /** Desktop imports are copied only after the owner confirms the fixed target path. */
+    AWAITING_CONFIRMATION,
+
     /** The snapshot has been claimed and is being copied into object storage. */
     IMPORTING,
 

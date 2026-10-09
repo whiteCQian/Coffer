@@ -28,4 +28,12 @@ public class InboxImportController {
         inboxImportScanner.retry(id);
         return Result.success();
     }
+
+    @PostMapping("/{id}/confirm")
+    @com.coffer.model.runtime.ModelSubmission("INBOX_IMPORT")
+    public Result<Void> confirm(@PathVariable Long id, @jakarta.validation.Valid @org.springframework.web.bind.annotation.RequestBody ConfirmImport request) {
+        inboxImportScanner.confirm(id, request.targetPath());
+        return Result.success();
+    }
+    public record ConfirmImport(@jakarta.validation.constraints.NotBlank String targetPath) { }
 }

@@ -24,6 +24,7 @@ public interface InboxImportRecordRepository extends com.coffer.auth.infrastruct
             String contentSha256, Collection<InboxImportStatus> statuses);
 
     List<InboxImportRecord> findTop50ByOrderByUpdatedAtDesc();
+    List<InboxImportRecord> findTop50ByStatusOrderByUpdatedAtDesc(InboxImportStatus status);
 
     long countByStatus(InboxImportStatus status);
 

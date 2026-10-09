@@ -20,7 +20,7 @@ import java.util.zip.*;
 public class PrivacyService {
     private static final List<String> EXPORT_TABLES = List.of("file_metadata", "tag", "file_tag_mapping",
             "chat_session", "chat_message", "async_task", "governance_preview_batch",
-            "governance_preview_item", "archive_operation_batch", "archive_operation_item");
+            "governance_preview_item", "archive_operation_batch", "archive_operation_item", "desktop_work_copy", "work_save_intent");
     private final OwnerAuthorization authorization;
     private final ChatSessionRepository sessions;
     private final ChatMessageRepository messages;

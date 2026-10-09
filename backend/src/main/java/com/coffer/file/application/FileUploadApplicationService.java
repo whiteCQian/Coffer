@@ -49,6 +49,8 @@ public class FileUploadApplicationService {
     private com.coffer.inbox.infrastructure.persistence.InboxImportRecordRepository inboxRecords;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.coffer.file.infrastructure.persistence.FileMetadataRepository fileMetadataRepository;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.coffer.inbox.application.InboxDirectoryResolver inboxDirectory;
 
     /** Uploads the object, registers DB metadata, and publishes a post-commit event. */
     @Transactional
@@ -129,16 +131,26 @@ public class FileUploadApplicationService {
             throw new IllegalArgumentException("收件箱文件路径不能为空");
         }
         String fileName = FilenameEncodingFixer.fix(sourcePath.getFileName().toString());
-        try {
-            verifyStableSnapshot(sourcePath, expectedSize, expectedModifiedMillis);
+        if (inboxDirectory != null) sourcePath = inboxDirectory.requireSource(sourcePath);
+        com.coffer.inbox.domain.InboxImportRecord preview = inboxRecordId == null ? null : inboxRecords.findById(inboxRecordId)
+                .orElseThrow(com.coffer.auth.service.ResourceNotFoundException::new);
+        if (preview != null && (!preview.getSourceFileName().equals(fileName) || !preview.getSourceSize().equals(expectedSize)
+                || preview.getStatus() != com.coffer.inbox.domain.InboxImportStatus.IMPORTING))
+            throw new StorageConflictException("收件箱确认快照不一致");
+        try (LocalImportSource source = LocalImportSource.open(sourcePath, expectedSize, expectedModifiedMillis,
+                preview == null ? null : preview.getSourceFileKey())) {
+            String digest = source.sha256();
+            if (preview != null && !java.util.Objects.equals(preview.getContentSha256(), digest))
+                throw new StorageConflictException("收件箱正文已变化，请重新扫描预览");
             String contentType = Files.probeContentType(sourcePath);
             if (contentType == null || contentType.isBlank()) {
                 contentType = "application/octet-stream";
             }
-            try (InputStream inputStream = Files.newInputStream(sourcePath, LinkOption.NOFOLLOW_LINKS)) {
+            {
                 String finalContentType = contentType;
-                FileUploadResponse response = uploadStream("IMPORT", fileName, finalContentType, expectedSize, inputStream,
-                        () -> verifyStableSnapshotUnchecked(sourcePath, expectedSize, expectedModifiedMillis), null, null);
+                FileUploadResponse response = uploadStream("IMPORT", fileName, finalContentType, expectedSize, source.stream(),
+                        () -> { try { source.verify(); } catch (IOException error) { throw new UncheckedIOException("来源校验失败", error); } },
+                        null, digest, preview == null ? null : preview.getTargetPath());
                 if (inboxRecordId != null) {
                     if (inboxRecords == null) throw new IllegalStateException("收件箱台账不可用");
                     var record = inboxRecords.findById(inboxRecordId)
@@ -164,7 +176,7 @@ public class FileUploadApplicationService {
             }
         } catch (IOException e) {
             log.warn("读取收件箱文件失败，类型={}", e.getClass().getSimpleName());
-            throw new RuntimeException("收件箱文件读取失败: " + fileName, e);
+            throw new RuntimeException("收件箱文件读取失败，请检查占用和权限", e);
         }
     }
 
@@ -176,28 +188,36 @@ public class FileUploadApplicationService {
                                             Runnable afterUploadCheck,
                                             String requestedOperationId,
                                             String expectedSha256) {
+        return uploadStream(kind, fileName, contentType, fileSize, inputStream, afterUploadCheck,
+                requestedOperationId, expectedSha256, null);
+    }
+
+    private FileUploadResponse uploadStream(String kind, String fileName, String contentType, long fileSize,
+                                            InputStream inputStream, Runnable afterUploadCheck, String requestedOperationId,
+                                            String expectedSha256, String confirmedTarget) {
         if (fileSize < 0 || fileSize > com.coffer.file.application.parse.BoundedDocumentParser.MAX_BYTES) {
             throw new IllegalArgumentException("文件超过 32MB 处理上限");
         }
         String fileType = fileTypeResolver.resolve(fileName);
-        String storagePath = pathGenerator.generateStoragePath(fileName, fileType);
+        String storagePath = confirmedTarget == null ? pathGenerator.generateStoragePath(fileName, fileType)
+                : com.coffer.file.storage.StorageKey.requireOwned(confirmedTarget);
         String taskId = UUID.randomUUID().toString();
         String operationId = requestedOperationId == null ? UUID.randomUUID().toString() : requestedOperationId;
         writeIntents.begin(operationId, taskId, kind, storagePath, fileName, fileType,
                 contentType, fileSize, com.coffer.model.runtime.ModelExecutionContext.currentId());
         try {
-            FileStoragePort.StoredObject stored = storage.write(storagePath, inputStream, contentType, fileSize);
+            FileStoragePort.StoredObject stored = "IMPORT".equals(kind)
+                    ? storage.writeVerified(storagePath, inputStream, contentType, fileSize, expectedSha256)
+                    : storage.write(storagePath, inputStream, contentType, fileSize);
             if (stored.size() != fileSize) throw new IllegalStateException("文件大小在写入期间发生变化");
             if (expectedSha256 != null && !expectedSha256.equals(stored.sha256()))
                 throw new StorageConflictException("文件在上传期间发生变化");
             writeIntents.objectWritten(operationId, stored);
+            if (afterUploadCheck != null) afterUploadCheck.run();
 
             FileMetadata metadata = uploadPipelineService.registerUploadTask(
                     taskId, fileName, fileType, storagePath, fileSize, stored.sha256());
             applicationEventPublisher.publishEvent(new FileUploadedEvent(taskId));
-            if (afterUploadCheck != null) {
-                afterUploadCheck.run();
-            }
             TransactionSynchronization completion = new TransactionSynchronization() {
                 @Override public void afterCommit() {
                     try { writeIntents.registered(operationId); }

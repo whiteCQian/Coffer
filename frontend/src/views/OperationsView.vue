@@ -13,6 +13,7 @@ import type {
   GovernanceCompensationTaskResponse,
 } from '@/api/types'
 import { toDisplayTime } from '@/utils/format'
+import WorkCopyPanel from '@/components/WorkCopyPanel.vue'
 
 type BatchStatus = 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'PARTIAL_FAILED' | 'FAILED' | 'CANCELLED'
 type ItemStatus = 'PENDING' | 'VALIDATING' | 'COPYING' | 'DB_COMMITTING' | 'CLEANUP_PENDING' | 'SUCCEEDED' | 'FAILED' | 'MANUAL_REVIEW' | 'CONFLICTED' | 'SKIPPED'
@@ -480,6 +481,7 @@ onMounted(() => { load(); loadFileOperations() })
       </div>
     </section>
 
+    <WorkCopyPanel @saved="loadFileOperations()" />
     <section class="pg-panel filter-panel">
       <div class="filter-grid">
         <label class="field">

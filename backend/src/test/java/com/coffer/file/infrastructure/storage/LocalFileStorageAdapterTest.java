@@ -44,6 +44,23 @@ class LocalFileStorageAdapterTest {
                 .isInstanceOf(IllegalStateException.class);
     }
 
+    @Test void inboxAndWorkFilesAreExcludedFromPublishedInventoryAndStageCleanup() throws IOException {
+        Path owner = Files.createDirectories(temporary.resolve("users/7"));
+        var kept = new java.util.ArrayList<Path>();
+        for (String area : java.util.List.of("inbox", "work", "quarantine", "lost-found")) {
+            Path directory = Files.createDirectory(owner.resolve(area));
+            Path source = Files.writeString(directory.resolve(".coffer-stage-source.tmp"), "keep-original");
+            Files.setLastModifiedTime(source, java.nio.file.attribute.FileTime.from(java.time.Instant.now().minus(java.time.Duration.ofHours(25))));
+            kept.add(source);
+        }
+        Files.writeString(owner.resolve(".coffer-owner.json"), "owner-marker");
+        byte[] body = "published".getBytes(StandardCharsets.UTF_8);
+        storage.write(FIRST, new ByteArrayInputStream(body), "text/plain", body.length);
+        assertThat(storage.listOwnedKeys()).containsExactly(FIRST);
+        storage.cleanupStaleStages();
+        for (Path file : kept) assertThat(Files.readString(file)).isEqualTo("keep-original");
+    }
+
     @Test void writePublishesExactBytesAndNeverOverwrites() throws IOException {
         byte[] body = "私人正文 🗂".getBytes(StandardCharsets.UTF_8);
         FileStoragePort.StoredObject written = storage.write(FIRST, new ByteArrayInputStream(body), "text/plain", body.length);

@@ -1,0 +1,11 @@
+{
+  "distribution": "Eclipse Temurin",
+  "javaMajor": 21,
+  "version": "21.0.12+101.0.LTS",
+  "platform": "windows-x64",
+  "url": "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jre_x64_windows_hotspot_21.0.12.1_1.zip",
+  "sha256": "d35f31e712f0fcf6ac5a093edc90204fbff22f720ba3950bd09d331d5e621636",
+  "size": 48999141,
+  "source": "https://adoptium.net/temurin/releases/",
+  "license": "GPL-2.0-with-classpath-exception; bundled legal/ directory"
+}

@@ -31,6 +31,9 @@ public class OwnerAuthorizationAspect {
     }
 
     private void checkOwnedArgument(Object argument, Long owner) {
+        // Path is an Iterable<Path> whose one-segment values iterate over themselves;
+        // it is a scalar source location, validated by the controlled-inbox boundary.
+        if (argument instanceof java.nio.file.Path) return;
         if (argument instanceof com.coffer.auth.domain.TenantOwnedEntity entity
                 && !owner.equals(entity.getOwnerId())) throw new ResourceNotFoundException();
         if (argument instanceof Iterable<?> values) values.forEach(value -> checkOwnedArgument(value, owner));

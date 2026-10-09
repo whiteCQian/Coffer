@@ -94,12 +94,12 @@ class GovernanceCompensationTest extends com.coffer.auth.OwnerTestSupport {
         item.setExecutionStatus(ArchiveOperationItemExecutionStatus.COPYING);
         item.setExecutionStep(ArchiveOperationItemExecutionStep.SOURCE_VERIFIED);
         itemRepository.saveAndFlush(item);
+        stubArchiveObjects();
         recoveryCoordinator.recover();
         recoveryCoordinator.recover();
         assertThat(compensationRepository.findAll()).hasSize(1);
         assertThat(compensationRepository.findAll().get(0).getAction())
                 .isEqualTo(GovernanceCompensationAction.RESUME_ARCHIVE);
-        stubArchiveObjects();
         processor.process(compensationRepository.findAll().get(0).getId());
         assertThat(itemRepository.findById(item.getId()).orElseThrow().getExecutionStatus())
                 .isEqualTo(ArchiveOperationItemExecutionStatus.SUCCEEDED);

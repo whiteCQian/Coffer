@@ -27,5 +27,5 @@ export async function confirmModelTarget(inbox = false) {
 
 export function needsModelConsent(method: string | undefined, url: string | undefined) {
   if (method?.toLowerCase() !== 'post') return false
-  return /^\/(model-execution\/inbox|chat\/send|files\/upload|files\/tags\/suggest|files\/\d+\/(?:retry|model-approval|work-save)|vector\/reindex|governance\/previews(?:\/reanalyze(?:\/\d+)?|\/[^/]+\/regenerate)?)$/.test(url ?? '')
+  return /^\/(model-execution\/inbox|inbox-imports\/\d+\/confirm|desktop\/work-copies\/[0-9a-f-]+\/save|chat\/send|files\/upload|files\/tags\/suggest|files\/\d+\/(?:retry|model-approval|work-save)|vector\/reindex|governance\/previews(?:\/reanalyze(?:\/\d+)?|\/[^/]+\/regenerate)?)$/.test(url ?? '')
 }

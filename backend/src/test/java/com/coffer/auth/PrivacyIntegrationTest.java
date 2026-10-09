@@ -36,7 +36,7 @@ class PrivacyIntegrationTest {
     @Configuration(proxyBeanMethods = false) @EnableAutoConfiguration @EnableAspectJAutoProxy @EntityScan("com.coffer")
     @Import({HibernateTenantConfig.class, CurrentTenantResolver.class, OwnerAuthorization.class, OwnerAuthorizationAspect.class,
             PrivateRequestGateAspect.class, SecurityConfig.class, AppUserDetailsService.class,
-            PrivacyController.class, PrivacyService.class, MemoryDeletionWorker.class, ChatSessionService.class,
+            PrivacyController.class, PrivacyService.class, MemoryDeletionWorker.class, RedisMemoryCleanup.class, ChatSessionService.class,
             com.coffer.auth.api.AuthExceptionAdvice.class, com.coffer.exception.GlobalExceptionHandler.class})
     static class Config {
         @Bean StringRedisTemplate redis() { return mock(StringRedisTemplate.class); }

@@ -23,6 +23,7 @@ public class GovernanceRecoveryCoordinator {
     private final ArchiveRollbackPersistenceService rollbackPersistence;
     private final TenantJobRunner tenantJobRunner;
     private final com.coffer.config.GovernanceArchiveProperties archiveProperties;
+    private final GovernanceCompensationProcessor processor;
 
     @EventListener(ApplicationReadyEvent.class)
     public void recover() {
@@ -33,6 +34,8 @@ public class GovernanceRecoveryCoordinator {
         registry.recoverInterruptedTasks();
         recoverArchiveItems();
         recoverRollbackItems();
+        // Run one bounded owner-scoped recovery batch immediately, then retain scheduled retries.
+        processor.processDue();
     }
 
     private void recoverArchiveItems() {

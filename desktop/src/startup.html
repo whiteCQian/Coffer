@@ -1,0 +1,8 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Coffer 启动</title><link rel="stylesheet" href="/__desktop/startup.css"></head><body>
+<main><div class="mark">智</div><h1>Coffer 本地文件库</h1><p id="status" role="status">正在检查安装资源…</p><p id="message"></p>
+<dl><dt>用户数据目录</dt><dd id="data"></dd><dt>文件库目录</dt><dd id="library"></dd><dt>应用版本</dt><dd id="version"></dd></dl>
+<p>程序安装、升级和卸载不会清除数据。已有目录或密钥缺失时不会创建替代空库。</p>
+<div class="actions"><button id="initialize">初始化空目录</button><button id="open">打开已有数据 / 重启</button><button id="upgrade">备份后升级数据库</button><button id="choose">选择用户数据目录</button><button id="choose-library">选择文件库目录</button></div>
+<section class="recovery"><h2>加密备份恢复 / 升级</h2><p>恢复只写入空的新目录，校验原密钥、账号、正文摘要和台账后才提交。独立介质备份在管理员控制台创建。</p><label>备份口令（至少 12 个字符）<input id="backup-password" type="password" autocomplete="off" minlength="12"></label><div class="actions"><button id="choose-restore">选择备份包与空恢复目录</button><button id="restore">验证并恢复整套数据</button></div><p id="restore-choice"></p><p id="maintenance-result" role="status"></p></section>
+<p id="error" role="alert"></p><small>首次初始化后，在应用中创建管理员，再由管理员创建业务账号。原生导入与工作副本仅向已登录的业务账号开放。</small></main>
+<script src="/__desktop/startup.js"></script></body></html>

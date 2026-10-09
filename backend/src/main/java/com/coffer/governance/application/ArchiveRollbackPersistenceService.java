@@ -139,7 +139,14 @@ public class ArchiveRollbackPersistenceService {
 
     @Transactional
     public void markSucceeded(Long itemId) {
-        ArchiveOperationItem item = lockItem(itemId);
+        verifyRestoredFacts(itemId);
+        setStatus(itemId, ArchiveOperationItemRollbackStatus.SUCCEEDED, null, null, true);
+    }
+
+    @Transactional(readOnly = true)
+    public void verifyRestoredFacts(Long itemId) {
+        ArchiveOperationItem item = itemRepository.findById(itemId)
+                .orElseThrow(com.coffer.auth.service.ResourceNotFoundException::new);
         ArchiveFormalSnapshot before = snapshotService.requireSource(item);
         FileMetadata file = fileMetadataRepository.findById(item.getFileId())
                 .orElseThrow(() -> new ArchiveRollbackNotReversibleException("正式文件已删除"));
@@ -147,7 +154,6 @@ public class ArchiveRollbackPersistenceService {
                 || !Objects.equals(file.getContentSha256(), before.sha256())) {
             throw new ArchiveRollbackConflictException("撤销后的正式状态与原快照不一致");
         }
-        setStatus(itemId, ArchiveOperationItemRollbackStatus.SUCCEEDED, null, null, true);
     }
 
     @Transactional

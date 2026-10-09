@@ -5,6 +5,9 @@ import java.util.List;
 
 /** The owner-scoped object store used by file workflows on every deployment. */
 public interface FileStoragePort {
+    /** Local filesystem identity; remote stores keep their existing object identity checks. */
+    record LocalIdentity(long size, String modifiedTime, String fileKey) { }
+    default LocalIdentity localIdentity(String key) { return null; }
     record StoredObject(String key, long size, String sha256, String etag, String versionId) {
         public StoredObject(String key, long size, String sha256, String etag) {
             this(key, size, sha256, etag, null);
@@ -13,6 +16,14 @@ public interface FileStoragePort {
 
     /** Publish a new object. An existing destination is always a conflict. */
     StoredObject write(String key, InputStream source, String contentType, long size);
+
+    /** Publish exactly the source confirmed in an import preview; local adapters check before publication. */
+    default StoredObject writeVerified(String key, InputStream source, String contentType, long size, String sha256) {
+        StoredObject object = write(key, source, contentType, size);
+        if (!java.util.Objects.equals(sha256, object.sha256()) || size != object.size())
+            throw new StorageConflictException("导入来源与确认的正文不一致");
+        return object;
+    }
 
     InputStream read(String key);
 

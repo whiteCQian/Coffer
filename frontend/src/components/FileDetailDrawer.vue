@@ -7,6 +7,7 @@ import * as governanceApi from '@/api/governance'
 import { confirmTag, rejectTag } from '@/api/fileTags'
 import type { ChatCitation, FileDetailResponse, FileStatus } from '@/api/types'
 import FileTile from '@/components/FileTile.vue'
+import WorkCopyPanel from '@/components/WorkCopyPanel.vue'
 import { formatBytes, shortTime, toDisplayTime } from '@/utils/format'
 
 /**
@@ -306,6 +307,7 @@ watch(
 
       <!-- 预览区 -->
       <div class="drawer-body">
+        <WorkCopyPanel :file-id="file.id" @saved="emit('changed', file.id); loadDetail(file.id)" />
         <div class="preview" :class="{ 'is-image': isImage }">
           <template v-if="isImage">
             <img v-if="file.previewUrl" :src="file.previewUrl" class="preview-photo" alt="文件预览" />

@@ -44,8 +44,12 @@ docs/archive/legacy/*.docx
 coffer-initial-admin-token.txt
 .coffer-encryption-key
 .coffer-runtime/
+*.cofferbackup
+*.coffer-upgrade.json
 
 # Local E2E input documents are not part of the repository.
 /backend/e2e-sample/
 /.test-tmp/
 /frontend/.test-tmp/
+/desktop/.build/
+/desktop/.test-tmp/

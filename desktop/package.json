@@ -1,0 +1,34 @@
+{
+  "name": "coffer-desktop",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Coffer Windows desktop launcher",
+  "author": "Coffer",
+  "main": "src/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.cjs",
+    "package": "electron-builder --win nsis --x64 --publish never",
+    "package:dir": "electron-builder --win --x64 --dir --publish never"
+  },
+  "devDependencies": { "electron": "44.7.0", "electron-builder": "26.15.3" },
+  "build": {
+    "appId": "com.coffer.desktop",
+    "productName": "Coffer",
+    "artifactName": "Coffer-${version}-windows-${arch}-setup.${ext}",
+    "asar": true,
+    "files": ["src/**/*", "package.json"],
+    "directories": { "output": "dist", "buildResources": "build" },
+    "extraResources": [{"from":".build/resources", "to":"coffer"}],
+    "win": {"target":["nsis"], "requestedExecutionLevel":"asInvoker", "signAndEditExecutable":true, "signExecutable":false, "icon":"build/icon.ico"},
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "include": "build/installer.nsh",
+      "runAfterFinish": false
+    }
+  }
+}

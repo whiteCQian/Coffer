@@ -1,6 +1,6 @@
 <configuration>
   <conversionRule conversionWord="privacyEvent" class="com.coffer.privacy.PrivacyLogConverter"/>
-  <property name="LOG_ROOT" value="${COFFER_LOG_DIR:-logs}"/>
+  <springProperty scope="context" name="LOG_ROOT" source="COFFER_LOG_DIR" defaultValue="logs"/>
   <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
     <encoder><pattern>%d{yyyy-MM-dd'T'HH:mm:ssXXX} %-5level %logger{48} %privacyEvent%n%nopex</pattern></encoder>
   </appender>

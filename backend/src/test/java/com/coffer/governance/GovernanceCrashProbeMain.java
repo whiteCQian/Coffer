@@ -30,6 +30,7 @@ import java.util.Set;
 /** Separate-JVM durable-boundary probe driven by verify-file-crash-recovery.ps1. */
 public final class GovernanceCrashProbeMain {
     private static final String USERNAME = "governance-crash-probe-owner";
+    private static final String PASSWORD = "R32-probe-pass";
     private static final String BATCH_ID = "archive-crash-probe";
     private static final String TASK_ID = "governance-crash-file";
     private static final byte[] BODY = "governance-crash-safe-original".getBytes(StandardCharsets.UTF_8);
@@ -46,20 +47,26 @@ public final class GovernanceCrashProbeMain {
             throw new IllegalArgumentException("usage: crash|verify archive-*|rollback-*");
         try (var context = new SpringApplicationBuilder(CofferApplication.class)
                 .profiles("desktop").properties("spring.main.banner-mode=off")
-                .run("--server.port=0", "--spring.h2.console.enabled=false")) {
+                .run("--server.port=0", "--spring.profiles.active=desktop",
+                        "--spring.data.redis.host=127.0.0.1", "--spring.data.redis.port=1",
+                        "--spring.data.redis.connect-timeout=100ms", "--spring.data.redis.timeout=100ms",
+                        "--minio.endpoint=http://127.0.0.1:1", "--coffer.import.inbox.enabled=false", "--coffer.embedding.enabled=false",
+                        "--coffer.desktop.initialize=" + "crash".equals(args[0]))) {
             AppUserRepository users = context.getBean(AppUserRepository.class);
             Long owner = "crash".equals(args[0])
-                    ? users.saveAndFlush(new AppUser(USERNAME, "disabled-test-login", AuthRole.USER)).getId()
+                    ? users.saveAndFlush(new AppUser(USERNAME, context.getBean(org.springframework.security.crypto.password.PasswordEncoder.class).encode(PASSWORD), AuthRole.USER)).getId()
                     : users.findByUsername(USERNAME).orElseThrow().getId();
             TenantContext.set(owner);
             try {
-                String source = "users/" + owner + "/files/governance-original.txt";
-                String target = "users/" + owner + "/contracts/governance-archived.txt";
+                context.getBean(com.coffer.desktop.DesktopLibraryLayout.class).ensureOwnerWorkspace();
+                String source = "users/" + owner + "/managed/files/governance-original.txt";
+                String target = "users/" + owner + "/managed/archive/contracts/governance-archived.txt";
                 if ("crash".equals(args[0])) {
                     crashAt(context, args[1], source, target);
                     throw new AssertionError("Runtime.halt unexpectedly returned");
                 }
                 verifyAfterRestart(context, args[1], source, target);
+                verifyAuthenticatedHttpRead(context);
                 System.out.println("CRASH_PROBE_RECOVERED=" + args[1]);
                 System.out.flush();
             } finally { TenantContext.clear(); }
@@ -176,8 +183,38 @@ public final class GovernanceCrashProbeMain {
         }
         String finalPath = step.startsWith("rollback-") && !"rollback-copy-unrecorded".equals(step)
                 ? source : ("archive-copy-unrecorded".equals(step) ? source : target);
-        if (!Arrays.equals(BODY, storage.read(finalPath).readAllBytes()))
-            throw new AssertionError("governance recovery changed original bytes");
+        try (var input = storage.read(finalPath)) {
+            if (!Arrays.equals(BODY, input.readAllBytes())) throw new AssertionError("governance recovery changed original bytes");
+        }
+        if ("archive-copy-unrecorded".equals(step) || "rollback-copy-unrecorded".equals(step)) {
+            if (tasks.findAll().stream().anyMatch(task -> task.getStatus() == GovernanceCompensationStatus.SUCCEEDED))
+                throw new AssertionError("ambiguous recovery was reported as successful compensation");
+            if (tasks.findAll().stream().noneMatch(task -> task.getStatus() == GovernanceCompensationStatus.MANUAL_REVIEW))
+                throw new AssertionError("ambiguous recovery has no durable manual-review task");
+        }
+    }
+
+    private static void verifyAuthenticatedHttpRead(ApplicationContext context) throws Exception {
+        int port = ((org.springframework.boot.web.servlet.context.ServletWebServerApplicationContext) context).getWebServer().getPort();
+        String origin = "http://127.0.0.1:" + port;
+        var cookies = new java.net.CookieManager(null, java.net.CookiePolicy.ACCEPT_ALL);
+        var client = java.net.http.HttpClient.newBuilder().cookieHandler(cookies).connectTimeout(java.time.Duration.ofSeconds(3)).build();
+        client.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(origin + "/api/auth/csrf")).GET().build(),
+                java.net.http.HttpResponse.BodyHandlers.discarding());
+        String csrf = cookies.getCookieStore().getCookies().stream().filter(cookie -> "XSRF-TOKEN".equals(cookie.getName())).findFirst().orElseThrow().getValue();
+        String body = context.getBean(com.fasterxml.jackson.databind.ObjectMapper.class).writeValueAsString(java.util.Map.of("username", USERNAME, "password", PASSWORD));
+        var login = client.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(origin + "/api/auth/login"))
+                .header("Content-Type", "application/json").header("X-XSRF-TOKEN", csrf)
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofString(body)).build(), java.net.http.HttpResponse.BodyHandlers.discarding());
+        if (login.statusCode() != 200) throw new AssertionError("offline login failed after restart");
+        var file = context.getBean(FileMetadataRepository.class).findByTaskId(TASK_ID).orElseThrow();
+        java.net.URI url = java.net.URI.create(origin + "/api/files/" + file.getId() + "/content?revision=" + file.getRevision());
+        var response = client.send(java.net.http.HttpRequest.newBuilder(url).GET().build(), java.net.http.HttpResponse.BodyHandlers.ofByteArray());
+        if (response.statusCode() != 200 || !Arrays.equals(response.body(), BODY))
+            throw new AssertionError("authenticated offline file read failed after restart");
+        int anonymous = java.net.http.HttpClient.newHttpClient().send(java.net.http.HttpRequest.newBuilder(url).GET().build(),
+                java.net.http.HttpResponse.BodyHandlers.discarding()).statusCode();
+        if (anonymous != 401) throw new AssertionError("offline file read bypassed authentication");
     }
 
     private static void halt(String step) {

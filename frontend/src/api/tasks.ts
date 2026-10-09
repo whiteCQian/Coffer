@@ -24,3 +24,7 @@ export function getInboxImportProgress() {
 export function retryInboxImport(id: number) {
   return http.post<Result<null>>(`/inbox-imports/${id}/retry`)
 }
+
+export function confirmInboxImport(id: number, targetPath: string) {
+  return http.post<Result<null>>(`/inbox-imports/${id}/confirm`, { targetPath })
+}

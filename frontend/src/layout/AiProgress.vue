@@ -4,8 +4,8 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { approveFileModel, assessFileModel, retryFile, type ModelCapability } from '@/api/files'
-import { getInboxImportProgress, getOverview, retryInboxImport } from '@/api/tasks'
-import type { InboxImportProgressResponse, TaskOverviewResponse } from '@/api/types'
+import { confirmInboxImport, getInboxImportProgress, getOverview, retryInboxImport } from '@/api/tasks'
+import type { InboxImportItemResponse, InboxImportProgressResponse, TaskOverviewResponse } from '@/api/types'
 import FileTile from '@/components/FileTile.vue'
 
 const router = useRouter()
@@ -26,6 +26,7 @@ const POLL_MS = 5000
 const overview = ref<TaskOverviewResponse | null>(null)
 const inbox = ref<InboxImportProgressResponse | null>(null)
 const loading = ref(false)
+const confirmingImportId = ref<number | null>(null)
 let timer: ReturnType<typeof setInterval> | null = null
 
 const inboxCompletedCount = computed(() => {
@@ -132,6 +133,19 @@ async function doRetryInbox(id: number) {
   await load()
 }
 
+async function doConfirmInbox(item: InboxImportItemResponse) {
+  if (!item.id || !item.targetPath || confirmingImportId.value !== null) return
+  confirmingImportId.value = item.id
+  try {
+    await ElMessageBox.confirm(`文件：${item.fileName}\n目标：${item.targetPath}\n\n复制到此路径，保留收件箱原文件。目标被占用时停止，不覆盖或改名。`,
+      '确认本地导入路径', { confirmButtonText: '确认复制', cancelButtonText: '取消', type: 'warning' })
+    await confirmInboxImport(item.id, item.targetPath)
+    ElMessage.success('已复制入库并登记处理任务')
+  } catch { /* Cancellation or HTTP errors are handled by the existing request boundary. */ }
+  finally { confirmingImportId.value = null }
+  await load()
+}
+
 onMounted(() => {
   load()
   timer = setInterval(load, POLL_MS)
@@ -165,7 +179,14 @@ onUnmounted(() => {
         已导入 {{ inbox.importedCount }} · 重复 {{ inbox.duplicateCount }} ·
         待稳定 {{ inbox.discoveredCount + inbox.stableCount }} · 失败 {{ inbox.failedCount }} ·
         待人工处理 {{ inbox.manualReviewCount }}
+        <template v-if="inbox.requiresPathConfirmation"> · 待确认路径 {{ inbox.awaitingConfirmationCount }}</template>
       </p>
+      <div v-for="item in inbox.items.filter(i => i.status === 'AWAITING_CONFIRMATION')"
+           :key="`confirm-${item.id}`" class="inbox-import-preview">
+        <strong>{{ item.fileName }}</strong>
+        <span>目标：{{ item.targetPath }}</span>
+        <button class="task-btn is-select" :disabled="confirmingImportId !== null" @click="doConfirmInbox(item)">确认路径并复制</button>
+      </div>
       <div v-for="item in inbox.items.filter(i => i.status === 'MANUAL_REVIEW')"
            :key="item.id" class="inbox-manual-item">
         <span>{{ item.fileName }}：{{ item.error }}</span>
@@ -220,6 +241,9 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.inbox-import-preview { display: grid; gap: 6px; padding: 10px 0; border-top: 1px solid var(--border-panel); }
+.inbox-import-preview span { overflow-wrap: anywhere; font-size: 12px; color: var(--text-2); }
+.inbox-import-preview button { justify-self: start; }
 .progress-card {
   background: var(--mint);
   border-radius: var(--radius-card);
@@ -250,7 +274,10 @@ onUnmounted(() => {
 }
 
 .inbox-summary {
-  flex: none;
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 65%;
+  overflow-y: auto;
   margin: 10px 0;
   padding: 10px 14px;
   border-radius: var(--radius-inner);

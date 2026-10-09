@@ -25,11 +25,18 @@ public class CofferApplication {
      * @param args 命令行参数
      */
     public static void main(String[] args) {
+        if(args.length==1 && "--coffer-desktop-maintenance".equals(args[0])) {
+            System.exit(com.coffer.desktop.DesktopMaintenanceMain.run());return;
+        }
         if (args.length > 0 && "--coffer-parse-worker".equals(args[0])) {
             System.exit(com.coffer.file.application.parse.ParserWorkerMain.run(
                     java.util.Arrays.copyOfRange(args, 1, args.length)));
             return;
         }
-        SpringApplication.run(CofferApplication.class, args);
+        var application = new SpringApplication(CofferApplication.class);
+        String profiles = String.join(" ", args) + " " + System.getProperty("spring.profiles.active", "")
+                + " " + System.getenv("SPRING_PROFILES_ACTIVE");
+        if (profiles.matches("(?s).*\\bdesktop\\b.*")) application.setHeadless(false);
+        application.run(args);
     }
 }

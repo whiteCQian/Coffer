@@ -51,6 +51,8 @@ public class ArchiveOperationService {
     private final ObjectMapper objectMapper;
     private final ApplicationEventPublisher eventPublisher;
     private final GovernanceCompensationRegistry compensationRegistry;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private GovernanceFileCoordinator fileCoordinator;
 
     /** Persist the operation ledger in the confirmation transaction and schedule execution after commit. */
     @Transactional
@@ -181,6 +183,12 @@ public class ArchiveOperationService {
     }
 
     public void executeItem(Long itemId) {
+        if (fileCoordinator == null) { executeLockedItem(itemId); return; }
+        var item = itemRepository.findById(itemId).orElseThrow(com.coffer.auth.service.ResourceNotFoundException::new);
+        fileCoordinator.run(item.getFileId(), () -> executeLockedItem(itemId));
+    }
+
+    private void executeLockedItem(Long itemId) {
         ArchiveOperationItem item = persistenceService.claimItem(itemId);
         if (item == null) {
             return;
@@ -227,10 +235,17 @@ public class ArchiveOperationService {
             readyForDatabase = true;
             persistenceService.applyFormalState(itemId, targetSnapshot.etag(),
                     targetSnapshot.size(), targetSnapshot.sha256(), summary, tags);
+            // A deferred cleanup must never delete the original after the formal state changed.
+            persistenceService.verifyArchivedFacts(itemId);
+            var published = storage.stat(item.getTargetPath());
+            if (published.size() != targetSnapshot.size() || !published.sha256().equals(targetSnapshot.sha256()))
+                throw new ArchiveExecutionConflictException("归档目标在提交后发生变化，保留来源等待核对");
             if (!Objects.equals(item.getSourcePath(), item.getTargetPath())) {
                 try {
                     storage.delete(item.getSourcePath(), item.getSourceSha256() == null
-                            ? storage.stat(item.getSourcePath()).sha256() : item.getSourceSha256());
+                            ? targetSnapshot.sha256() : item.getSourceSha256());
+                } catch (com.coffer.file.storage.StorageObjectNotFoundException alreadyRemoved) {
+                    // A prior process may have deleted the source before persisting completion.
                 } catch (Exception cleanupError) {
                     persistenceService.markCleanupPending(itemId);
                     compensationRegistry.register(item.getBatchId(), itemId,

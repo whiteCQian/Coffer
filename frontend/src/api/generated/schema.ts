@@ -180,6 +180,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/inbox-imports/{id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["confirm"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/governance/previews": {
         parameters: {
             query?: never;
@@ -237,7 +253,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: operations["confirm"];
+        post: operations["confirm_1"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1252,6 +1268,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/desktop/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["capabilities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/status": {
         parameters: {
             query?: never;
@@ -1504,6 +1536,9 @@ export interface components {
             code?: number;
             msg?: string;
             data?: components["schemas"]["ModelCredentialTestResponse"];
+        };
+        ConfirmImport: {
+            targetPath: string;
         };
         CreateGovernancePreviewRequest: {
             fileIds: number[];
@@ -2151,22 +2186,22 @@ export interface components {
             number?: number;
             first?: boolean;
             last?: boolean;
+            sort?: components["schemas"]["SortObject"];
             /** Format: int32 */
             numberOfElements?: number;
-            sort?: components["schemas"]["SortObject"];
             pageable?: components["schemas"]["PageableObject"];
             empty?: boolean;
         };
         PageableObject: {
             /** Format: int64 */
             offset?: number;
-            /** Format: int32 */
-            pageSize?: number;
+            sort?: components["schemas"]["SortObject"];
             unpaged?: boolean;
             paged?: boolean;
-            sort?: components["schemas"]["SortObject"];
             /** Format: int32 */
             pageNumber?: number;
+            /** Format: int32 */
+            pageSize?: number;
         };
         ResultPageDiagnostic: {
             /** Format: int32 */
@@ -2176,15 +2211,16 @@ export interface components {
         };
         SortObject: {
             empty?: boolean;
-            sorted?: boolean;
             unsorted?: boolean;
+            sorted?: boolean;
         };
         InboxImportItemResponse: {
             /** Format: int64 */
             id?: number;
             fileName?: string;
+            targetPath?: string;
             /** @enum {string} */
-            status?: "DISCOVERED" | "STABLE" | "IMPORTING" | "IMPORTED" | "DUPLICATE" | "FAILED" | "UNSUPPORTED" | "MANUAL_REVIEW";
+            status?: "DISCOVERED" | "STABLE" | "AWAITING_CONFIRMATION" | "IMPORTING" | "IMPORTED" | "DUPLICATE" | "FAILED" | "UNSUPPORTED" | "MANUAL_REVIEW";
             /** Format: int32 */
             stableObservations?: number;
             /** Format: int32 */
@@ -2196,6 +2232,9 @@ export interface components {
         };
         InboxImportProgressResponse: {
             awaitingModelConsent?: boolean;
+            requiresPathConfirmation?: boolean;
+            /** Format: int32 */
+            awaitingConfirmationCount?: number;
             enabled?: boolean;
             directory?: string;
             /** Format: date-time */
@@ -2281,9 +2320,9 @@ export interface components {
             number?: number;
             first?: boolean;
             last?: boolean;
+            sort?: components["schemas"]["SortObject"];
             /** Format: int32 */
             numberOfElements?: number;
-            sort?: components["schemas"]["SortObject"];
             pageable?: components["schemas"]["PageableObject"];
             empty?: boolean;
         };
@@ -2305,9 +2344,9 @@ export interface components {
             number?: number;
             first?: boolean;
             last?: boolean;
+            sort?: components["schemas"]["SortObject"];
             /** Format: int32 */
             numberOfElements?: number;
-            sort?: components["schemas"]["SortObject"];
             pageable?: components["schemas"]["PageableObject"];
             empty?: boolean;
         };
@@ -2357,9 +2396,9 @@ export interface components {
             number?: number;
             first?: boolean;
             last?: boolean;
+            sort?: components["schemas"]["SortObject"];
             /** Format: int32 */
             numberOfElements?: number;
-            sort?: components["schemas"]["SortObject"];
             pageable?: components["schemas"]["PageableObject"];
             empty?: boolean;
         };
@@ -2455,6 +2494,14 @@ export interface components {
             msg?: string;
             data?: components["schemas"]["DeletionView"][];
         };
+        ResultMapStringBoolean: {
+            /** Format: int32 */
+            code?: number;
+            msg?: string;
+            data?: {
+                [key: string]: boolean;
+            };
+        };
         AuthStatusResponse: {
             setupRequired?: boolean;
             setupAvailable?: boolean;
@@ -2518,6 +2565,23 @@ export interface components {
         };
         EraseRequest: {
             confirmation?: string;
+        };
+        WorkCopyView: {
+            id?: string;
+            /** Format: int64 */
+            fileId?: number;
+            fileName?: string;
+            workPath?: string;
+            status?: string;
+            errorCode?: string;
+            busy?: boolean;
+            modified?: boolean;
+            sha256?: string;
+            /** Format: int64 */
+            size?: number;
+            modifiedTime?: string;
+            /** Format: int64 */
+            recoveredFileId?: number;
         };
     };
     responses: never;
@@ -2868,6 +2932,32 @@ export interface operations {
             };
         };
     };
+    confirm: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmImport"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ResultVoid"];
+                };
+            };
+        };
+    };
     create: {
         parameters: {
             query?: never;
@@ -2945,7 +3035,7 @@ export interface operations {
             };
         };
     };
-    confirm: {
+    confirm_1: {
         parameters: {
             query?: never;
             header?: never;
@@ -4561,6 +4651,26 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["ResultListDeletionView"];
+                };
+            };
+        };
+    };
+    capabilities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ResultMapStringBoolean"];
                 };
             };
         };

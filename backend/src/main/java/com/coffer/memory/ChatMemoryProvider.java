@@ -5,14 +5,15 @@ import dev.langchain4j.memory.ChatMemory;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import dev.langchain4j.store.memory.chat.ChatMemoryStore;
 
 /** Every access, including retained memory objects, reaches the guarded store. */
 @Component
 public class ChatMemoryProvider {
-    private final RedisChatMemoryStore store;
+    private final ChatMemoryStore store;
     private final ChatSessionService sessions;
     private final int maxMessages;
-    public ChatMemoryProvider(RedisChatMemoryStore store, ChatSessionService sessions,
+    public ChatMemoryProvider(ChatMemoryStore store, ChatSessionService sessions,
                               @Value("${coffer.memory.max-window-size:10}") int maxMessages) {
         this.store = store;
         this.sessions = sessions;

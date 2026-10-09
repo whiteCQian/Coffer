@@ -77,6 +77,16 @@ public class GovernanceCompensationRegistry {
     }
 
     @Transactional
+    public void manualReview(Long id, String error) {
+        GovernanceCompensationTask task = lock(id);
+        task.setStatus(GovernanceCompensationStatus.MANUAL_REVIEW);
+        task.setLastError(error);
+        task.setNextAttemptAt(null);
+        task.setFinishedAt(LocalDateTime.now());
+        repository.save(task);
+    }
+
+    @Transactional
     public void failed(Long id, String error) {
         GovernanceCompensationTask task = lock(id);
         if (task.getStatus() == GovernanceCompensationStatus.SUCCEEDED

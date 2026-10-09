@@ -15,7 +15,8 @@ $allowedSteps = @('prepared', 'object', 'metadata', 'rename',
     'archive-ledger', 'archive-source-verified', 'archive-copy-unrecorded',
     'archive-target-recorded', 'archive-metadata', 'archive-source-removed',
     'rollback-ledger', 'rollback-copy-unrecorded', 'rollback-copy-verified',
-    'rollback-metadata', 'rollback-target-removed')
+    'rollback-metadata', 'rollback-target-removed',
+    'copy-opened', 'copy-published', 'copy-saveas-published', 'copy-discard-intent', 'copy-save-committed')
 if ($Steps.Count -eq 0 -or @($Steps | Where-Object { $_ -notin $allowedSteps }).Count -gt 0) {
     throw 'Steps must name one or more supported crash boundaries.'
 }
@@ -67,12 +68,13 @@ try {
 
     foreach ($step in $Steps) {
         $scenario = Join-Path $probeRoot $step
-        New-Item -ItemType Directory -Path (Join-Path $scenario 'library') -Force | Out-Null
-        $env:COFFER_DESKTOP_USER_DATA_DIR = $scenario.Replace('\', '/')
+        New-Item -ItemType Directory -Path $scenario -Force | Out-Null
+        $env:COFFER_DESKTOP_USER_DATA_DIR = (Join-Path $scenario 'data').Replace('\', '/')
         $probeOptions = @('-Dspring.devtools.restart.enabled=false')
         $probeClass = if ($step.StartsWith('archive-') -or $step.StartsWith('rollback-')) {
             'com.coffer.governance.GovernanceCrashProbeMain'
-        } else { 'com.coffer.file.application.FileCrashProbeMain' }
+        } elseif ($step.StartsWith('copy-')) { 'com.coffer.desktop.WorkCopyCrashProbeMain' }
+        else { 'com.coffer.file.application.FileCrashProbeMain' }
         if ($step.StartsWith('delete-')) {
             $probeOptions += @('-Dcoffer.storage.deletion-retention-hours=0',
                 '-Dcoffer.storage.deletion-lease-seconds=1')

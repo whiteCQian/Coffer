@@ -109,6 +109,19 @@ npm install     # 首次
 npm run dev     # http://localhost:5173 （/api 已代理到 8080）
 ```
 
+## 桌面后端（R30）
+
+独立 `desktop` Profile 使用本地文件库与单进程 H2，对话记忆保存在数据库；无需 MySQL、Redis 或 MinIO 服务。默认数据目录为 `%LOCALAPPDATA%\Coffer`，与程序安装目录分离。首次空目录初始化生成本机密钥和文件库 UUID；后续启动校验数据库/文件库/密钥绑定，任何必需项缺失均拒绝创建替代空库。
+
+```powershell
+mvn -f backend/pom.xml -Pdesktop package
+# 首次明确初始化；之后不再带 -Initialize
+./scripts/start-desktop.ps1 -JavaPath '<Java17+目录>/bin/java.exe' -Initialize
+./scripts/start-desktop.ps1 -JavaPath '<Java17+目录>/bin/java.exe'
+```
+
+可通过 `-UserDataDir` 指定另一绝对路径。桌面产物位于 `backend/target/desktop/`，与服务端产物分开。当前入口是桌面后端；Electron/JRE 安装包归 R34，整套加密备份与恢复归 R35。主密钥须与数据库、library 及标识文件一起保存。详见 [R30 配置、运行与验收](docs/plans/R30-桌面生产Profile与数据目录验收.md)。
+
 ## 端口一览
 
 | 端口 | 服务 |
@@ -126,6 +139,13 @@ npm run dev     # http://localhost:5173 （/api 已代理到 8080）
 - [已知问题与技术债务](docs/已知问题与技术债务.md)
 - [最终落地执行计划](docs/plans/AgentFS最终落地执行计划.md)
 - [R26 隐私、错误、运行状态与密钥轮换](docs/plans/R26-隐私错误与运行状态验收.md)
+- [R30 桌面生产 Profile 与数据目录](docs/plans/R30-桌面生产Profile与数据目录验收.md)
+- [R31 本地安全导入](docs/plans/R31-本地安全导入验收.md)
+- [R32 本地治理、撤销与恢复](docs/plans/R32-本地治理撤销与恢复验收.md)
+- [R33 工作副本编辑与冲突](docs/plans/R33-工作副本编辑与冲突验收.md)
+- [R34 Electron 启动器与安装包](docs/plans/R34-Electron启动器与安装包验收.md)
+- [R35 桌面备份、恢复与升级](docs/plans/R35-桌面备份恢复与升级验收.md)
+- [Windows 桌面版安装与使用](desktop/README.md)
 - [需求追踪矩阵](docs/plans/需求追踪矩阵.md)
 - [M0 存量数据保护记录](docs/plans/M0-存量数据盘点与保护记录.md)
 - [最终产品合同 ADR-001](docs/decisions/ADR-001-最终产品合同与存储架构.md)

@@ -310,6 +310,8 @@
                 <maven.test.skip>true</maven.test.skip>
             </properties>
             <build>
+                <!-- Keep desktop classes separate so server-only classes cannot leak from an earlier build. -->
+                <directory>${project.basedir}/target/desktop</directory>
                 <plugins>
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>

@@ -23,6 +23,10 @@ public class WorkSaveIntent extends TenantOwnedEntity {
     @Column(name = "expected_revision", nullable = false) private long expectedRevision;
     @Column(name = "before_key", nullable = false, length = 500) private String beforeKey;
     @Column(name = "before_sha256", nullable = false, length = 64) private String beforeSha256;
+    @Column(name = "before_size") private Long beforeSize;
+    @Column(name = "before_modified_time", length = 64) private String beforeModifiedTime;
+    @Column(name = "before_file_key", length = 255) private String beforeFileKey;
+    @Column(name = "preserve_only", nullable = false) private boolean preserveOnly;
     @Column(name = "target_key", nullable = false, length = 500) private String targetKey;
     @Column(name = "target_size", nullable = false) private long targetSize;
     @Column(name = "request_sha256", nullable = false, length = 64) private String requestSha256;

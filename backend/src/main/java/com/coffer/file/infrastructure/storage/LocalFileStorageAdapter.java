@@ -59,6 +59,20 @@ public final class LocalFileStorageAdapter implements FileStoragePort {
         return writeChecked(key, source, size, null);
     }
 
+    @Override public LocalIdentity localIdentity(String key) {
+        StorageKey.requireOwned(key);
+        try {
+            var attributes = SafeLocalPaths.file(locate(key, false));
+            return new LocalIdentity(attributes.size(), attributes.lastModifiedTime().toString(),
+                    com.coffer.file.application.LocalImportSource.key(attributes));
+        } catch (IOException error) { throw ioFailure(error); }
+    }
+
+    @Override public StoredObject writeVerified(String key, InputStream source, String contentType, long size, String sha256) {
+        requireDigest(sha256);
+        return writeChecked(key, source, size, sha256);
+    }
+
     @Override
     public java.util.List<String> listOwnedKeys() {
         long owner = com.coffer.auth.service.TenantContext.requireOwnerId();
@@ -69,6 +83,7 @@ public final class LocalFileStorageAdapter implements FileStoragePort {
             return paths.filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
                     .filter(path -> !path.getFileName().toString().startsWith(".coffer-stage-"))
                     .map(path -> root.relativize(path).toString().replace('\\', '/'))
+                    .filter(LocalFileStorageAdapter::publishedArea)
                     .peek(StorageKey::requireOwned)
                     .toList();
         } catch (IOException error) { throw ioFailure(error); }
@@ -80,6 +95,7 @@ public final class LocalFileStorageAdapter implements FileStoragePort {
         java.time.Instant cutoff = java.time.Instant.now().minus(java.time.Duration.ofHours(24));
         try (var paths = Files.walk(root)) {
             paths.filter(path -> path.getFileName() != null
+                            && publishedArea(root.relativize(path).toString().replace('\\', '/'))
                             && path.getFileName().toString().startsWith(".coffer-stage-"))
                     .forEach(path -> {
                         try {
@@ -143,6 +159,12 @@ public final class LocalFileStorageAdapter implements FileStoragePort {
                 catch (IOException ignored) { /* an orphan stage never changes the published object */ }
             }
         }
+    }
+
+    private static boolean publishedArea(String key) {
+        String[] parts = key.split("/");
+        return parts.length >= 4 && parts[0].equals("users")
+                && java.util.List.of("managed", "files", "archive").contains(parts[2]);
     }
 
     @Override

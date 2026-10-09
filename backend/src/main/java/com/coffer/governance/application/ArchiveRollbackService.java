@@ -32,6 +32,8 @@ public class ArchiveRollbackService {
     private final ArchiveSnapshotService snapshotService;
     private final ApplicationEventPublisher eventPublisher;
     private final GovernanceCompensationRegistry compensationRegistry;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private GovernanceFileCoordinator fileCoordinator;
 
     @Transactional
     public void requestBatch(String batchId) {
@@ -64,6 +66,12 @@ public class ArchiveRollbackService {
     }
 
     public void executeItem(Long itemId) {
+        if (fileCoordinator == null) { executeLockedItem(itemId); return; }
+        var item = itemRepository.findById(itemId).orElseThrow(com.coffer.auth.service.ResourceNotFoundException::new);
+        fileCoordinator.run(item.getFileId(), () -> executeLockedItem(itemId));
+    }
+
+    private void executeLockedItem(Long itemId) {
         ArchiveOperationItem item = persistenceService.claim(itemId);
         if (item == null) return;
         boolean readyForDatabase = false;
@@ -98,6 +106,10 @@ public class ArchiveRollbackService {
             persistenceService.markDbCommitting(itemId);
             readyForDatabase = true;
             persistenceService.restoreMetadata(itemId, restored.etag(), restored.sha256());
+            persistenceService.verifyRestoredFacts(itemId);
+            var published = storage.stat(item.getSourcePath());
+            if (published.size() != before.size() || !published.sha256().equalsIgnoreCase(before.sha256()))
+                throw new ArchiveRollbackConflictException("恢复正文在提交后发生变化，保留归档正文等待核对");
             if (!Objects.equals(item.getSourcePath(), item.getTargetPath())) {
                 try {
                     storage.delete(item.getTargetPath(), after.sha256());
@@ -135,7 +147,8 @@ public class ArchiveRollbackService {
             return false;
         }
         FileStoragePort.StoredObject restored = storage.stat(before.path());
-        if (!before.sha256().equalsIgnoreCase(restored.sha256())) {
+        persistenceService.verifyRestoredFacts(item.getId());
+        if (!before.sha256().equalsIgnoreCase(restored.sha256()) || restored.size() != before.size()) {
             throw new ArchiveRollbackConflictException("恢复对象内容摘要不一致");
         }
         if (!Objects.equals(before.path(), after.path()) && storage.exists(after.path())) {

@@ -27,6 +27,8 @@ public class GovernanceCompensationProcessor {
     private final ArchiveRollbackService rollbackService;
     private final FileStoragePort storage;
     private final ArchiveOperationItemRepository itemRepository;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private GovernanceFileCoordinator fileCoordinator;
 
     @com.coffer.auth.service.OwnerScheduled
     @Scheduled(fixedDelayString = "${coffer.governance.archive.compensation-interval-ms:30000}")
@@ -36,6 +38,15 @@ public class GovernanceCompensationProcessor {
     }
 
     public void process(Long id) {
+        if (fileCoordinator == null) { processLocked(id); return; }
+        var task = repository.findById(id).orElse(null);
+        if (task == null) return;
+        var item = itemRepository.findById(task.getItemId()).orElse(null);
+        if (item == null || item.getFileId() == null) { processLocked(id); return; }
+        fileCoordinator.run(item.getFileId(), () -> processLocked(id));
+    }
+
+    private void processLocked(Long id) {
         GovernanceCompensationTask task = registry.claim(id);
         if (task == null) return;
         try {
@@ -44,6 +55,12 @@ public class GovernanceCompensationProcessor {
                     archivePersistence.prepareRecovery(task.getItemId());
                     archiveService.executeItem(task.getItemId());
                     ArchiveOperationItem item = requireItem(task.getItemId());
+                    if (item.getExecutionStatus() == ArchiveOperationItemExecutionStatus.CONFLICTED
+                            || item.getExecutionStatus() == ArchiveOperationItemExecutionStatus.SKIPPED) {
+                        archivePersistence.recomputeBatch(task.getBatchId());
+                        registry.manualReview(id, "归档恢复发生冲突，保留正文等待人工核对");
+                        return;
+                    }
                     if (item.getExecutionStatus() == ArchiveOperationItemExecutionStatus.FAILED
                             || item.getExecutionStatus() == ArchiveOperationItemExecutionStatus.MANUAL_REVIEW) {
                         throw new IllegalStateException("归档恢复执行仍然失败: " + item.getFailureMessage());
@@ -52,6 +69,7 @@ public class GovernanceCompensationProcessor {
                 }
                 case DELETE_ARCHIVE_SOURCE -> {
                     ArchiveOperationItem item = requireItem(task.getItemId());
+                    archivePersistence.verifyArchivedFacts(task.getItemId());
                     requireExpectedContent(item.getTargetPath(), item.getTargetSha256());
                     deleteIfPresent(task.getObjectPath(), item.getSourceSha256());
                     archivePersistence.markSucceeded(task.getItemId());
@@ -61,6 +79,12 @@ public class GovernanceCompensationProcessor {
                     rollbackPersistence.prepareRecovery(task.getItemId());
                     rollbackService.executeItem(task.getItemId());
                     ArchiveOperationItem item = requireItem(task.getItemId());
+                    if (item.getRollbackStatus() == ArchiveOperationItemRollbackStatus.CONFLICTED
+                            || item.getRollbackStatus() == ArchiveOperationItemRollbackStatus.NOT_REVERSIBLE) {
+                        rollbackPersistence.recomputeBatch(task.getBatchId());
+                        registry.manualReview(id, "撤销恢复发生冲突或不可恢复，保留正文等待人工核对");
+                        return;
+                    }
                     if (item.getRollbackStatus() == ArchiveOperationItemRollbackStatus.FAILED) {
                         throw new IllegalStateException("撤销恢复执行仍然失败: " + item.getFailureMessage());
                     }
@@ -68,6 +92,7 @@ public class GovernanceCompensationProcessor {
                 }
                 case DELETE_ROLLBACK_TARGET -> {
                     ArchiveOperationItem item = requireItem(task.getItemId());
+                    rollbackPersistence.verifyRestoredFacts(task.getItemId());
                     requireExpectedContent(item.getSourcePath(), item.getSourceSha256());
                     deleteIfPresent(task.getObjectPath(), item.getTargetSha256());
                     rollbackPersistence.markSucceeded(task.getItemId());
@@ -75,6 +100,19 @@ public class GovernanceCompensationProcessor {
                 }
             }
             registry.succeeded(id);
+        } catch (ArchiveExecutionConflictException conflict) {
+            if (requireItem(task.getItemId()).getExecutionStatus() != ArchiveOperationItemExecutionStatus.SUCCEEDED) {
+                archivePersistence.markConflicted(task.getItemId(), "RECOVERY_STATE_CONFLICT", "当前正式状态已变化，未执行旧来源清理");
+                archivePersistence.recomputeBatch(task.getBatchId());
+            }
+            registry.manualReview(id, "当前正式状态已变化，清理已停止，请人工核对");
+        } catch (ArchiveRollbackConflictException | ArchiveRollbackNotReversibleException conflict) {
+            var status = requireItem(task.getItemId()).getRollbackStatus();
+            if (status != ArchiveOperationItemRollbackStatus.SUCCEEDED && status != ArchiveOperationItemRollbackStatus.NOT_REQUESTED) {
+                rollbackPersistence.markConflicted(task.getItemId(), "RECOVERY_STATE_CONFLICT", "当前正式状态已变化，未执行旧归档正文清理");
+                rollbackPersistence.recomputeBatch(task.getBatchId());
+            }
+            registry.manualReview(id, "当前正式状态已变化，清理已停止，请人工核对");
         } catch (Exception e) {
             log.warn("治理补偿失败，操作类型={}，异常类型={}", task.getAction(), e.getClass().getSimpleName());
             registry.failed(id, "治理补偿失败，请稍后重试");

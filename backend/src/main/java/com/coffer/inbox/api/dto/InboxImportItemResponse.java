@@ -17,6 +17,7 @@ public class InboxImportItemResponse {
 
     private Long id;
     private String fileName;
+    private String targetPath;
     private InboxImportStatus status;
     private Integer stableObservations;
     private Integer attemptCount;

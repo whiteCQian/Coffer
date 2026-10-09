@@ -171,6 +171,20 @@ class InboxImportScannerTest {
         assertThat(scanner.scanOnce().imported()).isEqualTo(1);
     }
 
+    @Test void retainedOriginalsDoNotStarveFilesBeyondTheFirstScanPage() throws IOException {
+        properties.setMaxFilesPerScan(1);
+        write("a.txt", "alpha"); write("b.txt", "beta"); write("c.txt", "gamma");
+        when(fileUploadApplicationService.importInboxFile(any(Path.class), anyLong(), anyLong(), anyLong()))
+                .thenReturn(FileUploadResponse.builder().taskId("page-task").build());
+        when(fileMetadataRepository.findByTaskId("page-task"))
+                .thenReturn(Optional.of(FileMetadata.builder().id(104L).build()));
+        for (int i=0; i<9; i++) scanner.scanOnce();
+        assertThat(records.values()).hasSize(3).allMatch(r -> r.getStatus() == InboxImportStatus.IMPORTED);
+        org.mockito.Mockito.verify(fileUploadApplicationService, org.mockito.Mockito.times(3))
+                .importInboxFile(any(Path.class), anyLong(), anyLong(), anyLong());
+        try (var retained = Files.list(inbox)) { assertThat(retained.filter(Files::isRegularFile).count()).isEqualTo(3); }
+    }
+
     @Test
     void recordsFailureAndDoesNotRetryBeforeBackoff() throws IOException {
         write("broken.txt", "stable content");

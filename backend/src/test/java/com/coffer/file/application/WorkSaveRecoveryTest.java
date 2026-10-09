@@ -150,7 +150,7 @@ class WorkSaveRecoveryTest extends com.coffer.auth.OwnerTestSupport {
                     ? new FileStoragePort.StoredObject(key, 8, OLD_SHA, "old-etag")
                     : new FileStoragePort.StoredObject(key, 9, editedSha, "new-etag");
         });
-        when(storage.write(anyString(), any(), eq("text/plain"), eq(9L)))
+        when(storage.writeVerified(anyString(), any(), eq("text/plain"), eq(9L), eq(editedSha)))
                 .thenAnswer(call -> new FileStoragePort.StoredObject(call.getArgument(0), 9, editedSha, "new-etag"));
         var edited = new MockMultipartFile("file", "edited.txt", "text/plain", "new bytes".getBytes());
         var model = new ModelExecutionContext.Snapshot("snapshot", TenantContext.requireOwnerId(),
@@ -168,7 +168,7 @@ class WorkSaveRecoveryTest extends com.coffer.auth.OwnerTestSupport {
         assertThatThrownBy(() -> ModelExecutionContext.with(model,
                 () -> application.save(original.getId(), 4L, OLD_SHA, requestId, different)))
                 .isInstanceOf(com.coffer.file.storage.StorageConflictException.class);
-        verify(storage, times(1)).write(anyString(), any(), eq("text/plain"), eq(9L));
+        verify(storage, times(1)).writeVerified(anyString(), any(), eq("text/plain"), eq(9L), eq(editedSha));
         assertThat(rows.findById(result.operationId()).orElseThrow().getStatus()).isEqualTo(WorkSaveStatus.COMMITTED);
         assertThat(files.findById(original.getId()).orElseThrow().getContentSha256()).isEqualTo(editedSha);
     }

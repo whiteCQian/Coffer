@@ -21,6 +21,8 @@ import java.util.regex.Pattern;
 @Slf4j
 @Component
 public class PathGenerator {
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.coffer.desktop.DesktopLibraryLayout desktop;
 
     /** 路径非法字符与空白（同时覆盖 Windows/Unix），统一替换为下划线以防路径注入。 */
     private static final Pattern ILLEGAL_CHARS = Pattern.compile("[\\\\/:*?\"<>|\\s]+");
@@ -43,7 +45,8 @@ public class PathGenerator {
         type = type.toLowerCase(Locale.ROOT);
         if (!type.matches("[a-z0-9]{1,16}")) type = "other";
         String sanitized = sanitizeFilename(originalFilename);
-        String path = String.format("users/%d/files/%04d/%02d/%02d/%s/%s_%s",
+        if (desktop != null) desktop.ensureOwnerWorkspace();
+        String path = String.format("users/%d/" + (desktop == null ? "" : "managed/") + "files/%04d/%02d/%02d/%s/%s_%s",
                 TenantContext.requireOwnerId(),
                 now.getYear(), now.getMonthValue(), now.getDayOfMonth(),
                 type, UUID.randomUUID().toString(), sanitized);
@@ -82,7 +85,8 @@ public class PathGenerator {
         }
         String fileName = String.format(Locale.ROOT, "%03X-%s", sequenceNumber,
                 sanitizeArchiveFilename(originalFilename));
-        String path = String.format("users/%d/archive/%s/%04d/%02d/%02d/%s",
+        if (desktop != null) desktop.ensureOwnerWorkspace();
+        String path = String.format("users/%d/" + (desktop == null ? "" : "managed/") + "archive/%s/%04d/%02d/%02d/%s",
                 TenantContext.requireOwnerId(), resolved.getSlug(), time.getYear(), time.getMonthValue(), time.getDayOfMonth(), fileName);
         log.debug("生成归档路径");
         return path;

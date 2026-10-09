@@ -66,3 +66,62 @@ jobs:
         run: npm ci
       - name: Type-check and build production assets
         run: npm run build
+
+  desktop:
+    name: Desktop distribution
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7.0.1
+      - name: Set up Java 17
+        uses: actions/setup-java@v6.0.1
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+      - name: Build independent desktop JAR
+        run: mvn --batch-mode --no-transfer-progress -f backend/pom.xml -Pdesktop package
+      - name: Verify desktop excludes server storage dependencies
+        run: |
+          python3 - <<'PY'
+          import re
+          from zipfile import ZipFile
+          with ZipFile('backend/target/desktop/coffer-backend-0.0.1-SNAPSHOT.jar') as jar:
+              names = jar.namelist()
+          forbidden = re.compile(r'^BOOT-INF/lib/minio-|com/coffer/(service/MinioStorageService|config/(MinioConfig|BucketInitializer|MinioStorageHealthIndicator|ServerStorageProbe))')
+          assert not any(forbidden.search(name) for name in names), 'Server storage dependency in desktop JAR'
+          assert 'BOOT-INF/classes/com/coffer/desktop/DesktopEnvironmentPostProcessor.class' in names
+          assert 'BOOT-INF/classes/com/coffer/memory/DatabaseChatMemoryStore.class' in names
+          print('Desktop distribution verified')
+          PY
+
+  windows-installer:
+    name: Windows desktop installer build
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7.0.1
+      - name: Set up Java 17
+        uses: actions/setup-java@v6.0.1
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            desktop/package-lock.json
+      - name: Install locked frontend and shell dependencies
+        shell: pwsh
+        run: |
+          npm ci --prefix frontend
+          npm ci --prefix desktop
+      - name: Verify shell security and build self-contained installer
+        shell: pwsh
+        run: |
+          npm test --prefix desktop
+          scripts/build-desktop.ps1 -MavenPath (Get-Command mvn.cmd).Source -JavaPath "$env:JAVA_HOME\bin\java.exe"

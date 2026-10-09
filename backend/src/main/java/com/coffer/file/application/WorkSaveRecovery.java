@@ -19,6 +19,7 @@ public class WorkSaveRecovery {
     private final FileStoragePort storage;
 
     @EventListener(ApplicationReadyEvent.class)
+    @org.springframework.core.annotation.Order(10)
     public void onStartup() { owners.runForEnabledOwners(owner -> scan(true)); }
 
     @com.coffer.auth.service.OwnerScheduled
@@ -65,6 +66,8 @@ public class WorkSaveRecovery {
             return;
         }
         intents.objectWritten(id, object);
-        intents.commit(id);
+        if (intent.isPreserveOnly()) {
+            intents.manual(id, "SAVE_AS_REQUESTED"); intents.restoreAsNewFile(id);
+        } else intents.commit(id);
     }
 }

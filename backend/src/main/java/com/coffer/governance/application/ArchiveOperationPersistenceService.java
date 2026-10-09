@@ -192,10 +192,20 @@ public class ArchiveOperationPersistenceService {
 
     private void verifyArchivedFacts(ArchiveOperationItem item) {
         ArchiveFormalSnapshot after = snapshotService.targetOrNull(item);
-        if (after == null) return;
         FileMetadata metadata = fileMetadataRepository.findById(item.getFileId())
                 .orElseThrow(() -> new ArchiveExecutionConflictException("归档后的正式文件已不存在"));
+        if (after == null) {
+            // Legacy ledgers can still clean up only when their minimal committed identity matches.
+            if (!Objects.equals(metadata.getStoragePath(), item.getTargetPath())
+                    || !Objects.equals(metadata.getFileName(), item.getTargetFileName())
+                    || !sameCategory(metadata.getCategory(), item.getTargetCategory())
+                    || valueOrZero(metadata.getRevision()) != valueOrZero(item.getExpectedRevision()) + 1
+                    || item.getTargetSha256() == null || !Objects.equals(metadata.getContentSha256(), item.getTargetSha256()))
+                throw new ArchiveExecutionConflictException("旧归档台账与当前正式状态不一致");
+            return;
+        }
         if (!snapshotService.matches(metadata, after)
+                || !Objects.equals(metadata.getContentSha256(), after.sha256())
                 || !Objects.equals(metadata.getContentEtag(), item.getTargetEtag())
                 || item.getTargetSha256() == null
                 || !after.sha256().equalsIgnoreCase(item.getTargetSha256())) {

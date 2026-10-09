@@ -40,6 +40,12 @@ public class WorkSaveIntentService {
     public void prepare(String id, FileMetadata file, long expectedRevision, String expectedSha256,
                         String targetKey, long targetSize, String requestSha256, String taskId,
                         String modelSnapshotId, com.coffer.governance.domain.GovernanceRunMode mode) {
+        prepareInternal(id, file, expectedRevision, expectedSha256, targetKey, targetSize, requestSha256,
+                taskId, modelSnapshotId, mode, false);
+    }
+    private void prepareInternal(String id, FileMetadata file, long expectedRevision, String expectedSha256,
+                                 String targetKey, long targetSize, String requestSha256, String taskId,
+                                 String modelSnapshotId, com.coffer.governance.domain.GovernanceRunMode mode, boolean preserve) {
         StorageKey.requireOwned(file.getStoragePath());
         StorageKey.requireOwned(targetKey);
         if (file.getId() == null || expectedRevision < 0 || targetSize < 0
@@ -57,6 +63,14 @@ public class WorkSaveIntentService {
         intent.setExpectedRevision(expectedRevision);
         intent.setBeforeKey(file.getStoragePath());
         intent.setBeforeSha256(expectedSha256);
+        intent.setBeforeSize(file.getFileSize());
+        intent.setPreserveOnly(preserve);
+        var localIdentity = preserve ? null : storage.localIdentity(file.getStoragePath());
+        if (localIdentity != null) {
+            intent.setBeforeModifiedTime(localIdentity.modifiedTime());
+            intent.setBeforeFileKey(localIdentity.fileKey());
+            intent.setBeforeSize(localIdentity.size());
+        }
         intent.setTargetKey(targetKey);
         intent.setTargetSize(targetSize);
         intent.setRequestSha256(requestSha256);
@@ -88,12 +102,36 @@ public class WorkSaveIntentService {
         intents.save(intent);
     }
 
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void preparePreserve(String id, Long fileId, String fileName, String fileType, String beforeKey,
+                                long revision, String sha, long beforeSize, String target, long size, String requestSha, String task) {
+        var file = FileMetadata.builder().fileName(fileName).fileType(fileType).storagePath(beforeKey)
+                .revision(revision).contentSha256(sha).fileSize(beforeSize).status(FileStatus.COMPLETED).build();
+        file.setId(fileId);
+        prepareInternal(id, file, revision, sha, target, size, requestSha, task, "work-copy-save-as",
+                com.coffer.governance.domain.GovernanceRunMode.LOCAL, true);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean verifyLocalBaseline(String id, FileStoragePort.LocalIdentity expected) {
+        var intent = lock(id);
+        if (expected != null && (!Objects.equals(intent.getBeforeSize(), expected.size())
+                || !Objects.equals(intent.getBeforeModifiedTime(), expected.modifiedTime())
+                || !Objects.equals(intent.getBeforeFileKey(), expected.fileKey()))) {
+            intent.setStatus(WorkSaveStatus.CONFLICTED); intent.setLastErrorCode("FORMAL_FILE_CHANGED"); intents.save(intent); return false;
+        }
+        return true;
+    }
+
     /** Returns false after a durable conflict; the new bytes stay available for manual recovery. */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean commit(String id) {
         WorkSaveIntent intent = lock(id);
         if (intent.getStatus() == WorkSaveStatus.COMMITTED) return true;
         if (intent.getStatus() != WorkSaveStatus.OBJECT_WRITTEN) return false;
+        if (intent.isPreserveOnly()) {
+            intent.setStatus(WorkSaveStatus.MANUAL_REVIEW); intent.setLastErrorCode("SAVE_AS_REQUESTED"); intents.save(intent); return false;
+        }
         FileMetadata file = files.findByIdForUpdate(intent.getFileId()).orElse(null);
         if (file == null || !Objects.equals(file.getRevision(), intent.getExpectedRevision())
                 || file.getStatus() == FileStatus.PENDING || file.getStatus() == FileStatus.PROCESSING
@@ -107,8 +145,13 @@ public class WorkSaveIntentService {
         }
         FileStoragePort.StoredObject old = storage.stat(intent.getBeforeKey());
         FileStoragePort.StoredObject replacement = storage.stat(intent.getTargetKey());
+        var localIdentity = storage.localIdentity(intent.getBeforeKey());
         if (!intent.getBeforeSha256().equals(old.sha256())
                 || !Objects.equals(file.getFileSize(), old.size())
+                || intent.getBeforeSize() != null && intent.getBeforeSize() != old.size()
+                || intent.getBeforeModifiedTime() != null && (localIdentity == null
+                    || !intent.getBeforeModifiedTime().equals(localIdentity.modifiedTime())
+                    || !Objects.equals(intent.getBeforeFileKey(), localIdentity.fileKey()))
                 || !Objects.equals(intent.getTargetSha256(), replacement.sha256())
                 || intent.getTargetSize() != replacement.size()) {
             intent.setStatus(WorkSaveStatus.MANUAL_REVIEW);

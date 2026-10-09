@@ -10,6 +10,8 @@ import * as governanceApi from '@/api/governance'
 import type { FileListResponse, FileStatus, TagCandidate } from '@/api/types'
 import FileDetailDrawer from '@/components/FileDetailDrawer.vue'
 import FileTile from '@/components/FileTile.vue'
+import DesktopImportPanel from '@/components/DesktopImportPanel.vue'
+import { desktopBridge } from '@/api/desktop'
 import { formatBytes, shortTime, toDisplayTime } from '@/utils/format'
 
 /**
@@ -280,8 +282,10 @@ function stateMini(f: ListItem) {
 }
 
 const uploadInput = ref<HTMLInputElement>()
+const nativeImport = ref<InstanceType<typeof DesktopImportPanel>>()
 const lastUpload = ref<{ signature: string; requestId: string } | null>(null)
 function onUploadClick() {
+  if (desktopBridge) { nativeImport.value?.pick(); return }
   uploadInput.value?.click()
 }
 async function onUploadPicked(e: Event) {
@@ -334,6 +338,7 @@ onMounted(() => {
       <input ref="uploadInput" type="file" hidden @change="onUploadPicked" />
     </header>
 
+    <DesktopImportPanel ref="nativeImport" @queued="reload()" />
     <!-- 浏览面板 -->
     <div class="pg-panel browse">
       <!-- 工具栏：搜索 + 排序 -->

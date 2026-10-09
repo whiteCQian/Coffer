@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
 import { useAuthStore } from '@/stores/auth'
+import { desktopBridge } from '@/api/desktop'
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -22,6 +23,7 @@ async function checkService() {
   checkingStatus.value = true
   try {
     await auth.bootstrap(true)
+    if (auth.status.setupRequired && auth.status.setupAvailable && desktopBridge) setupToken.value = await desktopBridge.setupToken()
     serviceUnavailable.value = false
     if (auth.user) await router.replace('/')
   } catch {
@@ -73,7 +75,7 @@ async function submit() {
       </div>
 
       <template v-if="verifiedStatus && !setupUnavailable">
-        <label v-if="setupMode" class="field">
+        <label v-if="setupMode && !desktopBridge" class="field">
           <span>初始化凭据</span>
           <input v-model="setupToken" type="password" autocomplete="off" required />
         </label>
