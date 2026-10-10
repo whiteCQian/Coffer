@@ -20,6 +20,25 @@ Windows x64 安装包包含 Electron、Vue 生产资源、桌面后端 JAR 和�
 
 ## 构建与本机自动验收
 
+### 源码桌面测试一键启动
+
+在仓库根目录双击 `start-desktop-test.bat`，打开当前源码的 Electron 桌面窗口。默认测试业务数据为 `%LOCALAPPDATA%\Coffer-desktop-test`，窗口配置/缓存为 `%APPDATA%\Coffer-shell-desktop-test`，与正式默认目录分开；再次启动继续使用已有测试账号和文件。首次在桌面启动页确认初始化，再创建管理员和业务账号；已有数据需要升级时按界面提示先完成加密备份，脚本不清空或强制初始化数据。
+
+脚本核对生产资源版本、H2 迁移版本及源文件更新时间，缺失/过期时调用同一 `build-desktop.ps1 -Unpacked` 构建；资源完整性由桌面启动器校验。首次构建需要 Node.js 22.12+、npm、JDK 17+ 和 Maven（或后端 wrapper），没有 node_modules 时使用 npm ci 安装锁定依赖；资源就绪后使用捆绑 JRE 与已准备的 Electron，不启动 Vite/MySQL/MinIO/Redis。测试窗口使用独立 shell profile，关闭窗口由原桌面生命周期停止其 Java 子进程。
+
+```powershell
+# 强制重建后启动：
+.\start-desktop-test.bat -Rebuild
+# 只准备资源，不打开桌面：
+.\start-desktop-test.bat -PrepareOnly
+# 只读检查版本、重建原因和目录，不下载/构建/初始化：
+.\start-desktop-test.bat -CheckOnly
+# 使用明确的独立测试目录（路径有空格时加引号）：
+.\start-desktop-test.bat -DataDirectory "D:\Coffer Test\data" -ShellDirectory "D:\Coffer Test\shell"
+```
+
+工具不在 PATH 时可指定 `-NodePath`、`-NpmPath`（npm.cmd）、`-MavenPath`、`-JavaPath`（JDK java.exe）。测试目录不得与 desktop 程序目录重叠，不接受链接/junction；数据与窗口缓存也必须分开。启动失败时批处理窗口保留错误信息，桌面生命周期日志位于测试 shell profile 的 `launcher.log`。
+
 构建需要 Java 17+、Maven 和 Node 22.12+。运行 `npm ci --prefix desktop`，然后：
 
 ```powershell
