@@ -31,6 +31,12 @@ import java.net.SocketTimeoutException;
 @Slf4j
 @ControllerAdvice
 public class GlobalExceptionHandler {
+    @ExceptionHandler(com.coffer.web.WebLimitException.class)
+    public ResponseEntity<Result<?>> handleWebLimit(com.coffer.web.WebLimitException exception) {
+        var result = ResponseEntity.status(exception.status());
+        if (exception.status() == 429 || exception.status() == 503) result.header("Retry-After", "30");
+        return result.body(Result.error(exception.status(), exception.getMessage()));
+    }
     @ExceptionHandler(com.coffer.operations.RuntimeStatusUnavailableException.class)
     public ResponseEntity<Result<?>> handleRuntimeStatusUnavailable(Exception exception) {
         return build(503, "运行状态暂时无法核实，请检查服务连接后重试");
@@ -95,7 +101,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     public ResponseEntity<Result<?>> handleMaxUploadSize(MaxUploadSizeExceededException e) {
         log.warn("文件上传超过大小限制");
-        return build(400, MSG_UPLOAD_TOO_LARGE);
+        return build(413, MSG_UPLOAD_TOO_LARGE);
     }
 
     /**

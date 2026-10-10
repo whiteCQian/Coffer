@@ -1,0 +1,8 @@
+# Isolated acceptance only: limits trigger using small bodies, without filling any disk.
+services:
+  backend:
+    environment:
+      COFFER_WEB_LIMITS_ACCOUNT_BYTES: "1024"
+      COFFER_WEB_LIMITS_TOTAL_BYTES: "4096"
+      COFFER_WEB_LIMITS_PENDING_TASKS: "2"
+      COFFER_WEB_LIMITS_CONCURRENT_TASKS: "1"

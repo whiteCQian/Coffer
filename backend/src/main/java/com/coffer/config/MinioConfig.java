@@ -32,10 +32,26 @@ public class MinioConfig {
     public MinioClient minioClient(MinioProperties properties) {
         String endpoint = normalizeEndpoint(properties.getEndpoint(), properties.isSecure());
         log.info("初始化 MinIO 客户端");
-        return MinioClient.builder()
+        var builder = MinioClient.builder()
                 .endpoint(endpoint)
-                .credentials(properties.getAccessKey(), properties.getSecretKey())
-                .build();
+                .credentials(properties.getAccessKey(), properties.getSecretKey());
+        if (properties.getCaCertificate() != null && !properties.getCaCertificate().isBlank()) {
+            try {
+                if (!endpoint.startsWith("https://")) throw new IllegalStateException();
+                var store = java.security.KeyStore.getInstance(java.security.KeyStore.getDefaultType()); store.load(null);
+                try (var file = java.nio.file.Files.newInputStream(java.nio.file.Path.of(properties.getCaCertificate()))) {
+                    var certificates = java.security.cert.CertificateFactory.getInstance("X.509").generateCertificates(file);
+                    if (certificates.isEmpty()) throw new IllegalStateException();
+                    int index = 0; for (var certificate : certificates) store.setCertificateEntry("minio-ca-" + index++, certificate);
+                }
+                var factory = javax.net.ssl.TrustManagerFactory.getInstance(javax.net.ssl.TrustManagerFactory.getDefaultAlgorithm()); factory.init(store);
+                var trust = (javax.net.ssl.X509TrustManager)factory.getTrustManagers()[0];
+                var context = javax.net.ssl.SSLContext.getInstance("TLS"); context.init(null, new javax.net.ssl.TrustManager[]{trust}, null);
+                builder.httpClient(new okhttp3.OkHttpClient.Builder().sslSocketFactory(context.getSocketFactory(), trust)
+                        .connectTimeout(java.time.Duration.ofSeconds(2)).readTimeout(java.time.Duration.ofSeconds(30)).build());
+            } catch (Exception failure) { throw new IllegalStateException("MinIO TLS CA configuration unavailable"); }
+        }
+        return builder.build();
     }
 
     /**
@@ -78,5 +94,6 @@ public class MinioConfig {
 
         /** 是否启用 SSL（HTTPS），默认 false 使用 HTTP。 */
         private boolean secure = false;
+        private String caCertificate;
     }
 }

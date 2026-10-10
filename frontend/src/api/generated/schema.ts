@@ -2503,6 +2503,8 @@ export interface components {
             };
         };
         AuthStatusResponse: {
+            passwordMinLength?: number;
+            strongPasswordRequired?: boolean;
             setupRequired?: boolean;
             setupAvailable?: boolean;
         };

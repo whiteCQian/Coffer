@@ -8,6 +8,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  * 全局跨域配置：允许前端开发服务器访问后端接口。
  */
 @Configuration
+@org.springframework.context.annotation.Profile("dev & !prod & !desktop")
 public class CorsConfig implements WebMvcConfigurer {
 
     @Override

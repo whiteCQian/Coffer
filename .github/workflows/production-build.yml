@@ -1,0 +1,45 @@
+name: production-build
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  images-and-boundaries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Resolve production Compose and verify refusal boundaries
+        run: |
+          docker compose --env-file deploy/images.lock.env --env-file deploy/.env.example -f deploy/compose.yaml --profile redis --profile ops config --format json > /tmp/coffer-compose.json
+          python3 deploy/test_preflight.py /tmp/coffer-compose.json
+          python3 deploy/test_external_boundary.py
+          python3 deploy/test_recovery.py
+          python3 -m py_compile deploy/*.py
+          for file in deploy/*.sh; do bash -n "$file"; done
+      - name: Build server and static HTTPS frontend images
+        run: docker compose --env-file deploy/images.lock.env --env-file deploy/.env.example -f deploy/compose.yaml build --pull backend proxy mysql minio-init
+      - name: Parse actual image proxy configuration and verify backend entrypoints
+        run: |
+          docker run --rm -e COFFER_DOMAIN=files.example.com --entrypoint caddy coffer/web:2026.10.10 adapt --config /etc/caddy/Caddyfile --adapter caddyfile > /tmp/coffer-caddy.json
+          docker run --rm --entrypoint sh coffer/backend:2026.10.10 -ec 'test -f /app/classes/com/coffer/deployment/HealthcheckMain.class; test -f /app/classes/com/coffer/deployment/DatabaseMigrationMain.class; test -f /app/classes/com/coffer/deployment/RecoveryPointMain.class; test -f /app/classes/com/coffer/config/MinioConfig.class; test -x /app/entrypoint.sh'
+          docker run --rm --entrypoint sh coffer/mysql:2026.10.10 -ec 'test -x /opt/coffer-entrypoint.sh; command -v mysqld'
+      - name: Verify locked storage images contain the required probe and initialization tools
+        run: |
+          set -a
+          . deploy/images.lock.env
+          set +a
+          docker run --rm --entrypoint sh "$MINIO_IMAGE" -ec 'command -v curl; command -v minio'
+          docker run --rm --entrypoint sh coffer/mc:2026.10.10 -ec 'command -v mc; command -v grep; command -v date'
+      - name: Verify actual volume statfs without permission to traverse object data
+        run: |
+          object_volume="coffer-object-probe-${GITHUB_RUN_ID}"
+          receipt_volume="coffer-receipt-probe-${GITHUB_RUN_ID}"
+          trap 'docker volume rm "$object_volume" "$receipt_volume"' EXIT
+          docker volume create "$object_volume"
+          docker volume create "$receipt_volume"
+          docker run --rm --user 0:0 --entrypoint sh -v "$object_volume:/measure/minio" -v "$receipt_volume:/capacity" coffer/backend:2026.10.10 -ec 'chown 10001:10001 /measure/minio; chmod 0700 /measure/minio; chown 10002:10001 /capacity; chmod 0750 /capacity'
+          docker run --rm --user 10002:10001 --network none --cap-drop ALL --entrypoint sh -v "$object_volume:/measure/minio:ro" -v "$receipt_volume:/capacity" coffer/backend:2026.10.10 -ec 'test ! -r /measure/minio; test ! -x /measure/minio; java -cp "/app/classes:/app/lib/*" com.coffer.deployment.VolumeCapacityMain --once; test -s /capacity/minio-capacity.json'
+      # Running licensed AIStor and target HTTPS acceptance requires actual target authorization.
+      # This build job does not claim license/security/restore acceptance.

@@ -21,6 +21,11 @@ export const useAuthStore = defineStore('auth', () => {
   function boundary() { resetBoundary(); generation.value += 1 }
   function announce() { localStorage.setItem('coffer:identity-change', String(Date.now()) + Math.random()) }
   const isAdmin = computed(() => user.value?.role === 'ADMIN')
+  const passwordHint = computed(() => status.value.strongPasswordRequired ? '12–16 个字符，包含大小写字母和数字，避开常见弱口令' : '6–16 个字符')
+  function validNewPassword(value: string) {
+    return value.length >= (status.value.passwordMinLength ?? 6) && value.length <= 16
+      && (!status.value.strongPasswordRequired || /[A-Z]/.test(value) && /[a-z]/.test(value) && /[0-9]/.test(value) && !/(password|qwerty|123456|letmein|coffer|admin)/i.test(value))
+  }
 
   async function bootstrap(force = false) {
     if (initialized.value && !force) return
@@ -42,7 +47,7 @@ export const useAuthStore = defineStore('auth', () => {
     const response = await loginRequest(username, password)
     boundary()
     user.value = response.data.data
-    status.value = { setupRequired: false, setupAvailable: false }
+    status.value = { ...status.value, setupRequired: false, setupAvailable: false }
     initialized.value = true
     announce()
   }
@@ -51,7 +56,7 @@ export const useAuthStore = defineStore('auth', () => {
     const response = await setupInitialAdmin(token, username, password)
     boundary()
     user.value = response.data.data
-    status.value = { setupRequired: false, setupAvailable: false }
+    status.value = { ...status.value, setupRequired: false, setupAvailable: false }
     initialized.value = true
     announce()
   }
@@ -67,5 +72,5 @@ export const useAuthStore = defineStore('auth', () => {
     initialized.value = false
   }
 
-  return { user, status, initialized, generation, isAdmin, bootstrap, signIn, createInitialAdmin, signOut, clear, resetWorkspace: boundary }
+  return { user, status, initialized, generation, isAdmin, passwordHint, validNewPassword, bootstrap, signIn, createInitialAdmin, signOut, clear, resetWorkspace: boundary }
 })

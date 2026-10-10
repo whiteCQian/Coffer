@@ -33,6 +33,10 @@ public class AccountService {
 
     @Value("${coffer.auth.initial-admin-token:}")
     private String initialAdminToken;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private PasswordPolicy passwordPolicy;
+    public int passwordMinimumLength() { return passwordPolicy == null ? 6 : passwordPolicy.minimumLength(); }
+    public boolean strongPasswordRequired() { return passwordPolicy != null && passwordPolicy.strongRequired(); }
 
     @Transactional(readOnly = true)
     public boolean isSetupRequired() {
@@ -198,6 +202,7 @@ public class AccountService {
     }
 
     private void validatePassword(String password) {
+        if (passwordPolicy != null) { passwordPolicy.validate(password); return; }
         if (password == null || password.length() < 6 || password.length() > 16) {
             throw new AuthFailureException(HttpStatus.BAD_REQUEST,
                     "密码长度须为 6–16 个字符");

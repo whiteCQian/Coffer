@@ -14,7 +14,9 @@ public class AuthExceptionAdvice {
 
     @ExceptionHandler(AuthFailureException.class)
     public ResponseEntity<Result<Void>> authFailure(AuthFailureException exception) {
-        return ResponseEntity.status(exception.status())
+        var response = ResponseEntity.status(exception.status());
+        if (exception.status().value() == 429) response.header("Retry-After", "900");
+        return response
                 .body(Result.error(exception.status().value(), exception.getMessage()));
     }
 }

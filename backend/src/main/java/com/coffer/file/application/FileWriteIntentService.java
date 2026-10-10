@@ -35,6 +35,8 @@ public class FileWriteIntentService {
     private final FileMetadataRepository files;
     private final AsyncTaskRepository tasks;
     private final com.coffer.auth.infrastructure.AppUserRepository owners;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.coffer.web.WebLimits webLimits;
     @org.springframework.beans.factory.annotation.Value("${coffer.storage.write-recovery-max-attempts:2}")
     private int maxRecoveryAttempts;
     @org.springframework.beans.factory.annotation.Value("${coffer.storage.orphan-retention-hours:24}")
@@ -53,6 +55,7 @@ public class FileWriteIntentService {
                 || !("UPLOAD".equals(kind) || "IMPORT".equals(kind))) {
             throw new IllegalArgumentException("上传意图无效");
         }
+        if (webLimits != null) webLimits.admitTask(taskId);
         lockOwnerForKeyReservation();
         if (intents.existsById(id) || files.existsByStoragePath(key)
                 || intents.existsByObjectKeyAndStatusIn(key, ACTIVE_KEY_STATES))

@@ -4,6 +4,10 @@
 >
 基于 AI Agent 的智能文件存储管理系统。核心闭环：**文件上传 → 异步 AI 解析/打标/摘要 → 标签人工确认 → 自然语言对话搜索（工具调用 + 会话记忆）**。附带多模态图片理解（Qwen-VL）与文件分类归档。
 
+Web/NAS 生产构建与安装入口见 [生产发布说明](deploy/README.md)：静态 Vue + HTTPS 代理、独立 MySQL/MinIO 持久卷、可重建的可选 Redis、最小权限账号、镜像摘要与备份恢复检查。生产会话记忆使用 MySQL；下方 Vite/本机旧 MinIO 启动流程仅用于本地运行。目标授权、容器安装和服务器验收未完成前，不视为生产交付完成。prod 必须显式配置 `COFFER_DB_URL`、`MYSQL_USERNAME`、`MYSQL_PASSWORD`，不再默认使用 localhost/root。
+
+Web 安全和容量实现及验收见 [R42](docs/plans/R42-Web安全与容量验收.md)：服务间证书校验、强口令和持久限流、8h 绝对会话期限、账号存储/任务限额与实际 MinIO 卷预警。生产新密码要求 12–16 字符，包含大小写字母和数字；开发和桌面保留既有 6–16 字符策略。
+
 ## 目录结构
 
 ```
@@ -14,11 +18,18 @@ Coffer/
 ├── frontend/             # 前端 Vue3 + Element Plus（Vite）
 │   ├── src/              # 页面 / 组件 / Pinia store / 路由
 │   └── node_modules/     # 依赖（缺失时 start-all.bat 首次会自动 npm install）
-├── docs/                 # 接口与设计文档、任务清单、SQL
+├── desktop/              # Electron 桌面应用、打包配置与测试
+├── docs/                 # 接口、架构、计划、使用说明与历史资料
+├── scripts/              # 启动、构建、备份与验收脚本
+├── logs/                 # 运行日志；archive/ 按整理日期保存历史测试日志
+├── data/                 # 本地 H2 数据（不纳入 Git）
+├── .coffer-runtime/      # 进程状态、Redis 数据与本地运行产物（不纳入 Git）
 ├── start-all.bat         # 一键启动（推荐）
 ├── stop-all.bat          # 停止后端与前端
 └── README.md
 ```
+
+完整分类与历史日志位置见[项目目录说明](docs/guides/目录说明.md)。
 
 ## 一键启动（推荐）
 
@@ -56,7 +67,7 @@ $env:MINIO_ROOT_PASSWORD = "replace-with-minio-password"
 
 > 说明：端口已被占用时，脚本会复用已运行的 Redis/MinIO；8080 和 5173 则分别做健康/API 与前端首页检查。缺少前端依赖时会使用 `npm ci` 或 `pnpm install`，完成后直接用 Node 启动 Vite。脚本不会按进程名批量杀进程。
 
-> **数据持久化说明（重要）**：`start-all.bat` 以后端 `prod` 配置启动，优先使用 `COFFER_DB_URL` 指定的 MySQL 库；未设置时使用本机 `coffer` 库。Flyway 会在启动时运行数据库迁移，旧的无 owner 数据不会分配给新账号，也不会被启动脚本删除。正式迁移前仍需遵循[最终落地计划](docs/plans/AgentFS最终落地执行计划.md)完成快照和旧数据清理审批。测试环境使用独立内存 H2。旧 `docs/archive/sql/fulltext_search.sql` 仅作为历史参考，不再作为正式迁移入口。
+> **数据持久化说明（重要）**：`start-all.bat` 以后端 `prod` 配置启动，必须显式配置 `COFFER_DB_URL`、`MYSQL_USERNAME`、`MYSQL_PASSWORD`。本机入口的 Flyway 会在启动时运行数据库迁移，旧的无 owner 数据不会分配给新账号，也不会被启动脚本删除；生产 Compose 则使用独立迁移账号和一次性迁移服务。正式迁移前仍需遵循[最终落地计划](docs/plans/AgentFS最终落地执行计划.md)完成快照和旧数据清理审批。测试环境使用独立内存 H2。旧 `docs/archive/sql/fulltext_search.sql` 仅作为历史参考，不再作为正式迁移入口。
 
 ## 技术栈
 
@@ -67,7 +78,7 @@ $env:MINIO_ROOT_PASSWORD = "replace-with-minio-password"
 | AI 编排 | LangChain4j 1.18.1 `AiServices`（`@Tool` 工具 + 原生 `ChatMemory`） |
 | 对话模型 | DeepSeek（OpenAI 兼容，chat + streaming） |
 | 多模态 | Qwen-VL（DashScope，图片分析） |
-| 存储 | MinIO（对象存储 + 预览 URL）；Redis（会话记忆持久化） |
+| 存储 | MinIO（私有对象存储，鉴权 API 读取）；prod 会话记忆由 MySQL 持久化，Redis 为可选向量缓存；dev 会话记忆仍使用 Redis |
 | 数据库 | dev = H2 文件库；test = H2 内存库；prod = MySQL 8 + Flyway + FULLTEXT（ngram 中文检索） |
 | 接口文档 | Knife4j / OpenAPI（`/doc.html`） |
 

@@ -7,7 +7,7 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
-@Component @Profile("!desktop") @RequiredArgsConstructor @com.coffer.auth.service.OwnerOnly
+@Component @Profile("!desktop & !prod") @RequiredArgsConstructor @com.coffer.auth.service.OwnerOnly
 public class RedisMemoryCleanup implements MemoryCleanup {
     private final StringRedisTemplate redis;
     public void delete(String sessionId) {

@@ -12,6 +12,8 @@ export interface AuthUser {
 export interface AuthStatus {
   setupRequired: boolean
   setupAvailable: boolean
+  passwordMinLength?: number
+  strongPasswordRequired?: boolean
 }
 
 export interface AccountAudit {

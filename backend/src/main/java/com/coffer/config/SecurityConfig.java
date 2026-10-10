@@ -55,6 +55,7 @@ public class SecurityConfig {
         CookieCsrfTokenRepository csrf = CookieCsrfTokenRepository.withHttpOnlyFalse();
         csrf.setCookiePath("/");
         csrf.setSecure(secureCookie);
+        csrf.setCookieCustomizer(cookie -> cookie.sameSite("Strict"));
 
         http
                 .cors(Customizer.withDefaults())
@@ -62,6 +63,8 @@ public class SecurityConfig {
                         .csrfTokenRequestHandler(new SpaCsrfTokenRequestHandler()))
                 .securityContext(config -> config.securityContextRepository(securityContextRepository)
                         .requireExplicitSave(true))
+                .addFilterAfter(new com.coffer.auth.service.SessionLifetimeFilter(environment.matchesProfiles("prod"), objectMapper), SecurityContextHolderFilter.class)
+                .addFilterAfter(new com.coffer.auth.service.WebRequestConcurrencyFilter(environment.matchesProfiles("prod"), objectMapper), SecurityContextHolderFilter.class)
                 .addFilterAfter(tenantContextFilter, SecurityContextHolderFilter.class)
                 .sessionManagement(config -> config.sessionFixation(fixation -> fixation.changeSessionId()))
                 .requestCache(AbstractHttpConfigurer::disable)
@@ -99,7 +102,7 @@ public class SecurityConfig {
         serializer.setUseHttpOnlyCookie(true);
         serializer.setUseSecureCookie(secureCookie);
         serializer.setSameSite("Lax");
-        serializer.setCookieMaxAge(30 * 60);
+        serializer.setCookieMaxAge(-1);
         return serializer;
     }
 

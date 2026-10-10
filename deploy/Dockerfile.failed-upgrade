@@ -1,0 +1,5 @@
+# Controlled Flyway non-transactional DDL failure for isolated R43 drill only.
+FROM coffer/backend:2026.10.10
+USER 0:0
+RUN printf '%s\n' 'CREATE TABLE upgrade_partial_probe(id INT PRIMARY KEY);' 'INSERT INTO upgrade_partial_probe VALUES(1);' 'SELECT * FROM intentionally_missing_upgrade_dependency;' > /app/classes/db/migration/mysql/V44__drill_failure.sql
+USER 10001:10001

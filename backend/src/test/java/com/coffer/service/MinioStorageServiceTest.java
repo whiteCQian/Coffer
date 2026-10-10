@@ -57,6 +57,14 @@ class MinioStorageServiceTest {
                 .isInstanceOf(StorageConflictException.class);
         verifyNoInteractions(client);
     }
+    @Test void quotaRejectionPreventsMinioIoAndStagingBeforeAnyObjectWrite() {
+        var quota=mock(com.coffer.web.WebLimits.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"webLimits",quota);
+        doThrow(new com.coffer.web.WebLimitException(507,"MinIO 持久卷剩余容量不足")).when(quota).reserve("users/7/files/new.txt",1L);
+        assertThatThrownBy(()->service.write("users/7/files/new.txt",new ByteArrayInputStream(new byte[]{'x'}),"text/plain",1L))
+                .isInstanceOf(com.coffer.web.WebLimitException.class);
+        verifyNoInteractions(client);
+    }
 
     @Test void deletionRequiresMatchingSha256() throws Exception {
         var existing = mock(StatObjectResponse.class);

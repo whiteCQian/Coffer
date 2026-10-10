@@ -46,7 +46,7 @@ public class AuthController {
 
     @GetMapping("/status")
     public Result<AuthStatusResponse> status() {
-        return Result.success(new AuthStatusResponse(accounts.isSetupRequired(), accounts.isSetupAvailable()));
+        return Result.success(new AuthStatusResponse(accounts.isSetupRequired(), accounts.isSetupAvailable(), accounts.passwordMinimumLength(), accounts.strongPasswordRequired()));
     }
 
     @GetMapping("/csrf")
@@ -68,6 +68,7 @@ public class AuthController {
                                           HttpServletRequest request, HttpServletResponse response) {
         String username = body.username().trim().toLowerCase(java.util.Locale.ROOT);
         rateLimiter.requireAllowed("login:" + clientAddressResolver.clientKey(request), 10, Duration.ofMinutes(15));
+        rateLimiter.requireAllowed("login-account:" + username, 30, Duration.ofMinutes(15));
         try {
             Authentication authentication = authenticationManager.authenticate(
                     UsernamePasswordAuthenticationToken.unauthenticated(username, body.password()));
@@ -108,6 +109,8 @@ public class AuthController {
 
     private void saveAuthentication(Authentication authentication, HttpServletRequest request,
                                     HttpServletResponse response) {
+        HttpSession previous = request.getSession(false);
+        if (previous != null) previous.invalidate();
         request.getSession(true);
         request.changeSessionId();
         SecurityContext context = SecurityContextHolder.createEmptyContext();

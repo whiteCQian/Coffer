@@ -41,6 +41,8 @@ public class MinioStorageService implements FileStoragePort {
 
     private final MinioClient minioClient;
     private final MinioConfig.MinioProperties minioProperties;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.coffer.web.WebLimits webLimits;
 
     @Override
     public java.util.List<String> listOwnedKeys() {
@@ -98,6 +100,7 @@ public class MinioStorageService implements FileStoragePort {
     public StoredObject write(String key, InputStream source, String contentType, long size) {
         StorageKey.requireOwned(key);
         if (source == null || size < 0) throw new IllegalArgumentException("无效的文件流或长度");
+        if (webLimits != null) webLimits.reserve(key, size);
         requireVersionedBucket();
         Path staged = null;
         try {
@@ -127,6 +130,7 @@ public class MinioStorageService implements FileStoragePort {
                 if (response.versionId() == null || response.versionId().isBlank())
                     throw new StorageConflictException("MinIO 写入未返回对象版本，需人工核对");
                 requireOnlyVersion(key, response.versionId());
+                if (webLimits != null) webLimits.stored(key);
                 return new StoredObject(key, size, sha256, response.etag(), response.versionId());
             } catch (ErrorResponseException e) {
                 if (isWriteConflict(e)) throw new StorageConflictException(key);
@@ -287,7 +291,12 @@ public class MinioStorageService implements FileStoragePort {
     public void delete(String key, String expectedSha256) {
         StorageKey.requireOwned(key);
         requireVersionedBucket();
-        StoredObject current = stat(key);
+        StoredObject current;
+        try { current = stat(key); }
+        catch (StorageObjectNotFoundException missing) {
+            if (webLimits != null) { requireNoVersions(key); webLimits.deleted(key); }
+            throw missing;
+        }
         if (expectedSha256 == null || !expectedSha256.equals(current.sha256())) {
             throw new StorageConflictException(key);
         }
@@ -300,6 +309,7 @@ public class MinioStorageService implements FileStoragePort {
                     .bucket(resolveBucketName(null)).object(key)
                     .versionId(current.versionId()).build());
             requireNoVersions(key);
+            if (webLimits != null) webLimits.deleted(key);
         } catch (StorageConflictException e) {
             throw e;
         } catch (ErrorResponseException e) {

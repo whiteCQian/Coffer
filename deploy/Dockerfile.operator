@@ -1,0 +1,4 @@
+# Trusted operator tooling. Socket access is limited to administrator-run CLI containers.
+FROM docker:29.8.2-cli@sha256:35cfcf893c20f2931f4909151b5407aaaeab711277de7ce8b8f521f095d54c32
+RUN apk add --no-cache python3 gnupg openssl
+ENTRYPOINT ["python3"]

@@ -11,6 +11,8 @@ import type { FileListResponse, FileStatus, TagCandidate } from '@/api/types'
 import FileDetailDrawer from '@/components/FileDetailDrawer.vue'
 import FileTile from '@/components/FileTile.vue'
 import DesktopImportPanel from '@/components/DesktopImportPanel.vue'
+import StorageQuotaPanel from '@/components/StorageQuotaPanel.vue'
+import { useAuthStore } from '@/stores/auth'
 import { desktopBridge } from '@/api/desktop'
 import { formatBytes, shortTime, toDisplayTime } from '@/utils/format'
 
@@ -19,6 +21,7 @@ import { formatBytes, shortTime, toDisplayTime } from '@/utils/format'
  * 固定分类（合同/发票/证件…）只作内部归档目录，不在此展示，也不按分类筛选。
  */
 const PAGE_SIZE = 12
+const auth = useAuthStore()
 
 const keyword = ref('')
 /** 点选标签芯片后的精确筛选标签名（空 = 不限） */
@@ -337,6 +340,7 @@ onMounted(() => {
       </div>
       <input ref="uploadInput" type="file" hidden @change="onUploadPicked" />
     </header>
+    <StorageQuotaPanel v-if="auth.status.strongPasswordRequired" />
 
     <DesktopImportPanel ref="nativeImport" @queued="reload()" />
     <!-- 浏览面板 -->

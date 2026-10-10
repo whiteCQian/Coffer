@@ -19,8 +19,8 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.*;
 
-/** Desktop memory uses the same authorized tool-frame/revision envelope as server memory. */
-@Service @Profile("desktop") @RequiredArgsConstructor @Transactional
+/** Durable owner-scoped memory for desktop and production Web/NAS; Redis is rebuildable. */
+@Service @Profile("desktop | prod") @RequiredArgsConstructor @Transactional
 public class DatabaseChatMemoryStore implements ChatMemoryStore {
     private final ChatMemoryRecordRepository records;
     private final ObjectMapper json;

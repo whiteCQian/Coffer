@@ -56,7 +56,7 @@ public class PrivacyService {
         if (maxExportFiles <= 0 || maxExportRecords <= 0 || maxExportBytes <= 0)
             throw new IllegalStateException("隐私导出资源上限无效");
         if (files.count() > maxExportFiles)
-            throw new IllegalArgumentException("文件数量超过单次导出上限");
+            throw new com.coffer.web.WebLimitException(413, "文件数量超过单次导出上限，请分批下载文件");
         try (ZipOutputStream zip = new ZipOutputStream(output, java.nio.charset.StandardCharsets.UTF_8)) {
             var bounded = new BoundedExportOutput(zip, maxExportBytes);
             zip.putNextEntry(new ZipEntry("manifest.json"));
@@ -64,7 +64,7 @@ public class PrivacyService {
             zip.closeEntry();
             int exportedFiles = 0;
             for (var file : files.findAll()) {
-                if (++exportedFiles > maxExportFiles) throw new IllegalArgumentException("文件数量超过单次导出上限");
+                if (++exportedFiles > maxExportFiles) throw new com.coffer.web.WebLimitException(413, "文件数量超过单次导出上限，请分批下载文件");
                 if (!owner.equals(authorization.requireOwner()) || !owner.equals(file.getOwnerId()))
                     throw new ResourceNotFoundException();
                 var observed = storage.stat(file.getStoragePath());
@@ -107,7 +107,7 @@ public class PrivacyService {
                             (org.springframework.jdbc.core.PreparedStatementSetter) statement -> statement.setLong(1, owner),
                             (org.springframework.jdbc.core.RowCallbackHandler) result -> {
                                 if (++rows[0] > maxExportRecords)
-                                    throw new IllegalArgumentException("记录数量超过单次导出上限");
+                                    throw new com.coffer.web.WebLimitException(413, "记录数量超过单次导出上限，请联系管理员进行受控导出");
                                 var metadata = result.getMetaData();
                                 Map<String, Object> row = new LinkedHashMap<>();
                                 for (int column = 1; column <= metadata.getColumnCount(); column++) {
@@ -115,7 +115,7 @@ public class PrivacyService {
                                     if (value instanceof java.sql.Clob clob) {
                                         long length = clob.length();
                                         if (length > 8L * 1024 * 1024)
-                                            throw new IllegalArgumentException("单条导出记录超过大小上限");
+                                            throw new com.coffer.web.WebLimitException(413, "单条导出记录超过大小上限，请联系管理员进行受控导出");
                                         value = clob.getSubString(1, Math.toIntExact(length));
                                     }
                                     row.put(metadata.getColumnLabel(column), value);
@@ -147,7 +147,7 @@ public class PrivacyService {
             reserve(length); out.write(value, offset, length);
         }
         private void reserve(long size) {
-            if (size > max - written) throw new IllegalArgumentException("导出内容超过单次大小上限");
+            if (size > max - written) throw new com.coffer.web.WebLimitException(413, "导出内容超过单次大小上限，请分批下载文件或联系管理员");
             written += size;
         }
     }

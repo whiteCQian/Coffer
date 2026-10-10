@@ -18,7 +18,7 @@ import java.util.*;
 
 /** Versioned envelopes deliberately do not import unowned legacy Redis keys. */
 @Component
-@org.springframework.context.annotation.Profile("!desktop")
+@org.springframework.context.annotation.Profile("!desktop & !prod")
 @RequiredArgsConstructor
 public class RedisChatMemoryStore implements ChatMemoryStore {
     public static final String KEY_PREFIX = "chat:memory:v2:";

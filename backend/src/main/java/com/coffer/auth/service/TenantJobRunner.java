@@ -10,8 +10,11 @@ import org.springframework.stereotype.Component;
 public class TenantJobRunner {
 
     private final AppUserRepository users;
+    @org.springframework.beans.factory.annotation.Value("${coffer.recovery.hold:false}")
+    private boolean recoveryHold;
 
     public void runForEnabledOwners(java.util.function.LongConsumer action) {
+        if(recoveryHold)return;
         for (Long ownerId : users.findEnabledOwnerIds()) {
             try {
                 TenantContext.runAs(ownerId, () -> action.accept(ownerId));

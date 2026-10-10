@@ -1,0 +1,11 @@
+# Explicitly test-only; never use this override as production support/license evidence.
+services:
+  minio:
+    image: coffer/reference-minio:7aac2a2c5b7c
+    command: [server, /data, --console-address, ':9001', --certs-dir, /run/minio-tls]
+    secrets: !override [minio_root_user, minio_root_password]
+  proxy:
+    ports: !reset []
+    networks:
+      ingress:
+        aliases: [coffer-drill.test]

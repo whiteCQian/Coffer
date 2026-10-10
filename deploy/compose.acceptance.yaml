@@ -1,0 +1,19 @@
+# Test-only override; never include in a production release installation.
+services:
+  fixture:
+    init: true
+    image: node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20
+    user: "10001:10001"
+    command: [node, /fixture/model.cjs]
+    volumes: [./test-model.cjs:/fixture/model.cjs:ro]
+    networks: [model_egress]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  backend:
+    environment:
+      COFFER_LOCAL_MODEL_ALLOWED_HOSTS: fixture
+      COFFER_LOCAL_MODEL_ALLOWED_PORTS: "8088"
+      COFFER_LOCAL_CHAT_BASE_URL: http://fixture:8088/v1
+      COFFER_LOCAL_VISION_BASE_URL: http://fixture:8088/v1
+      COFFER_LOCAL_EMBEDDING_BASE_URL: http://fixture:8088/v1

@@ -30,7 +30,10 @@ public class RuntimeMonitor {
     private final ObjectProvider<RedisConnectionFactory> redis;
     private final ObjectMapper mapper;
     private final boolean desktop;
+    private final boolean optionalRedis;
     private final String localRoot;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.coffer.web.MinioVolumeCapacity minioCapacity;
     private final ThreadPoolExecutor workers = new ThreadPoolExecutor(4, 4, 0, TimeUnit.MILLISECONDS,
             new SynchronousQueue<>(), r -> { var t = new Thread(r, "coffer-runtime-probe"); t.setDaemon(true); return t; },
             new ThreadPoolExecutor.AbortPolicy());
@@ -41,6 +44,7 @@ public class RuntimeMonitor {
                           @Value("${coffer.storage.local.root:}") String localRoot) {
         this.properties = properties; this.storage = storage; this.redis = redis; this.mapper = mapper;
         this.desktop = environment.matchesProfiles("desktop"); this.localRoot = localRoot;
+        this.optionalRedis = environment.matchesProfiles("prod");
         this.dataSource = dataSource; this.jdbc = new JdbcTemplate(dataSource); jdbc.setQueryTimeout(2);
     }
 
@@ -50,7 +54,7 @@ public class RuntimeMonitor {
         Component database = new Component("database", counts.isEmpty() ? "DOWN" : "UP",
                 counts.isEmpty() ? "DATABASE_UNAVAILABLE" : "OK", counts.isEmpty() ? "CHECK_DATABASE" : "NONE", null, null);
         Component objectStore = bounded(storage::check, new Component("storage", "DOWN", "PROBE_TIMEOUT", "CHECK_STORAGE", null, null));
-        Component redisStatus = bounded(this::redisCheck, new Component("redis", "DOWN", "PROBE_TIMEOUT", "CHECK_REDIS", null, null));
+        Component redisStatus = bounded(this::redisCheck, new Component("redis", optionalRedis ? "DEGRADED" : "DOWN", "PROBE_TIMEOUT", "CHECK_REDIS", null, null));
         Component capacity = bounded(this::capacity, new Component("capacity", "DOWN", "PROBE_TIMEOUT", "CHECK_CAPACITY", null, null));
         Component backup = bounded(this::backup, new Component("backup", "DOWN", "RECEIPT_INVALID", "CHECK_BACKUP", null, null));
         List<Component> components = List.of(database, objectStore, redisStatus, capacity, backup);
@@ -141,9 +145,19 @@ public class RuntimeMonitor {
                 if (!"PONG".equals(connection.ping())) throw new IllegalStateException();
             }
             return new Component("redis", "UP", "OK", "NONE", null, null);
-        } catch (Exception failure) { return new Component("redis", "DOWN", "REDIS_UNAVAILABLE", "CHECK_REDIS", null, null); }
+        } catch (Exception failure) { return new Component("redis", optionalRedis ? "DEGRADED" : "DOWN", "REDIS_UNAVAILABLE", "CHECK_REDIS", null, null); }
     }
     private Component capacity() throws Exception {
+        if (optionalRedis && minioCapacity != null) {
+            try {
+                var sample = minioCapacity.sample();
+                boolean low = sample.freeBytes() < properties.getMinimumFreeBytes()
+                        || (double)sample.freeBytes() / sample.totalBytes() * 100 < properties.getMinimumFreePercent();
+                return new Component("capacity", low ? "DEGRADED" : "UP", low ? "MINIO_DISK_LOW" : "OK", low ? "FREE_MINIO_CAPACITY" : "NONE", sample.totalBytes(), sample.freeBytes());
+            } catch (com.coffer.web.WebLimitException unavailable) {
+                return new Component("capacity", "DOWN", "MINIO_CAPACITY_STALE", "CHECK_MINIO_VOLUME_PROBE", null, null);
+            }
+        }
         String location = desktop ? localRoot : properties.getStorageVolume();
         if (location == null || location.isBlank()) return new Component("capacity", "UNKNOWN", "VOLUME_NOT_CONFIGURED", "CONFIGURE_CAPACITY", null, null);
         Path path = Path.of(location);

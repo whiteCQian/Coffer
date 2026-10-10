@@ -1,0 +1,49 @@
+{
+    admin off
+    auto_https off
+}
+https://{$COFFER_DOMAIN}:8443 {
+    tls /run/tls/fullchain.pem /run/tls/privkey.pem {
+        protocols tls1.2 tls1.3
+    }
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options nosniff
+        Referrer-Policy same-origin
+        X-Frame-Options DENY
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+        -Server
+    }
+    request_body {
+        max_size 34MB
+    }
+    @credentials path /api/auth/* /api/admin/users*
+    request_body @credentials {
+        max_size 16KB
+    }
+    @blocked path /api/debug* /h2-console* /actuator* /v3/api-docs* /swagger-ui* /doc.html /minio* /buckets* /users/*
+    handle @blocked {
+        respond 404
+    }
+    handle /api/* {
+        reverse_proxy backend:8080 {
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto https
+            header_up -Forwarded
+            flush_interval -1
+            transport http {
+                response_header_timeout 120s
+            }
+        }
+    }
+    handle {
+        root * /srv
+        @assets path /assets/*
+        header @assets Cache-Control "public, max-age=31536000, immutable"
+        @document not path /assets/*
+        header @document Cache-Control "no-cache"
+        try_files {path} /index.html
+        file_server
+    }
+}

@@ -27,7 +27,7 @@ public class AsyncConfig {
      *
      * <p>核心线程数 2 可并行处理并发上传请求，最大线程数 4 允许高峰期临时扩容，
      * 队列容量 100 缓冲大量等待任务而不会拒绝请求；线程池与队列均满时以
-     * {@link ThreadPoolExecutor.CallerRunsPolicy} 由调用线程执行，减缓任务提交速度而非直接拒绝。
+     * {@link ThreadPoolExecutor.AbortPolicy} 显式拒绝，由持久任务失败与重试流程处理。
      * 应用关闭时等待任务完成，最长 60 秒，避免任务丢失。
      *
      * @return 线程池执行器
@@ -40,8 +40,8 @@ public class AsyncConfig {
         executor.setQueueCapacity(100);
         executor.setThreadNamePrefix("coffer-async-");
         executor.setTaskDecorator(new TenantContextTaskDecorator());
-        // 线程池与队列满时由调用线程执行，减缓任务提交速度，避免拒绝请求
-        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        // Queue saturation must not run extra model tasks on the HTTP thread.
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(60);
         executor.initialize();

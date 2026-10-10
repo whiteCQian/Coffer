@@ -323,6 +323,8 @@
                                 <exclude>**/config/BucketInitializer.java</exclude>
                                 <exclude>**/config/MinioStorageHealthIndicator.java</exclude>
                                 <exclude>**/config/ServerStorageProbe.java</exclude>
+                                <exclude>**/config/MinioQuotaInitializer.java</exclude>
+                                <exclude>**/deployment/RecoveryPointMain.java</exclude>
                             </excludes>
                         </configuration>
                     </plugin>

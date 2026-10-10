@@ -53,3 +53,17 @@ coffer-initial-admin-token.txt
 /frontend/.test-tmp/
 /desktop/.build/
 /desktop/.test-tmp/
+
+# GPU driver diagnostic directories may appear when desktop tools run here.
+/NVIDIA Corporation/
+
+# Production target credentials, TLS material, backup archives and evidence.
+/deploy/.env
+/deploy/secrets/
+/deploy/tls/
+/deploy/evidence/
+/deploy/backups/
+/deploy/__pycache__/
+/deploy/internal-tls/
+/deploy/.maintenance.json
+/deploy/.active-compose.json

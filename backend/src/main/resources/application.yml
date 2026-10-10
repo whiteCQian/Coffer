@@ -310,10 +310,10 @@ spring:
       on-profile: prod
 
   datasource:
-    url: "${COFFER_DB_URL:jdbc:mysql://localhost:3306/coffer?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf-8&allowPublicKeyRetrieval=true}"
+    url: "${COFFER_DB_URL}"
     driver-class-name: com.mysql.cj.jdbc.Driver
-    username: ${MYSQL_USERNAME:root}
-    password: ${MYSQL_PASSWORD:}
+    username: ${MYSQL_USERNAME}
+    password: ${MYSQL_PASSWORD}
     # Hikari 连接池参数
     hikari:
       maximum-pool-size: 10
@@ -335,6 +335,31 @@ spring:
 coffer:
   auth:
     cookie-secure: ${COFFER_COOKIE_SECURE:true}
+  model-log:
+    enabled: false
+
+server:
+  forward-headers-strategy: none
+
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+knife4j:
+  production: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+
+logging:
+  level:
+    org.springframework.web: WARN
+    dev.langchain4j: OFF
 
 # ==================== Desktop: a private H2 database and local library ====================
 ---

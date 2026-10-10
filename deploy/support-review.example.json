@@ -1,0 +1,11 @@
+{
+  "reviewedAt": "REPLACE_WITH_UTC_ISO_DATE",
+  "validUntil": "REPLACE_WITH_UTC_ISO_DATE",
+  "productionUseAuthorized": false,
+  "vendorSupportActive": false,
+  "licenseReference": "REPLACE_WITH_TARGET_LICENSE_OR_CONTRACT_REFERENCE",
+  "supportReference": "REPLACE_WITH_VENDOR_SUBSCRIPTION_REFERENCE",
+  "securityReviewReference": "REPLACE_WITH_SCAN_AND_ADVISORY_REVIEW_REFERENCE",
+  "approvedMinioImage": "COPY_MINIO_IMAGE_FROM_images.lock.env",
+  "approvedMcImage": "COPY_MC_IMAGE_FROM_images.lock.env"
+}

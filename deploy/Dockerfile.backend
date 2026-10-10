@@ -1,0 +1,17 @@
+FROM maven:3.9-eclipse-temurin-17@sha256:1a352420f7aba21f5ad08df31bab55f74c013fb491f1ae8ab1dd7ff9ed698584 AS build
+WORKDIR /build
+COPY backend/pom.xml ./pom.xml
+COPY backend/src ./src
+RUN mvn --batch-mode --no-transfer-progress -Pserver -DskipTests package && \
+    mkdir unpack && cd unpack && jar -xf ../target/coffer-backend-0.0.1-SNAPSHOT.jar
+
+FROM eclipse-temurin:17-jre-jammy@sha256:8993f1aed8b25fcea7a7047a7949c1866fa558fc6830d938c22c4f13b26be9d7
+WORKDIR /app
+COPY --from=build /build/unpack/BOOT-INF/classes /app/classes
+COPY --from=build /build/unpack/BOOT-INF/lib /app/lib
+COPY deploy/backend-entrypoint.sh /app/entrypoint.sh
+RUN chmod 0555 /app/entrypoint.sh && mkdir /state && chown 10001:10001 /state
+USER 10001:10001
+ENV SPRING_PROFILES_ACTIVE=prod COFFER_LOG_DIR=/state/logs
+EXPOSE 8080 8081
+ENTRYPOINT ["/app/entrypoint.sh"]

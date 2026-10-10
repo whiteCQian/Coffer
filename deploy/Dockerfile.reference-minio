@@ -1,0 +1,14 @@
+# Isolated compatibility/recovery fixture only. Archived AGPL source, NOT supported production AIStor.
+FROM golang:1.24.8-bookworm@sha256:4ed690d6649d63c312b99a6120025ec79ce3b542968a37da53d6236c7c61a848 AS build
+ADD --checksum=sha256:71794c2df26aad0cc99e8421c58b7aa2dd55969f979b0e7d1e931042e9fabcd6 https://codeload.github.com/minio/minio/tar.gz/7aac2a2c5b7c882e68c1ce017d8256be2feea27f /source.tgz
+RUN mkdir /source && tar -xzf /source.tgz -C /source --strip-components=1
+WORKDIR /source
+RUN CGO_ENABLED=0 go build -trimpath -o /minio .
+FROM eclipse-temurin:17-jre-jammy@sha256:8993f1aed8b25fcea7a7047a7949c1866fa558fc6830d938c22c4f13b26be9d7
+COPY --from=build /minio /usr/local/bin/minio
+COPY --from=build /source/LICENSE /source/NOTICE /licenses/
+COPY --from=build /source.tgz /licenses/corresponding-source.tgz
+COPY deploy/reference-minio-entrypoint.sh /opt/reference-entrypoint.sh
+RUN chmod 0555 /opt/reference-entrypoint.sh
+USER 10001:10001
+ENTRYPOINT ["/opt/reference-entrypoint.sh"]

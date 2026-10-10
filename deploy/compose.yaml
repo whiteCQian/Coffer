@@ -1,0 +1,279 @@
+name: ${COMPOSE_PROJECT_NAME:-coffer}
+x-logging: &logging
+  driver: json-file
+  options: {max-size: "10m", max-file: "3"}
+x-backend: &backend
+  image: coffer/backend:${COFFER_RELEASE:?release required}
+  build: {context: .., dockerfile: deploy/Dockerfile.backend}
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: ['/tmp:size=384m,mode=1777']
+  logging: *logging
+
+services:
+  volume-init:
+    <<: *backend
+    user: "0:0"
+    cap_add: [CHOWN, FOWNER, DAC_OVERRIDE]
+    network_mode: none
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - mkdir -p /minio /state /capacity; chown 10001:10001 /minio /state; chmod 0700 /minio /state; chown 10002:10001 /capacity; chmod 0750 /capacity
+    volumes: [minio_data:/minio, backend_state:/state, capacity_data:/capacity]
+    restart: "no"
+
+  mysql:
+    image: coffer/mysql:${COFFER_RELEASE:?release required}
+    build: {context: .., dockerfile: deploy/Dockerfile.mysql}
+    environment:
+      MYSQL_DATABASE: coffer
+    command: [mysqld, --skip-name-resolve, --local-infile=0, --event-scheduler=OFF, --require-secure-transport=ON, --ssl-ca=/run/db-tls/ca.pem, --ssl-cert=/run/db-tls/server.crt, --ssl-key=/run/db-tls/server.key]
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./mysql-init.sh:/docker-entrypoint-initdb.d/10-coffer.sh:ro
+      - ./internal-tls/db/server:/run/db-tls:ro
+    secrets: [db_root_password, db_app_password, db_migrate_password]
+    networks: [data]
+    healthcheck:
+      test: [CMD-SHELL, 'MYSQL_PWD="$$(cat /run/secrets/db_root_password)" mysql --protocol=socket -uroot -e "SELECT 1" >/dev/null']
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    logging: *logging
+    mem_limit: 2g
+
+  migrate:
+    <<: *backend
+    entrypoint: [java, -cp, '/app/classes:/app/lib/*', com.coffer.deployment.DatabaseMigrationMain]
+    environment:
+      COFFER_DB_URL: jdbc:mysql://mysql:3306/coffer?sslMode=VERIFY_IDENTITY&connectionTimeZone=UTC
+    secrets: [db_migrate_password, db_truststore, db_trust_password]
+    networks: [data]
+    depends_on:
+      mysql: {condition: service_healthy}
+    restart: "no"
+
+  minio:
+    image: ${MINIO_IMAGE:?use images.lock.env}
+    user: "10001:10001"
+    command: [minio, server, /data, --console-address, ':9001', --license, /run/secrets/minio_license, --certs-dir, /run/minio-tls]
+    environment:
+      MINIO_ROOT_USER_FILE: /run/secrets/minio_root_user
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio_root_password
+      MINIO_BROWSER: "off"
+      MINIO_UPDATE: "off"
+    secrets: [minio_root_user, minio_root_password, minio_license]
+    volumes: [minio_data:/data, ./internal-tls/minio/server:/run/minio-tls:ro]
+    networks: [data]
+    depends_on:
+      volume-init: {condition: service_completed_successfully}
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, --max-time, '4', --cacert, /run/minio-tls/CAs/ca.pem, --resolve, 'minio:9000:127.0.0.1', https://minio:9000/minio/health/ready]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    read_only: true
+    tmpfs: ['/tmp:size=64m,mode=1777']
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 2g
+
+  minio-init:
+    image: coffer/mc:${COFFER_RELEASE:?release required}
+    build: {context: .., dockerfile: deploy/Dockerfile.mc}
+    user: "10001:10001"
+    entrypoint: [/bin/sh, /scripts/minio-init.sh]
+    environment: {MINIO_BUCKET: coffer-owned-v2}
+    volumes: [./minio-init.sh:/scripts/minio-init.sh:ro, ./minio-boundary.sh:/scripts/minio-boundary.sh:ro, ./internal-tls/minio/ca.pem:/tmp/ca-source/ca.pem:ro]
+    secrets: [minio_root_user, minio_root_password, minio_parent_user, minio_parent_password, minio_app_access, minio_app_secret]
+    networks: [data]
+    depends_on:
+      minio: {condition: service_healthy}
+    read_only: true
+    tmpfs: ['/tmp:size=64m,mode=1777']
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: "no"
+    logging: *logging
+
+  backend:
+    <<: *backend
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      MANAGEMENT_SERVER_PORT: "8081"
+      SERVER_TOMCAT_THREADS_MAX: "32"
+      SERVER_TOMCAT_MAX_SWALLOW_SIZE: "0"
+      SPRING_FLYWAY_ENABLED: "false"
+      MYSQL_USERNAME: coffer_app
+      COFFER_DB_URL: jdbc:mysql://mysql:3306/coffer?sslMode=VERIFY_IDENTITY&connectionTimeZone=UTC
+      COFFER_DATABASE_TLS_ENABLED: "true"
+      MINIO_ENDPOINT: https://minio:9000
+      MINIO_CA_CERTIFICATE: /run/secrets/minio_ca
+      MINIO_SECURE: "true"
+      MINIO_BUCKET: coffer-owned-v2
+      COFFER_COOKIE_SECURE: "true"
+      COFFER_TRUSTED_PROXIES: ${PROXY_IP:?proxy IP required}
+      REDIS_HOST: redis
+      SPRING_DATA_REDIS_CONNECT_TIMEOUT: 500ms
+      SPRING_DATA_REDIS_TIMEOUT: 500ms
+      SPRING_DATA_REDIS_LETTUCE_POOL_MAX_WAIT: 500ms
+      COFFER_EMBEDDING_ENABLED: "false"
+      COFFER_HYBRID_ENABLED: "false"
+      COFFER_INBOX_ENABLED: "false"
+      COFFER_MODEL_LOG_ENABLED: "false"
+      COFFER_STORAGE_VOLUME_PATH: /state
+      COFFER_BACKUP_RECEIPT: /state/backup-receipt.json
+      COFFER_WEB_LIMITS_CAPACITY_RECEIPT: /capacity/minio-capacity.json
+      COFFER_WEB_LIMITS_ACCOUNT_BYTES: ${ACCOUNT_STORAGE_BYTES:-10737418240}
+      COFFER_WEB_LIMITS_TOTAL_BYTES: ${TOTAL_STORAGE_BYTES:-107374182400}
+      COFFER_WEB_LIMITS_ACCOUNT_OBJECTS: ${ACCOUNT_STORAGE_OBJECTS:-10000}
+      COFFER_WEB_LIMITS_PENDING_TASKS: ${ACCOUNT_PENDING_TASKS:-20}
+      COFFER_WEB_LIMITS_CONCURRENT_TASKS: ${ACCOUNT_CONCURRENT_TASKS:-2}
+      COFFER_MIN_FREE_BYTES: "4294967296"
+      COFFER_MIN_FREE_PERCENT: "10"
+      COFFER_PRIVACY_EXPORT_MAX_UNCOMPRESSED_BYTES: "67108864"
+      COFFER_PRIVACY_EXPORT_MAX_FILES: "1000"
+      COFFER_PRIVACY_EXPORT_MAX_RECORDS: "5000"
+      COFFER_LOCAL_MODEL_ALLOWED_HOSTS: ""
+    secrets: [db_app_password, minio_app_access, minio_app_secret, master_key, admin_setup_token, db_truststore, db_trust_password, minio_ca]
+    volumes: [backend_state:/state, capacity_data:/capacity:ro]
+    networks: [proxy, data, model_egress]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      minio-init: {condition: service_completed_successfully}
+      capacity: {condition: service_started}
+    healthcheck:
+      test: [CMD, java, -cp, '/app/classes:/app/lib/*', com.coffer.deployment.HealthcheckMain]
+      interval: 15s
+      timeout: 6s
+      retries: 20
+      start_period: 60s
+    restart: unless-stopped
+    mem_limit: 2g
+    pids_limit: 256
+    stop_grace_period: 60s
+
+  capacity:
+    <<: *backend
+    user: "10002:10001"
+    entrypoint: [java, -cp, '/app/classes:/app/lib/*', com.coffer.deployment.VolumeCapacityMain]
+    network_mode: none
+    volumes: [minio_data:/measure/minio:ro, capacity_data:/capacity]
+    depends_on:
+      volume-init: {condition: service_completed_successfully}
+    restart: unless-stopped
+    mem_limit: 128m
+
+  proxy:
+    image: coffer/web:${COFFER_RELEASE:?release required}
+    build: {context: .., dockerfile: deploy/Dockerfile.web}
+    environment: {COFFER_DOMAIN: '${COFFER_DOMAIN:?domain required}'}
+    extra_hosts: ['${COFFER_DOMAIN}:127.0.0.1']
+    ports: ['${HTTPS_BIND_IP:?bind IP required}:443:8443']
+    volumes: [./tls:/run/tls:ro]
+    networks:
+      proxy: {ipv4_address: '${PROXY_IP:?proxy IP required}'}
+      ingress: {}
+    depends_on:
+      backend: {condition: service_healthy}
+    read_only: true
+    tmpfs: ['/data:size=32m,uid=10001,gid=10001', '/config:size=32m,uid=10001,gid=10001', '/tmp:size=32m']
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD-SHELL, 'wget -q --no-check-certificate -O /dev/null "https://$$COFFER_DOMAIN:8443/"']
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 256m
+
+  redis:
+    image: ${REDIS_IMAGE:?use images.lock.env}
+    profiles: [redis]
+    command: [redis-server, --save, '', --appendonly, 'no', --maxmemory, 256mb, --maxmemory-policy, allkeys-lru]
+    networks: [data]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+    read_only: true
+    tmpfs: [/data:size=32m]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 384m
+
+  volume-tool:
+    <<: *backend
+    profiles: [ops]
+    user: "0:0"
+    cap_add: [CHOWN, FOWNER, DAC_OVERRIDE]
+    entrypoint: [/bin/sh, -ec]
+    network_mode: none
+    volumes:
+      - mysql_data:/volumes/mysql
+      - minio_data:/volumes/minio
+      - backend_state:/volumes/state
+      - ./secrets:/release/secrets:ro
+      - ./tls:/release/tls:ro
+      - ./.env:/release/env:ro
+      - ./images.lock.env:/release/images.lock.env:ro
+      - ./evidence/support-review.json:/release/support-review.json:ro
+      - ./internal-tls:/release/internal-tls:ro
+      - ${COFFER_CHECKPOINT_DIR:-./evidence/checkpoint}:/checkpoint:ro
+    restart: "no"
+
+  recovery-probe:
+    <<: *backend
+    profiles: [ops]
+    user: "0:0"
+    entrypoint: [java, -Xmx512m, -cp, '/app/classes:/app/lib/*', com.coffer.deployment.RecoveryPointMain]
+    environment:
+      COFFER_DB_URL: jdbc:mysql://mysql:3306/coffer?sslMode=VERIFY_IDENTITY&connectionTimeZone=UTC
+      MINIO_ENDPOINT: https://minio:9000
+      MINIO_BUCKET: coffer-owned-v2
+    secrets: [db_app_password, db_truststore, db_trust_password, minio_app_access, minio_app_secret, minio_ca, master_key]
+    networks: [data]
+    volumes: ["${COFFER_CHECKPOINT_DIR:-./evidence/checkpoint}:/checkpoint"]
+    restart: "no"
+
+networks:
+  data: {internal: true}
+  proxy:
+    internal: true
+    ipam:
+      config: [{subnet: '${PROXY_SUBNET:?proxy subnet required}', ip_range: '${PROXY_DYNAMIC_RANGE:?dynamic proxy range required}'}]
+  ingress: {}
+  model_egress: {}
+volumes:
+  mysql_data: {}
+  minio_data: {}
+  backend_state: {}
+  capacity_data: {}
+secrets:
+  db_root_password: {file: ./secrets/db_root_password}
+  db_app_password: {file: ./secrets/db_app_password}
+  db_migrate_password: {file: ./secrets/db_migrate_password}
+  minio_root_user: {file: ./secrets/minio_root_user}
+  minio_root_password: {file: ./secrets/minio_root_password}
+  minio_parent_user: {file: ./secrets/minio_parent_user}
+  minio_parent_password: {file: ./secrets/minio_parent_password}
+  minio_app_access: {file: ./secrets/minio_app_access}
+  minio_app_secret: {file: ./secrets/minio_app_secret}
+  minio_license: {file: ./secrets/minio.license}
+  master_key: {file: ./secrets/master_key}
+  admin_setup_token: {file: ./secrets/admin_setup_token}
+  db_trust_password: {file: ./secrets/db_trust_password}
+  db_truststore: {file: ./internal-tls/db/client-trust.p12}
+  minio_ca: {file: ./internal-tls/minio/ca.pem}

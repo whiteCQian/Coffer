@@ -18,9 +18,12 @@ import java.time.LocalDateTime;
 public class AsyncTaskLeaseService {
     private final AsyncTaskRepository tasks;
     private final FileMetadataRepository files;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.coffer.web.WebLimits webLimits;
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Long claimPending(String taskId) {
+        if (webLimits != null && !webLimits.canClaimTask()) return null;
         AsyncTask task = tasks.lockByTaskId(taskId).orElse(null);
         if (task == null || task.getStatus() != AsyncTaskStatus.PENDING) return null;
         if (files.findByTaskId(taskId).isEmpty()) {

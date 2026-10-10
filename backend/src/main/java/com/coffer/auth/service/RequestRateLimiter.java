@@ -14,8 +14,20 @@ public class RequestRateLimiter {
     private static final int MAX_BUCKETS = 20_000;
     private final ConcurrentHashMap<String, Window> windows = new ConcurrentHashMap<>();
     private final AtomicLong operations = new AtomicLong();
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private PersistentRateLimiter persistent;
 
     public void requireAllowed(String key, int maximum, Duration duration) {
+        if (persistent != null) {
+            boolean allowed;
+            try { allowed=persistent.acquire(key, maximum, duration); }
+            catch(org.springframework.dao.DataAccessException unavailable) {
+                throw new AuthFailureException(HttpStatus.SERVICE_UNAVAILABLE,"认证保护状态暂时无法核实，请稍后重试");
+            }
+            if (!allowed)
+                throw new AuthFailureException(HttpStatus.TOO_MANY_REQUESTS, "请求过于频繁，请在限流窗口结束后重试");
+            return;
+        }
         long now = System.currentTimeMillis();
         long windowMillis = Math.max(1_000L, duration.toMillis());
         if (!windows.containsKey(key) && windows.size() >= MAX_BUCKETS) {

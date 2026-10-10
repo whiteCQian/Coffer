@@ -107,6 +107,19 @@ class RuntimeMonitorTest {
         assertThat(directory.toFile().list()).noneMatch(name -> name.startsWith(".coffer-health-"));
         assertThat(new LocalStorageProbe(directory.resolve("missing").toString()).check().status()).isEqualTo("DOWN");
     }
+    @Test void productionRedisFailureDegradesAndRecoversButStorageFailureStillBlocksReadiness() {
+        monitor.close(); var environment = new MockEnvironment(); environment.setActiveProfiles("prod");
+        var beans = new StaticListableBeanFactory(); beans.addBean("redis", redis);
+        monitor = new RuntimeMonitor(properties, storage, db.dataSource, beans.getBeanProvider(RedisConnectionFactory.class), mapper, environment, "");
+        when(connection.ping()).thenThrow(new IllegalStateException("offline"));
+        monitor.sample(); assertThat(monitor.snapshot().readiness()).isEqualTo("UP");
+        assertThat(named("redis").status()).isEqualTo("DEGRADED");
+        assertThat(monitor.snapshot().alerts()).anyMatch(a -> a.code().equals("REDIS_REDIS_UNAVAILABLE") && a.severity().equals("WARNING"));
+        when(storage.check()).thenReturn(component("DOWN")); monitor.sample();
+        assertThat(monitor.snapshot().readiness()).isEqualTo("DOWN");
+        when(storage.check()).thenReturn(component("UP")); doReturn("PONG").when(connection).ping(); monitor.sample();
+        assertThat(monitor.snapshot().readiness()).isEqualTo("UP"); assertThat(named("redis").status()).isEqualTo("UP");
+    }
     @Test void actualConnectionPoolAndManualBacklogsExposeOnlyTotals() {
         long owner = db.owner(false);
         db.jdbc.update("INSERT INTO file_write_intent(id,owner_id,task_id,kind,object_key,file_name,declared_size,status,attempts,created_at,updated_at) VALUES('i',?,'t','UPLOAD','private/key',?,1,'MANUAL_REVIEW',2,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)", owner, MARKER);
@@ -120,6 +133,18 @@ class RuntimeMonitorTest {
             assertThat(monitor.snapshot().alerts()).extracting(RuntimeMonitor.Alert::code).contains("MANUAL_REVIEW_REQUIRED");
             assertThat(monitor.publicStatus().connections()).isEmpty();
         } finally { monitor.close(); pool.close(); }
+    }
+    @Test void productionSamplesActualMinioVolumeAndWarnsBeforeReserveFloorAndBlocksStaleProbe() {
+        monitor.close(); var environment=new MockEnvironment();environment.setActiveProfiles("prod");
+        var beans=new StaticListableBeanFactory();beans.addBean("redis",redis);
+        monitor=new RuntimeMonitor(properties,storage,db.dataSource,beans.getBeanProvider(RedisConnectionFactory.class),mapper,environment,"");
+        var capacity=mock(com.coffer.web.MinioVolumeCapacity.class);
+        ReflectionTestUtils.setField(monitor,"minioCapacity",capacity);
+        when(capacity.sample()).thenReturn(new com.coffer.web.MinioVolumeCapacity.Sample(Instant.now(),1000,1));
+        monitor.sample();assertThat(named("capacity").reason()).isEqualTo("MINIO_DISK_LOW");assertThat(named("capacity").status()).isEqualTo("DEGRADED");
+        assertThat(monitor.snapshot().readiness()).isEqualTo("UP");
+        when(capacity.sample()).thenThrow(new com.coffer.web.WebLimitException(503,"stale"));
+        monitor.sample();assertThat(named("capacity").reason()).isEqualTo("MINIO_CAPACITY_STALE");assertThat(monitor.snapshot().readiness()).isEqualTo("DOWN");
     }
     @Test void blockedBusinessScheduleDoesNotStarveRuntimeSampling() throws Exception {
         var configuration = new RuntimeSchedulingConfiguration();

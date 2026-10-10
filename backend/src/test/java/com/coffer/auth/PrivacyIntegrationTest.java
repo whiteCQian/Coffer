@@ -124,14 +124,14 @@ class PrivacyIntegrationTest {
                     .fileSize((long)body.length).storagePath(path).contentSha256(digest(body))
                     .status(FileStatus.COMPLETED).build());
         });
-        mvc.perform(get("/api/privacy/export").cookie(cookie(a))).andExpect(status().isBadRequest());
+        mvc.perform(get("/api/privacy/export").cookie(cookie(a))).andExpect(status().isPayloadTooLarge());
         verify(storage, never()).readIfUnchanged(anyString(), any());
     }
     @Test void exportRefusesManifestPastItsByteLimit() throws Exception {
         Object target = org.springframework.test.util.AopTestUtils.getUltimateTargetObject(privacy);
         org.springframework.test.util.ReflectionTestUtils.setField(target, "maxExportBytes", 1L);
         try {
-            mvc.perform(get("/api/privacy/export").cookie(cookie(a))).andExpect(status().isBadRequest());
+            mvc.perform(get("/api/privacy/export").cookie(cookie(a))).andExpect(status().isPayloadTooLarge());
             verify(storage, never()).readIfUnchanged(anyString(), any());
         } finally {
             org.springframework.test.util.ReflectionTestUtils.setField(target, "maxExportBytes", 536870912L);
@@ -141,7 +141,7 @@ class PrivacyIntegrationTest {
         Object target = org.springframework.test.util.AopTestUtils.getUltimateTargetObject(privacy);
         org.springframework.test.util.ReflectionTestUtils.setField(target, "maxExportRecords", 1);
         try {
-            mvc.perform(get("/api/privacy/export").cookie(cookie(a))).andExpect(status().isBadRequest());
+            mvc.perform(get("/api/privacy/export").cookie(cookie(a))).andExpect(status().isPayloadTooLarge());
             verify(storage, never()).readIfUnchanged(anyString(), any());
         } finally {
             org.springframework.test.util.ReflectionTestUtils.setField(target, "maxExportRecords", 50000);

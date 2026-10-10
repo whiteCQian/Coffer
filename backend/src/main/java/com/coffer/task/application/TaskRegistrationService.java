@@ -22,9 +22,12 @@ public class TaskRegistrationService {
 
     @Autowired
     private ModelRuntimeModeService runtimeModeService;
+    @Autowired(required = false)
+    private com.coffer.web.WebLimits webLimits;
 
     @Transactional
     public void createPendingTask(String taskId, String fileName) {
+        if (webLimits != null) webLimits.admitTask(taskId);
         asyncTaskRepository.save(AsyncTask.builder()
                 .taskId(taskId)
                 .fileName(fileName)

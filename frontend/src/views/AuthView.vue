@@ -34,6 +34,10 @@ onMounted(() => void checkService())
 
 async function submit() {
   if (!verifiedStatus.value) return
+  if (setupMode.value && !auth.validNewPassword(password.value)) {
+    ElMessage.warning('新密码须为 ' + auth.passwordHint)
+    return
+  }
   if (username.value.trim().length < 3 || password.value.length < 6 || password.value.length > 16) {
     ElMessage.warning('账号至少 3 个字符，密码须为 6–16 个字符')
     return
@@ -85,6 +89,7 @@ async function submit() {
         </label>
         <label class="field">
           <span>密码</span>
+          <small v-if="setupMode">{{ auth.passwordHint }}</small>
           <input v-model="password" type="password" :autocomplete="setupMode ? 'new-password' : 'current-password'" minlength="6" maxlength="16" required />
         </label>
         <button class="submit" type="submit" :disabled="busy">
