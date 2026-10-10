@@ -1,6 +1,6 @@
 {
   "name": "coffer-desktop",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Coffer Windows desktop launcher",
   "author": "Coffer",
@@ -17,6 +17,7 @@
     "productName": "Coffer",
     "artifactName": "Coffer-${version}-windows-${arch}-setup.${ext}",
     "asar": true,
+    "electronDist": "node_modules/electron/dist",
     "files": ["src/**/*", "package.json"],
     "directories": { "output": "dist", "buildResources": "build" },
     "extraResources": [{"from":".build/resources", "to":"coffer"}],

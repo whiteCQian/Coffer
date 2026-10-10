@@ -4,7 +4,7 @@ Windows x64 安装包包含 Electron、Vue 生产资源、桌面后端 JAR 和�
 
 ## 安装与首次使用
 
-1. 核对安装包与同目录的 `SHA256SUMS.txt`，双击 `Coffer-0.2.0-windows-x64-setup.exe`，选择独立程序目录。安装目录必须为空或已有 Coffer 程序目录，不能是数据库/文件库目录。
+1. 核对安装包与同目录的 `SHA256SUMS.txt`，双击 `Coffer-0.2.1-windows-x64-setup.exe`，选择独立程序目录。安装目录必须为空或已有 Coffer 程序目录，不能是数据库/文件库目录。
 2. 启动 Coffer，明确初始化空的数据目录。默认业务数据为 `%LOCALAPPDATA%\Coffer`；窗口缓存/偏好为 `%APPDATA%\Coffer-shell`，均与程序目录分开。可选择已有原数据目录；目录、数据库或密钥缺失时不会建替代空库。
 3. 应用会提供一次性的管理员初始化凭据，无需寻找或复制主密钥。创建管理员后，再创建业务账号并切换登录；管理员与业务账号按原授权规则使用不同入口。
 4. 本地选择/拖放先展示当前账号的收件箱目标。确认后只复制，外部原件保留；正式入库路径与模型目标继续使用 R31 的确认流程。首次使用 AI 时需配置并验证自己的模型端点；模型不作为后台启动硬依赖。
@@ -28,6 +28,8 @@ scripts/build-desktop.ps1 -MavenPath <mvn.cmd> -JavaPath <java.exe>
 
 `runtime.lock.json` 固定 JRE 的下载地址、大小和校验值；`manifest.json` 固定每个生产资源的路径、大小和 SHA-256。应用启动重新检查资源，不使用开发机绝对路径或 PATH 中的 Java。已配置 `CSC_LINK`/`WIN_CSC_LINK` 时构建开启签名；本轮没有可用凭据，产物未签名，实际状态以 Authenticode 检查为准。
 
+Electron 44 使用按需二进制安装，`npm ci` 本身不保证 `electron.exe` 已下载。构建脚本先调用 `desktop/scripts/prepare-electron.cjs`，显式运行锁定包内安装器，保留嵌入的下载校验，并检查二进制版本与 Windows x64 架构；缺少 npm 包、下载失败或产物不匹配会在 JRE/Java/Vue 构建前拒绝。缓存放在 `desktop/.build/cache/electron`，首次无缓存构建也必须通过；安装包构建不接受外部 `ELECTRON_OVERRIDE_DIST_PATH`。准备过程不启动 Electron GUI。
+
 `npm test --prefix desktop` 验证普通网页拦截、令牌不透传、目录保护与包校验。`test/installed-e2e.cjs` 使用已安装的可执行文件、全新数据目录、捆绑 JRE 和真实业务 API；仅替代文件选择/初始化确认的原生对话框与本地模型响应，不替代业务 API。测试不访问真实账号或文件。
 
 ## 干净 Windows 外机验收
@@ -35,7 +37,7 @@ scripts/build-desktop.ps1 -MavenPath <mvn.cmd> -JavaPath <java.exe>
 将安装包、`SHA256SUMS.txt`、`scripts/verify-desktop-clean-windows.ps1` 复制到外机。该脚本只需要 Windows PowerShell 5.1，不需开发依赖：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\verify-desktop-clean-windows.ps1 -InstallerPath .\Coffer-0.2.0-windows-x64-setup.exe -TestUninstall
+powershell -NoProfile -ExecutionPolicy Bypass -File .\verify-desktop-clean-windows.ps1 -InstallerPath .\Coffer-0.2.1-windows-x64-setup.exe -TestUninstall
 ```
 
 脚本检查安装包/资源校验、真实后台归属、普通本地请求 403、原件保留和卸载后数据库/密钥不变；实际 UI 核心闭环需操作者完成并明确填写 PASS，机器基线与结果写入 `acceptance.json`。本轮按用户选择先交付包和脚本，没有把本机隔离测试声明为外机干净 Windows 验收。

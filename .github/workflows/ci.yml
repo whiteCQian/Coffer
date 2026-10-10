@@ -115,13 +115,40 @@ jobs:
           cache-dependency-path: |
             frontend/package-lock.json
             desktop/package-lock.json
-      - name: Install locked frontend and shell dependencies
+      - name: Install locked frontend dependencies
         shell: pwsh
         run: |
-          npm ci --prefix frontend
-          npm ci --prefix desktop
-      - name: Verify shell security and build self-contained installer
+          npm.cmd ci --prefix frontend
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Install locked shell dependencies
         shell: pwsh
         run: |
-          npm test --prefix desktop
+          npm.cmd ci --prefix desktop
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify shell security and binary preparation regression tests
+        shell: pwsh
+        run: |
+          npm.cmd test --prefix desktop
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Prepare locked Electron Windows x64 binary
+        shell: pwsh
+        run: |
+          node.exe desktop/scripts/prepare-electron.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build and checksum self-contained Windows installer
+        shell: pwsh
+        run: |
           scripts/build-desktop.ps1 -MavenPath (Get-Command mvn.cmd).Source -JavaPath "$env:JAVA_HOME\bin\java.exe"
+      - name: Verify installer and bundled resource identity
+        shell: pwsh
+        run: |
+          $package = Get-Content desktop/package.json -Raw | ConvertFrom-Json
+          $installer = "desktop/dist/Coffer-$($package.version)-windows-x64-setup.exe"
+          if (-not (Test-Path -LiteralPath $installer)) { throw 'Expected Windows installer missing' }
+          $hash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          $expected = "$hash  $(Split-Path $installer -Leaf)"
+          if (-not ((Get-Content desktop/dist/SHA256SUMS.txt) -contains $expected)) { throw 'Installer checksum does not match release manifest' }
+          node.exe -e "const p=require('node:path'); const m=require('./desktop/src/resources.cjs').verifyResources(p.resolve('desktop/dist/win-unpacked/resources/coffer')); if(m.version!==require('./desktop/package.json').version)throw Error('Bundled application version mismatch'); console.log('Bundled release '+m.version+', schema V'+m.schemaVersion+', resources '+m.files.length)"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Output "Installer SHA-256: $hash"
+          Write-Output "Authenticode: $((Get-AuthenticodeSignature -LiteralPath $installer).Status)"

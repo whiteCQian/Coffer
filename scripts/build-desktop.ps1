@@ -13,6 +13,8 @@ function Assert-NoLinks([string]$target) {
     }
 }
 Assert-NoLinks $buildRoot; New-Item -ItemType Directory -Path (Join-Path $buildRoot 'cache') -Force | Out-Null
+& node.exe (Join-Path $desktop 'scripts\prepare-electron.cjs')
+if ($LASTEXITCODE -ne 0) { throw 'Locked Electron binary preparation failed; no installer was built' }
 $runtime = Get-Content -LiteralPath (Join-Path $desktop 'runtime.lock.json') -Raw | ConvertFrom-Json
 $archivePath = Join-Path $buildRoot 'cache\temurin-jre-windows-x64.zip'
 Assert-NoLinks $archivePath
@@ -50,7 +52,6 @@ Copy-Item -LiteralPath $jreDirectories[0].FullName -Destination (Join-Path $reso
 Assert-NoLinks $extractRoot; Remove-Item -LiteralPath $extractRoot -Recurse -Force
 & node.exe (Join-Path $desktop 'scripts\resource-manifest.cjs')
 if ($LASTEXITCODE -ne 0) { throw 'Resource manifest verification failed' }
-if (-not (Test-Path -LiteralPath (Join-Path $desktop 'node_modules\electron\dist\electron.exe'))) { throw 'Install locked desktop dependencies with npm ci --prefix desktop first' }
 Push-Location $desktop
 try {
     $signingArgs = @()
