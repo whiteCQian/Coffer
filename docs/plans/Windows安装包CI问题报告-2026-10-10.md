@@ -42,12 +42,12 @@ Install locked desktop dependencies with npm ci --prefix desktop first
 
 日志还出现 npm allowScripts 警告，但列出的是 frontend 的 esbuild/vue-demi 和 desktop 的 electron-winstaller，而不是 Electron 的 postinstall。当前证据不支持“Electron postinstall 被 npm 拦截”这一根因解释，也没有 Electron 下载超时/网络错误日志。
 
-## 现有安装包与最新源码的差异
+## 原有安装包与原失败提交的差异
 
 - 本地仍有 `desktop/dist/Coffer-0.2.0-windows-x64-setup.exe`，244,972,088 字节；本次重新计算 SHA-256 与交付清单一致：`04fbd7915665dd5a65c0aae57d1f1bdbb874b6e2c84cab413644443e8aed8e56`。
 - 本地 `.build/resources/manifest.json` 和 `dist/win-unpacked/resources/coffer/manifest.json` 均记录版本 0.2.0、schema **V41**、320 项资源；该包的本机安装/恢复/卸载证据来自 2026-10-09 的 R34/R35 阶段。
 - 新 CI 生成的资源 schema 为 **V43**，但还没有走到 installer 打包；“资源同为 320 项”不代表代码或数据库版本相同。
-- package.json 仍使用版本 0.2.0。发布修复后的新包时应明确新版本/提交/迁移号和摘要，防止旧、新程序使用同一文件名造成交付混淆。旧包的已通过结果可以保留，但不能登记为最新源码的 Windows 安装与 V41→V43 升级结果。
+- 原失败提交的 package.json 使用版本 0.2.0。发布修复后的新包时应明确新版本/提交/迁移号和摘要，防止旧、新程序使用同一文件名造成交付混淆。旧包的已通过结果可以保留，但不能登记为最新源码的 Windows 安装与 V41→V43 升级结果。
 
 ## 建议修复
 
@@ -59,7 +59,7 @@ Install locked desktop dependencies with npm ci --prefix desktop first
 4. CI 拆出“依赖/二进制准备、Shell 测试、JRE 准备、后端、前端、资源校验、NSIS 打包、安装包摘要”等可定位步骤，并立即检查每条关键外部命令的退出码。当前合并步骤名称容易把打包前置失败误读为安全测试失败。
 5. 缓存只作优化。首次无缓存必须成功，缓存内容应核对平台、架构和锁定版本；二进制缓存损坏时不能将其当作可发布产物。
 
-核心准备动作可采用以下形式；这是修复建议，尚未合入执行脚本：
+初次调查建议的核心动作如下；现已由共同准备入口实现，最终代码另包括版本/PE 架构校验：
 
 ```powershell
 $electronInstaller = Join-Path $desktop 'node_modules\electron\install.js'
@@ -91,4 +91,12 @@ CI npm 日志报告 frontend 2 个 high、desktop 8 个 moderate 审计条目，
 - 已新增共同入口 `desktop/scripts/prepare-electron.cjs`，显式调用锁定 npm 包的安装器，保留包内 checksum，验证二进制版本、Windows PE/x64 架构及标准路径。`build-desktop.ps1` 在耗时构建前执行同一准备入口；electron-builder 使用已准备的分发目录。
 - CI 分开记录依赖安装、7 项 Shell/准备回归、真实 Electron 准备、安装包构建及最终版本/资源/摘要检查，关键外部命令失败立即停止。
 - 本地 7/7 测试通过，覆盖 fresh npm 包缺少二进制、下载进程失败、缺文件/错误版本/错误架构拒绝及原 Shell 安全边界。在独立空目录复制 npm 包元数据（没有 dist），真实下载并检查 Electron 44.7.0 Windows x64 成功，生成 246,302,208 字节二进制；未运行 GUI。
-- 新包版本设为 0.2.1，与旧 0.2.0/V41 验收包区分。当前修复等待推送后远端完整 CI 复验；不提前登记 NSIS 成功，也不关闭签名、独立干净 Windows 运行和独立介质门禁。
+- 新包版本设为 0.2.1，与旧 0.2.0/V41 验收包区分。远端修复结果已核验，见下文；签名、独立干净 Windows 运行和独立介质门禁继续保留。
+
+## 修复关闭证据
+
+修复提交：[90f37da](https://github.com/whiteCQian/Coffer/commit/90f37da51ae903b1c5727748054972bda879ee75)。[完整 ci 38061297300](https://github.com/whiteCQian/Coffer/actions/runs/38061297300) 和 [production-build 38061297396](https://github.com/whiteCQian/Coffer/actions/runs/38061297396) 全部成功；[Windows job 114239936509](https://github.com/whiteCQian/Coffer/actions/runs/38061297300/job/114239936509) 记录显式锁定 Electron 准备、7/7 测试、实际 NSIS、最终版本/资源/摘要检查通过。
+
+香港时间 2026-10-10 22:55:11，日志输出安装包 SHA-256：`ec095e81b4f50b455b3ecaedb7c373eb86ff7e9b4a21fd95e30f42abfefd5330`，对应 `Coffer-0.2.1-windows-x64-setup.exe`。包内 release 0.2.1、schema V43、320 项资源通过完整性检查；Authenticode 为 `NotSigned`。CI 构建没有启用产物上传，此摘要属于该次 runner 构建，不能拿来校验另一台机器重新生成的包。
+
+Electron 首次二进制准备缺口及 Windows CI 构建阻断已修复。CI 不等同独立干净 Windows 安装/UI/升级/回滚运行验收，签名、依赖审查和桌面独立介质仍沿原发布门禁执行。旧失败日志、本机 V41 包与其 SHA-256 保留为历史证据。
