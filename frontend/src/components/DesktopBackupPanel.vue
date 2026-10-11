@@ -6,6 +6,11 @@ import type { DesktopBackupResult } from '@/api/desktop'
 const directory=ref(''),password=ref(''),repeat=ref(''),local=ref(false),busy=ref(false),result=ref<DesktopBackupResult|null>(null)
 function error(value: unknown){ElMessage.error(String((value as Error)?.message || '整套备份未完成').replace(/^Error invoking remote method .*?: Error: /,''))}
 async function choose(){try{const selected=await desktopBridge?.chooseBackupDestination();if(selected)directory.value=selected.directory}catch(failed){error(failed)}}
+async function manage(){
+  if(busy.value || !desktopBridge?.manageLibrary)return
+  busy.value=true
+  try{await desktopBridge.manageLibrary()}catch(failed){error(failed)}finally{busy.value=false}
+}
 async function backup(){
   if(!desktopBridge || busy.value)return
   if(password.value.length<12 || password.value!==repeat.value){ElMessage.warning('请填写至少 12 个字符且两次一致的备份口令');return}
@@ -15,6 +20,7 @@ async function backup(){
 }
 </script>
 <template><section v-if="desktopBridge" class="desktop-backup">
+  <div v-if="desktopBridge.manageLibrary"><h2>文件库位置</h2><p>切换已有库或选择空目录创建新库。原库保留，创建成功后才切换；管理期间会暂时停止后台。</p><button :disabled="busy" @click="manage">管理文件库</button></div>
   <h2>整套加密备份</h2><p>包含个人文件库的 H2 一致性快照、文件正文与工作副本、配置、台账及原密钥。操作期间停止后台，请先关闭外部编辑应用。</p>
   <button :disabled="busy" @click="choose">选择备份介质目录</button><p>{{ directory || '尚未选择' }}</p>
   <label>备份口令<input v-model="password" type="password" autocomplete="new-password" minlength="12" :disabled="busy"></label>

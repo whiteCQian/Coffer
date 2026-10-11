@@ -1,8 +1,62 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Coffer 启动</title><link rel="stylesheet" href="/__desktop/startup.css"></head><body>
-<main><div class="mark">智</div><h1>Coffer 本地文件库</h1><p id="status" role="status">正在检查安装资源…</p><p id="message"></p>
-<dl><dt>用户数据目录</dt><dd id="data"></dd><dt>文件库目录</dt><dd id="library"></dd><dt>应用版本</dt><dd id="version"></dd></dl>
-<p>程序安装、升级和卸载不会清除数据。已有目录或密钥缺失时不会创建替代空库。</p>
-<div class="actions"><button id="initialize">初始化空目录</button><button id="open">打开已有数据 / 重启</button><button id="upgrade">备份后升级数据库</button><button id="choose">选择用户数据目录</button><button id="choose-library">选择文件库目录</button></div>
-<section class="recovery"><h2>加密备份恢复 / 升级</h2><p>恢复只写入空的新目录，校验原密钥、文件库标识、正文摘要和台账后才提交。独立介质备份在设置页创建。</p><label>备份口令（至少 12 个字符）<input id="backup-password" type="password" autocomplete="off" minlength="12"></label><div class="actions"><button id="choose-restore">选择备份包与空恢复目录</button><button id="restore">验证并恢复整套数据</button></div><p id="restore-choice"></p><p id="maintenance-result" role="status"></p></section>
-<p id="error" role="alert"></p><small>桌面端仅服务于个人，无需注册或登录。原生导入在正式入库并校验成功后删除源文件，失败时保留来源。</small></main>
-<script src="/__desktop/startup.js"></script></body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Coffer · 开始使用</title><link rel="icon" type="image/svg+xml" href="/__desktop/logo.svg"><link rel="stylesheet" href="/__desktop/startup.css"></head>
+<body>
+<main>
+  <header><div class="brand"><img class="mark" src="/__desktop/logo.svg" alt="" aria-hidden="true"><span class="brand-name">Coffer <span class="brand-note">个人文件库</span></span></div><span class="version" id="version"></span></header>
+  <p id="status" class="status" role="status" aria-live="polite">正在检查应用…</p>
+  <p id="message" class="notice" hidden></p>
+  <p id="new-library-notice" class="notice" hidden></p>
+  <section id="wizard" hidden aria-label="首次使用引导">
+    <ol class="steps" aria-label="创建文件库的步骤"><li id="step-one" aria-current="step"><span>1</span>选择保存位置</li><li id="step-two"><span>2</span>创建文件库</li></ol>
+    <section id="location-step">
+      <h1 tabindex="-1">你的文件保存在哪里？</h1>
+      <p class="intro">Coffer 会在这里保存导入的文件和应用数据。卸载应用时会保留这些内容。</p>
+      <fieldset class="locations"><legend class="sr-only">选择保存位置</legend>
+        <label id="recommended-option" class="location-option"><input id="recommended" type="radio" name="location" value="recommended" checked><span><strong>使用推荐位置</strong><small>自动安排保存位置，可以直接继续</small></span><span class="badge">推荐</span></label>
+        <label class="location-option"><input id="custom" type="radio" name="location" value="custom"><span><strong>选择其他位置</strong><small>适合将文件库保存在 D 盘或其他磁盘</small></span></label>
+      </fieldset>
+      <div class="custom-actions" id="custom-actions" hidden><button id="choose-new" class="secondary">选择保存位置</button><span>选择父目录时使用其中的 Coffer 文件夹</span></div>
+      <div class="path-card"><span class="caption">文件库将保存在</span><p id="data" class="path"></p><button id="reveal-new" class="text-button">在文件资源管理器中查看</button></div>
+      <p id="location-message" class="notice" hidden></p>
+      <div class="actions primary-actions"><button id="next">下一步</button></div>
+    </section>
+    <section id="confirm-step" hidden>
+      <h1 tabindex="-1">准备好创建文件库了</h1>
+      <p class="intro">确认保存位置后，Coffer 会完成准备工作并带你进入首页。</p>
+      <div class="path-card"><span class="caption">文件库位置</span><p id="confirm-data" class="path"></p></div>
+      <ul class="benefits"><li>创建完成后即可开始导入文件</li><li>无需注册或登录</li><li>AI 功能可以在首次使用时再配置</li></ul>
+      <div class="actions primary-actions"><button id="initialize">创建并进入</button><button id="back" class="secondary">上一步</button></div>
+    </section>
+    <nav id="first-run-entries" class="other-entries" aria-label="已有文件库入口"><button id="choose-existing-new" class="text-button">打开已有文件库</button><span aria-hidden="true">·</span><button id="restore-entry-new" class="text-button">从备份恢复</button></nav>
+    <div id="new-library-cancel-actions" class="other-entries" hidden><button id="cancel-new-library" class="text-button">取消新建，返回原库</button></div>
+  </section>
+  <section id="existing" hidden>
+    <h1 id="existing-title" tabindex="-1">打开你的文件库</h1><p id="existing-intro" class="intro"></p>
+    <div class="path-card"><span class="caption">文件库位置</span><p id="existing-data" class="path"></p><button id="reveal-existing" class="text-button">在文件资源管理器中查看</button></div>
+    <form id="upgrade-form" hidden>
+      <label for="upgrade-password">备份口令<span class="field-note">至少 12 个字符，请妥善保存</span></label>
+      <input id="upgrade-password" type="password" autocomplete="new-password" minlength="12" maxlength="1024" required>
+      <p class="helper">先生成并验证加密备份，再更新文件库；更新失败时恢复原数据。请先关闭正在编辑的文件。</p><button id="upgrade" type="submit">备份并更新</button>
+    </form>
+    <div class="actions primary-actions" id="open-actions"><button id="open">打开文件库</button></div>
+    <nav class="other-entries" aria-label="文件库恢复入口"><button id="choose-existing" class="text-button">重新选择文件库位置</button><span aria-hidden="true">·</span><button id="create-empty-library" class="text-button">新建空文件库</button><span aria-hidden="true">·</span><button id="restore-entry-existing" class="text-button">从备份恢复</button></nav>
+    <p class="helper">选择已有库可打开；选择空文件夹可创建新库。原库保留，创建成功后才切换。</p>
+    <details class="advanced"><summary>高级选项</summary><p class="helper">文件曾单独保存在其他位置时，可重新指定原来的文件目录。</p><button id="choose-library" class="secondary">选择原文件目录</button><p id="library" class="path helper"></p></details>
+  </section>
+  <section id="recovery" hidden>
+    <h1 tabindex="-1">从备份恢复文件库</h1><p class="intro">选择加密备份和一个空的新目录。验证完成后恢复，原文件库保持不变。</p>
+    <button id="choose-restore" class="secondary">选择备份和恢复位置</button><p id="restore-choice" class="path-card path" hidden></p>
+    <form id="restore-form">
+      <label for="restore-password">备份口令<span class="field-note">请输入生成备份时设置的口令</span></label><input id="restore-password" type="password" autocomplete="off" minlength="12" maxlength="1024" required>
+      <div class="actions primary-actions"><button id="restore" type="submit" disabled>验证并恢复</button><button id="recovery-back" type="button" class="secondary">返回</button></div>
+    </form>
+  </section>
+  <section id="busy" hidden aria-live="polite" aria-busy="true">
+    <div class="spinner" aria-hidden="true"></div><h1 id="busy-title">正在准备文件库</h1><p id="busy-description" class="intro">请保持窗口打开，完成后将自动进入首页。</p>
+    <ol id="creation-progress" class="progress-steps"><li data-stage="PREPARING">准备保存位置</li><li data-stage="CREATING">创建文件库</li><li data-stage="STARTING">启动 Coffer</li></ol>
+  </section>
+  <p id="maintenance-result" class="notice" role="status" hidden></p><p id="error" role="alert" hidden></p>
+  <footer>文件保存在你的电脑上<span aria-hidden="true"> · </span>AI 配置可稍后完成</footer>
+</main><script src="/__desktop/startup.js"></script>
+</body></html>

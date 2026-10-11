@@ -22,10 +22,9 @@ export const useAuthStore = defineStore('auth', () => {
   function announce() { localStorage.setItem('coffer:identity-change', String(Date.now()) + Math.random()) }
   const isAdmin = computed(() => user.value?.role === 'ADMIN')
   const isPersonal = computed(() => status.value.desktopPersonal === true)
-  const passwordHint = computed(() => status.value.strongPasswordRequired ? '12–16 个字符，包含大小写字母和数字，避开常见弱口令' : '6–16 个字符')
+  const passwordHint = computed(() => `${status.value.passwordMinLength ?? 8}–16 个字符`)
   function validNewPassword(value: string) {
-    return value.length >= (status.value.passwordMinLength ?? 6) && value.length <= 16
-      && (!status.value.strongPasswordRequired || /[A-Z]/.test(value) && /[a-z]/.test(value) && /[0-9]/.test(value) && !/(password|qwerty|123456|letmein|coffer|admin)/i.test(value))
+    return value.length >= (status.value.passwordMinLength ?? 8) && value.length <= 16
   }
 
   async function bootstrap(force = false) {

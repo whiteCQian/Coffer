@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { Collection, FolderOpened, Download, CircleCheck, List, Search, Setting, Moon, Sunny, PriceTag } from '@element-plus/icons-vue'
+import { FolderOpened, Download, CircleCheck, List, Search, Setting, Moon, Sunny, PriceTag } from '@element-plus/icons-vue'
+import CofferBrand from '@/components/CofferBrand.vue'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -27,8 +28,7 @@ onUnmounted(() => { clearInterval(timer); workspace.clear() })
 <template>
   <aside class="desktop-sidebar">
     <RouterLink to="/" class="desktop-brand" aria-label="Coffer 文件库">
-      <span class="brand-mark"><el-icon><Collection /></el-icon></span>
-      <span><strong>Coffer</strong><small>你的智能文件管家</small></span>
+      <CofferBrand subtitle="你的智能文件管家"/>
     </RouterLink>
     <div class="sidebar-section-label">个人文件库</div>
     <nav class="desktop-nav" aria-label="主导航">
@@ -60,9 +60,6 @@ onUnmounted(() => { clearInterval(timer); workspace.clear() })
 <style scoped>
 .desktop-sidebar { display: flex; flex-direction: column; min-height: 0; padding: 28px 16px 16px; background: var(--rail); border-right: 1px solid var(--line); }
 .desktop-brand { display: flex; gap: 12px; align-items: center; padding: 0 8px 30px; text-decoration: none; color: var(--text-1); }
-.brand-mark { width: 38px; height: 40px; background: var(--accent); color: white; display: grid; place-items: center; border-radius: 10px; font-size: 22px; }
-.desktop-brand strong { display: block; font-size: 21px; letter-spacing: -.5px; line-height: 1.4; }
-.desktop-brand small { font-size: 11px; color: var(--text-2); }
 .sidebar-section-label { display: flex; justify-content: space-between; padding: 0 12px; margin: 10px 0; font-size: 11px; letter-spacing: .06em; color: var(--text-3); }
 .desktop-nav, .sidebar-tags nav { display: flex; flex-direction: column; gap: 4px; }
 .desktop-nav-item { display: flex; align-items: center; gap: 11px; padding: 10px 12px; text-decoration: none; border-radius: 7px; color: var(--text-2); font-size: 13px; min-width: 0; }

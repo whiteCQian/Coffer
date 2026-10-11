@@ -103,8 +103,8 @@ def main():
     admin = Client(args.base_url, args.ca)
     admin.ok("/api/auth/login", "POST", {"username": state["admin"], "password": state["adminPassword"]})
     require(not admin.ok("/api/auth/status")["setupRequired"], "Setup must close permanently")
-    code, _, _ = admin.call("/api/admin/users", "POST", {"username": "weak-"+secrets.token_hex(4), "password": "password1234"})
-    require(code == 400, "Weak production password was accepted")
+    code, _, _ = admin.call("/api/admin/users", "POST", {"username": "short-"+secrets.token_hex(4), "password": "1234567"})
+    require(code == 400, "A password shorter than eight characters was accepted")
     users = []
     for record in state["users"]:
         client = Client(args.base_url, args.ca)

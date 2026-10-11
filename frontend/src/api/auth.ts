@@ -15,6 +15,7 @@ export interface AuthStatus {
   setupAvailable: boolean
   passwordMinLength?: number
   strongPasswordRequired?: boolean
+  storageQuotaEnabled?: boolean
 }
 
 export interface AccountAudit {

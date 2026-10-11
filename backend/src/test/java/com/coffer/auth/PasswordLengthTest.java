@@ -8,6 +8,7 @@ import com.coffer.auth.service.AuthFailureException;
 import jakarta.validation.Validation;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.session.FindByIndexNameSessionRepository;
@@ -20,7 +21,19 @@ import static org.mockito.Mockito.*;
 
 class PasswordLengthTest {
     @ParameterizedTest
-    @CsvSource({"5,false", "6,true", "16,true", "17,false"})
+    @ValueSource(strings={"12345678", "abcdefgh", "ABCDEFGH", "!!!!!!!!", "password1234", "        "})
+    void characterCompositionIsUnrestrictedAcrossAccountRequests(String password) {
+        try(var factory=Validation.buildDefaultValidatorFactory()) {
+            var validator=factory.getValidator();
+            for(Object request:List.of(new InitialAdminRequest("token","admin",password),
+                    new CreateUserRequest("alice",password),new ResetPasswordRequest(password),
+                    new ChangePasswordRequest(password,password),new LoginRequest("alice",password)))
+                assertThat(validator.validate(request)).as(request.getClass().getSimpleName()).isEmpty();
+        }
+        assertThatCode(()->new com.coffer.auth.service.PasswordPolicy().validate(password)).doesNotThrowAnyException();
+    }
+    @ParameterizedTest
+    @CsvSource({"6,false", "7,false", "8,true", "16,true", "17,false"})
     void passwordBoundariesMatchAcrossRequestsAndAccountCreation(int length, boolean accepted) {
         String password = "a".repeat(length);
         try (var factory = Validation.buildDefaultValidatorFactory()) {
@@ -44,7 +57,7 @@ class PasswordLengthTest {
             verify(encoder).encode(password);
         } else {
             assertThatThrownBy(() -> accounts.createInitialAdmin("token", "admin", password))
-                    .isInstanceOf(AuthFailureException.class).hasMessageContaining("6–16");
+                    .isInstanceOf(AuthFailureException.class).hasMessageContaining("8–16");
             verifyNoInteractions(encoder);
             verify(users, never()).saveAndFlush(any());
         }

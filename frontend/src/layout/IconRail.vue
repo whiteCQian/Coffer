@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { Collection, FolderOpened, HomeFilled, List, Moon, Search, Setting, Sunny, SwitchButton, PriceTag } from '@element-plus/icons-vue'
+import { FolderOpened, HomeFilled, List, Moon, Search, Setting, Sunny, SwitchButton, PriceTag } from '@element-plus/icons-vue'
+import CofferBrand from '@/components/CofferBrand.vue'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -55,7 +56,7 @@ async function signOut() {
 
 <template>
   <aside id="web-navigation" class="icon-rail" :class="{ 'mobile-open': props.mobileOpen }">
-    <RouterLink :to="auth.isAdmin ? '/admin' : '/'" class="web-brand" @click="emit('navigate')"><span class="web-brand-icon"><el-icon><Collection /></el-icon></span><span><strong>Coffer</strong><small>智能文件工作空间</small></span></RouterLink>
+    <RouterLink :to="auth.isAdmin ? '/admin' : '/'" class="web-brand" @click="emit('navigate')"><CofferBrand subtitle="智能文件工作空间"/></RouterLink>
     <div class="web-nav-label">{{ auth.isAdmin ? '管理空间' : '我的工作空间' }}</div>
     <nav aria-label="Web 主导航" class="web-nav">
       <button v-for="item in visibleNav" :key="item.path" class="rail-icon" :class="{ 'is-active': isActive(item) }" :title="item.label" :aria-current="isActive(item) ? 'page' : undefined" @click="navigate(item.path)"><el-icon><component :is="item.icon" /></el-icon><span>{{ item.label }}</span></button>
@@ -74,7 +75,6 @@ async function signOut() {
 <style scoped>
 .icon-rail { display: flex; flex-direction: column; padding: 27px 16px 16px; min-height: 0; background: var(--rail); border-right: 1px solid var(--line); }
 .web-brand { display: flex; align-items: center; gap: 11px; padding: 0 10px 27px; color: var(--text-1); text-decoration: none; }
-.web-brand-icon { display: grid; place-items: center; width: 36px; height: 38px; border-radius: 9px; color: white; background: var(--accent); font-size: 21px; }
 .web-brand strong { display: block; font-size: 22px; line-height: 1.3; letter-spacing: -.5px; }.web-brand small { font-size: 10px; color: var(--text-2); }
 .web-nav-label { display: flex; justify-content: space-between; padding: 0 12px; font-size: 11px; color: var(--text-3); margin: 12px 0 10px; }
 .web-nav { display: flex; flex-direction: column; gap: 4px; }

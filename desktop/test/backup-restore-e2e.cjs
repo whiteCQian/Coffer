@@ -28,12 +28,12 @@ async function waitReady(page){await page.waitForURL(url=>url.pathname!=='/__des
   const key=fs.readFileSync(path.join(source,'.coffer-encryption-key'));assert.ok(!fs.readFileSync(archive).includes(key));
   await app.close();app=null;
   const emptySource=path.join(root,'unused-first-run-data');app=await electron.launch({executablePath:exe,args:[`--coffer-data-directory=${emptySource}`,`--coffer-shell-directory=${path.join(root,'new-machine-shell')}`],env});const recovery=await app.firstWindow();
-  await recovery.getByRole('button',{name:'选择备份包与空恢复目录',exact:true}).waitFor();
+  await recovery.getByRole('button',{name:'从备份恢复',exact:true}).click();
   await app.evaluate(({dialog},selection)=>{let step=0;dialog.showOpenDialog=async()=>({canceled:false,filePaths:[step++===0?selection.archive:selection.target]});dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});},{archive,target});
-  await recovery.getByRole('button',{name:'选择备份包与空恢复目录',exact:true}).click();await recovery.locator('#backup-password').fill(password);
-  await recovery.getByRole('button',{name:'验证并恢复整套数据',exact:true}).click();await recovery.getByText(/整套恢复已验证/).waitFor({timeout:180000});
+  await recovery.getByRole('button',{name:'选择备份和恢复位置',exact:true}).click();await recovery.locator('#restore-password').fill(password);
+  await recovery.getByRole('button',{name:'验证并恢复',exact:true}).click();await recovery.getByText(/文件库恢复已验证/).waitFor({timeout:180000});
   assert.deepEqual(fs.readFileSync(path.join(target,'.coffer-encryption-key')),key);assert.equal(fs.existsSync(emptySource),false);
-  await recovery.getByRole('button',{name:'打开已有数据 / 重启',exact:true}).click();await waitReady(recovery);
+  await recovery.getByRole('button',{name:'打开文件库',exact:true}).click();await waitReady(recovery);
   assert.equal((await request(recovery,'/auth/me')).data.id,owner);
   const restored=(await request(recovery,`/files/${file.id}`)).data;assert.equal(restored.fileName,before.fileName);assert.equal(restored.contentSha256,before.contentSha256);
   const copy=(await request(recovery,`/desktop/work-copies/${work.id}`)).data;assert.equal(copy.status,'KEPT');assert.match(fs.readFileSync(copy.workPath,'utf8'),/未完成工作副本/);

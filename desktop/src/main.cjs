@@ -1,5 +1,5 @@
 'use strict';
-const {app,BrowserWindow,session,ipcMain,dialog,Menu}=require('electron');
+const {app,BrowserWindow,session,ipcMain,dialog,Menu,shell}=require('electron');
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {dataPath,noLinks,regularFile,atomicJson}=require('./safe-paths.cjs');
 const {verifyResources}=require('./resources.cjs');
@@ -7,21 +7,34 @@ const {LoopbackServer}=require('./loopback-server.cjs');
 const {BackendSupervisor}=require('./backend-supervisor.cjs');
 const {runMaintenance}=require('./maintenance.cjs');
 const {testStartupOptions}=require('./test-startup.cjs');
+const {startupPath,inspectDirectory,newLibraryLocation,requireEmptyWritableDirectory,requireSeparateEmptyLibrary}=require('./startup-directory.cjs');
 const argument=name=>process.argv.find(value=>value.startsWith(name+'='))?.slice(name.length+1);
 const installRoot=app.isPackaged?path.dirname(app.getPath('exe')):path.resolve(__dirname,'..');
 const profileDirectory=dataPath(argument('--coffer-shell-directory') || path.join(app.getPath('appData'),'Coffer-shell'),installRoot);
 noLinks(profileDirectory,true);fs.mkdirSync(profileDirectory,{recursive:true});noLinks(profileDirectory);
 app.setPath('userData',profileDirectory);app.setAppUserModelId('com.coffer.desktop');app.enableSandbox();
 if(!app.requestSingleInstanceLock()){app.quit();}else{
-  let window,webSession,server,supervisor,manifest,phase='VERIFYING',failure=null,quitting=false;
+  let window,webSession,server,supervisor,manifest,phase='VERIFYING',failure=null,quitting=false,progress=null,creationDraft=null;
   const resourceRoot=app.isPackaged?path.join(process.resourcesPath,'coffer'):path.resolve(__dirname,'../.build/resources');
   const settingsFile=path.join(profileDirectory,'desktop-settings.json');
-  let settings={dataDirectory:argument('--coffer-data-directory') || path.join(process.env.LOCALAPPDATA || app.getPath('home'),'Coffer'),initialized:false};
+  const paneWidthsFile=path.join(profileDirectory,'pane-widths.json');
+  const themeFile=path.join(profileDirectory,'theme.json');
+  let theme=null;
+  try{const saved=JSON.parse(fs.readFileSync(regularFile(themeFile,4096),'utf8'));if(['light','dark'].includes(saved?.theme))theme=saved.theme;}catch{}
+  const paneLimits={'coffer:sidebar-width':[180,360],'coffer:side-panel-width':[280,600]};
+  const paneWidths={};
+  try{
+    const saved=JSON.parse(fs.readFileSync(regularFile(paneWidthsFile,4096),'utf8'));
+    for(const [key,[min,max]] of Object.entries(paneLimits))if(Number.isFinite(saved?.[key]) && saved[key]>=min && saved[key]<=max)paneWidths[key]=saved[key];
+  }catch{}
+  const newLibraryAttemptFile=path.join(profileDirectory,'new-library-attempt.json');
+  const defaultDataDirectory=argument('--coffer-data-directory') || path.join(process.env.LOCALAPPDATA || app.getPath('home'),'Coffer');
+  let settings={dataDirectory:defaultDataDirectory,initialized:false};
   if(fs.existsSync(settingsFile)){
     try{settings={...settings,...JSON.parse(fs.readFileSync(regularFile(settingsFile,65536),'utf8'))};}catch{failure='SETTINGS_INVALID';}
   }
-  if(argument('--coffer-data-directory'))settings.dataDirectory=argument('--coffer-data-directory');
-  try{settings.dataDirectory=dataPath(settings.dataDirectory,installRoot);}catch(error){failure=error.message;}
+  // A saved user choice takes precedence over a shortcut/test launcher's default data directory.
+  try{settings.dataDirectory=startupPath(settings.dataDirectory,installRoot,profileDirectory);}catch(error){failure=error.message;}
   const selected=new Map();
   let backupDestination=null,restoreSelection=null,maintenanceReport=null;
   const upgradeJournal=()=>path.join(path.dirname(settings.dataDirectory),path.basename(settings.dataDirectory)+'.coffer-upgrade.json');
@@ -30,7 +43,7 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
   const log=text=>fs.appendFileSync(path.join(profileDirectory,'launcher.log'),String(text),{mode:0o600});
   function reportTestStartup(){
     if(!app.isPackaged && argument('--coffer-test-autostart')==='true' && argument('--coffer-data-directory') && argument('--coffer-shell-directory'))
-      atomicJson(path.join(profileDirectory,'test-startup-state.json'),{phase,error:failure,frontendPid:process.pid,backendPid:supervisor?.child?.pid || null,backendPort:supervisor?.port || null,frontendOrigin:server?.origin || null,version:manifest?.version || null});
+      atomicJson(path.join(profileDirectory,'test-startup-state.json'),{phase,error:failure,dataDirectory:settings.dataDirectory,frontendPid:process.pid,backendPid:supervisor?.child?.pid || null,backendPort:supervisor?.port || null,frontendOrigin:server?.origin || null,version:manifest?.version || null});
   }
   const sourceValid=event=>{
     try{const source=new URL(event.senderFrame.url);return window && !window.isDestroyed() && event.sender===window.webContents && event.senderFrame===window.webContents.mainFrame && source.origin===server.origin && !source.pathname.startsWith('/api/') && !source.pathname.startsWith('/assets/');}
@@ -40,9 +53,25 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
     if(!window || new URL(window.webContents.mainFrame.url).pathname!=='/__desktop/start' || ['STARTING','READY','MAINTENANCE','VERIFYING'].includes(phase))throw new Error('请在启动页完成数据目录设置');
   };
   function handle(channel,fn){ipcMain.handle(channel,async(event,...args)=>{if(!sourceValid(event))throw new Error('IPC 来源验证失败');return fn(...args);});}
+  handle('coffer:get-pane-widths',()=>({...paneWidths}));
+  handle('coffer:get-theme',()=>theme);
+  handle('coffer:save-theme',value=>{
+    if(!['light','dark'].includes(value))throw new Error('主题参数无效');
+    atomicJson(themeFile,{theme:value});theme=value;
+  });
+  handle('coffer:save-pane-width',(key,value)=>{
+    if(typeof key!=='string' || !Object.hasOwn(paneLimits,key) || !Number.isFinite(value))throw new Error('面板宽度参数无效');
+    const [min,max]=paneLimits[key];if(value<min || value>max)throw new Error('面板宽度超出范围');
+    const next={...paneWidths,[key]:Math.round(value)};atomicJson(paneWidthsFile,next);Object.assign(paneWidths,next);
+  });
   function status(){
-    let nonempty=true;try{nonempty=fs.existsSync(settings.dataDirectory) && fs.readdirSync(noLinks(settings.dataDirectory)).some(name=>name!=='.coffer-desktop.lock');}catch{}
-    return {phase,error:failure,dataDirectory:settings.dataDirectory,libraryDirectory:settings.libraryDirectory || null,version:app.getVersion(),initialized:settings.initialized,nonempty,maintenanceReport};
+    const effective=creationDraft?.candidate || settings;
+    const directory=inspectDirectory(effective.dataDirectory,effective);
+    const interrupted=effective.creationStarted && directory.kind!=='empty';
+    const firstRun=Boolean(creationDraft) || !settings.initialized && !interrupted && directory.kind!=='existing' && !fs.existsSync(upgradeJournal()) && failure!=='SETTINGS_INVALID';
+    let incompleteNewLibraryDirectory=null;
+    try{const attempt=JSON.parse(fs.readFileSync(regularFile(newLibraryAttemptFile,65536),'utf8'));if(attempt.dataDirectory!==settings.dataDirectory)incompleteNewLibraryDirectory=attempt.dataDirectory;}catch{}
+    return {phase,error:failure,dataDirectory:effective.dataDirectory,boundDataDirectory:settings.dataDirectory,newLibraryCreation:Boolean(creationDraft),incompleteNewLibraryDirectory,defaultDataDirectory,locationChoice:creationDraft?'custom':effective.dataDirectory===defaultDataDirectory?'recommended':'custom',directoryState:interrupted && directory.kind==='occupied'?'missing':directory.kind,locationExists:directory.exists,firstRun,canCreate:firstRun && !effective.initialized && directory.kind==='empty' && Boolean(manifest),progress,libraryDirectory:effective.libraryDirectory || null,version:app.getVersion(),initialized:effective.initialized,nonempty:directory.nonempty,maintenanceReport};
   }
   async function cookieHeader(){return (await webSession.cookies.get({url:server.origin})).filter(cookie=>['COFFER_SESSION','JSESSIONID','XSRF-TOKEN'].includes(cookie.name)).map(cookie=>`${cookie.name}=${cookie.value}`).join('; ');}
   async function synchronizeCookies(headers){
@@ -78,32 +107,56 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
     if(selected.size>200)selected.clear();
     return previews;
   }
-  async function start(options,automaticTestInitialization=false){
+  async function start(options){
     startupOnly();
     if(!options || typeof options!=='object' || Array.isArray(options) || Object.keys(options).some(key=>!['initialize','upgrade','password'].includes(key)) || typeof options.initialize!=='boolean' || typeof options.upgrade!=='boolean' || options.initialize && options.upgrade)throw new Error('启动参数无效');
     if(!manifest)throw new Error('安装资源尚未通过校验，请重新安装');
-    settings.dataDirectory=dataPath(settings.dataDirectory,installRoot);
-    if(settings.libraryDirectory)settings.libraryDirectory=dataPath(settings.libraryDirectory,installRoot);
+    const draft=creationDraft;
+    if(draft && !options.initialize)throw new Error('请先完成或取消新库创建。');
+    const effective=draft?.candidate || settings;
+    effective.dataDirectory=startupPath(effective.dataDirectory,installRoot,profileDirectory);
+    if(effective.libraryDirectory)effective.libraryDirectory=startupPath(effective.libraryDirectory,installRoot,profileDirectory);
     const current=status();
-    if(options.initialize && (current.initialized || current.nonempty))throw new Error('初始化仅允许未绑定的空目录；已有数据请打开或恢复');
+    if(options.initialize && !current.canCreate)throw new Error('初始化仅允许未绑定的空目录；已有数据请打开或恢复');
+    if(options.initialize)requireEmptyWritableDirectory(effective.dataDirectory);
+    if(draft)requireSeparateEmptyLibrary(effective.dataDirectory,settings);
     if(options.upgrade)requirePassphrase(options.password);
-    const testInitialization=automaticTestInitialization && !app.isPackaged && argument('--coffer-test-autostart')==='true' && argument('--coffer-data-directory') && argument('--coffer-shell-directory') && options.initialize && !current.initialized && !current.nonempty;
-    if((options.initialize && !testInitialization) || options.upgrade){
-      const confirm=await dialog.showMessageBox(window,{type:'warning',title:options.initialize?'初始化本机文件库':'数据库升级',message:options.initialize?`在所选空目录初始化个人数据库、文件库和本机密钥：\n${settings.dataDirectory}`:'后台停止后生成经验证的整套加密回滚包，再迁移数据库。迁移/健康检查失败自动恢复整套旧数据。请先关闭外部应用。本机回滚包不能代替独立介质备份。',buttons:['取消',options.initialize?'初始化空目录':'加密备份并升级'],defaultId:0,cancelId:0,noLink:true});
+    // The wizard's "创建并进入" is the final confirmation for a new empty library.
+    if(options.upgrade){
+      const confirm=await dialog.showMessageBox(window,{type:'warning',title:'更新文件库',message:'程序会先生成并验证加密备份，再更新文件库。更新或启动失败时自动恢复原数据。请先关闭正在编辑的文件。',buttons:['取消','备份并更新'],defaultId:0,cancelId:0,noLink:true});
       if(confirm.response!==1)return status();
     }
-    phase='STARTING';failure=null;selected.clear();
+    phase='STARTING';progress='PREPARING';failure=null;selected.clear();
     try{
       await supervisor.stop();
-      if(fs.existsSync(upgradeJournal()))maintenanceReport=await maintenance({action:'recover-upgrade'});
+      // Persist the selected root before creating anything so a failed first start can be located again.
+      if(draft)atomicJson(newLibraryAttemptFile,{dataDirectory:effective.dataDirectory});
+      else{
+        if(current.directoryState==='existing')settings.initialized=true;
+        if(options.initialize)settings.creationStarted=true;
+        atomicJson(settingsFile,settings);
+        if(fs.existsSync(upgradeJournal()))maintenanceReport=await maintenance({action:'recover-upgrade'});
+      }
       let upgraded=null;
-      if(options.upgrade){upgraded=await maintenance({action:'upgrade',password:options.password,targetSchema:manifest.schemaVersion});maintenanceReport=upgraded;if(upgraded.status!=='MIGRATED_AWAITING_HEALTH')throw new Error('MIGRATION_FAILED_ROLLED_BACK');}
-      try{await supervisor.start(settings.dataDirectory,{initialize:options.initialize,libraryDirectory:settings.libraryDirectory,upgrade:false,upgradeProbeId:upgraded?.backupId});}
-      catch(error){await supervisor.stop();if(fs.existsSync(upgradeJournal())){maintenanceReport=await maintenance({action:'recover-upgrade'});throw new Error('MIGRATION_FAILED_ROLLED_BACK');}throw error;}
+      if(options.upgrade){progress='UPGRADING';upgraded=await maintenance({action:'upgrade',password:options.password,targetSchema:manifest.schemaVersion});maintenanceReport=upgraded;if(upgraded.status!=='MIGRATED_AWAITING_HEALTH')throw new Error('MIGRATION_FAILED_ROLLED_BACK');}
+      progress=options.initialize?'CREATING':'STARTING';
+      try{await supervisor.start(effective.dataDirectory,{initialize:options.initialize,libraryDirectory:effective.libraryDirectory,upgrade:false,upgradeProbeId:upgraded?.backupId,onProgress:()=>{progress='STARTING';}});}
+      catch(error){await supervisor.stop();if(!draft && fs.existsSync(upgradeJournal())){maintenanceReport=await maintenance({action:'recover-upgrade'});throw new Error('MIGRATION_FAILED_ROLLED_BACK');}throw error;}
       if(upgraded)await maintenance({action:'commit-upgrade'});
-      settings.initialized=true;settings.version=manifest.version;settings.schemaVersion=manifest.schemaVersion;atomicJson(settingsFile,settings);
-      phase='READY';await window.loadURL(server.origin+'/');reportTestStartup();
-    }catch(error){phase='FAILED';failure=error.message;await supervisor.stop();reportTestStartup();}
+      if(draft)await webSession.clearStorageData();
+      const committed={...effective,initialized:true,version:manifest.version,schemaVersion:manifest.schemaVersion};delete committed.creationStarted;
+      atomicJson(settingsFile,committed);settings=committed;creationDraft=null;
+      if(draft){try{regularFile(newLibraryAttemptFile,65536);fs.unlinkSync(newLibraryAttemptFile);}catch{}}
+      phase='READY';progress=null;await window.loadURL(server.origin+'/');reportTestStartup();
+    }catch(error){
+      phase='FAILED';progress=null;failure=error.message;await supervisor.stop();
+      if(draft){draft.candidate.initialized=inspectDirectory(effective.dataDirectory).nonempty;}
+      else if(options.initialize){
+        if(inspectDirectory(settings.dataDirectory).nonempty)settings.initialized=true;else delete settings.creationStarted;
+        atomicJson(settingsFile,settings);
+      }
+      reportTestStartup();
+    }
     return status();
   }
   app.on('second-instance',()=>{if(window){if(window.isMinimized())window.restore();window.focus();}});
@@ -118,7 +171,7 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
     webSession=session.fromPartition('persist:coffer',{cache:false});
     webSession.setPermissionRequestHandler((_contents,_permission,callback)=>callback(false));webSession.setPermissionCheckHandler(()=>false);
     webSession.on('will-download',event=>event.preventDefault());
-    window=new BrowserWindow({width:1280,height:850,minWidth:900,minHeight:650,title:'Coffer',show:false,webPreferences:{preload:path.join(__dirname,'preload.cjs'),session:webSession,nodeIntegration:false,nodeIntegrationInWorker:false,nodeIntegrationInSubFrames:false,contextIsolation:true,sandbox:true,webSecurity:true,allowRunningInsecureContent:false,webviewTag:false,devTools:!app.isPackaged}});
+    window=new BrowserWindow({width:1280,height:850,minWidth:900,minHeight:650,title:'Coffer',icon:path.join(__dirname,'app-icon.png'),show:false,webPreferences:{preload:path.join(__dirname,'preload.cjs'),session:webSession,nodeIntegration:false,nodeIntegrationInWorker:false,nodeIntegrationInSubFrames:false,contextIsolation:true,sandbox:true,webSecurity:true,allowRunningInsecureContent:false,webviewTag:false,devTools:!app.isPackaged}});
     webSession.webRequest.onBeforeRequest((details,callback)=>{
       let allowed=false;try{allowed=details.webContentsId===window.webContents.id && new URL(details.url).origin===server.origin && (!details.frame || !details.frame.parent);}catch{}
       if(details.resourceType==='mainFrame' && new URL(details.url).pathname.startsWith('/api/'))allowed=false;
@@ -138,6 +191,10 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
     },log);
     handle('coffer:status',status);
     handle('coffer:start',options=>start(options));
+    handle('coffer:manage-library',async()=>{
+      if(!manifest || !['READY','IDLE','FAILED','EXITED'].includes(phase))throw new Error('请等待当前操作完成。');
+      phase='MAINTENANCE';await supervisor.stop();selected.clear();phase='IDLE';failure=null;await window.loadURL(server.origin+'/__desktop/start');return status();
+    });
     handle('coffer:choose-backup-destination',async()=>{await libraryReady();const chosen=await dialog.showOpenDialog(window,{title:'选择备份介质目录（独立备份需不同物理设备）',properties:['openDirectory','createDirectory']});if(chosen.canceled)return null;backupDestination=noLinks(chosen.filePaths[0]);return {directory:backupDestination};});
     handle('coffer:create-backup',async options=>{
       await libraryReady();if(!options || Object.keys(options).some(key=>!['password','localSnapshot'].includes(key)) || typeof options.localSnapshot!=='boolean' || !backupDestination)throw new Error('请先选择备份目录');requirePassphrase(options.password);
@@ -149,25 +206,73 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
       if(error)throw error;return result;
     });
     handle('coffer:choose-restore',async()=>{
+      if(creationDraft)throw new Error('请先取消新库创建，再恢复备份。');
       startupOnly();const source=await dialog.showOpenDialog(window,{title:'选择加密备份包',filters:[{name:'Coffer 加密备份',extensions:['cofferbackup']}],properties:['openFile']});if(source.canceled)return null;
       const target=await dialog.showOpenDialog(window,{title:'选择空的新恢复目录，不能覆盖已有数据',properties:['openDirectory','createDirectory']});if(target.canceled)return null;
-      const destination=dataPath(target.filePaths[0],installRoot);if(fs.readdirSync(destination).length)throw new Error('恢复只允许空目录');
+      const destination=startupPath(target.filePaths[0],installRoot,profileDirectory);if(fs.readdirSync(destination).length)throw new Error('恢复只允许空目录');
       restoreSelection={archive:regularFile(source.filePaths[0]),target:destination};return {archiveName:path.basename(restoreSelection.archive),targetDirectory:destination};
     });
     handle('coffer:restore-backup',async password=>{
+      if(creationDraft)throw new Error('请先取消新库创建，再恢复备份。');
       startupOnly();requirePassphrase(password);if(!restoreSelection)throw new Error('请先选择备份包与空恢复目录');
       const confirm=await dialog.showMessageBox(window,{type:'warning',title:'验证并恢复整套数据',message:`校验个人文件库、文件摘要、台账、未完成操作和原密钥后恢复到：\n${restoreSelection.target}\n原数据目录不会被覆盖。恢复后打开个人文件库。`,buttons:['取消','验证并恢复'],defaultId:0,cancelId:0});if(confirm.response!==1)return null;
       phase='MAINTENANCE';failure=null;
       try{await supervisor.stop();const result=await maintenance({action:'restore',archive:restoreSelection.archive,targetDirectory:restoreSelection.target,password});settings.dataDirectory=restoreSelection.target;settings.libraryDirectory=null;settings.initialized=true;atomicJson(settingsFile,settings);maintenanceReport=result;restoreSelection=null;await webSession.clearStorageData();phase='IDLE';return result;}
       catch(error){phase='FAILED';failure=error.message;throw error;}
     });
-    handle('coffer:choose-data',async()=>{
-      startupOnly();const result=await dialog.showOpenDialog(window,{title:'选择空的新数据目录或已有原数据目录',properties:['openDirectory','createDirectory']});
-      if(!result.canceled){selected.clear();settings.dataDirectory=dataPath(result.filePaths[0],installRoot);settings.libraryDirectory=null;settings.initialized=fs.existsSync(path.join(settings.dataDirectory,'.coffer-desktop.json'));atomicJson(settingsFile,settings);}return status();
+    const beginEmptyLibrary=directory=>{
+      startupOnly();
+      const target=requireSeparateEmptyLibrary(startupPath(directory,installRoot,profileDirectory),settings);
+      const previous=creationDraft?.previous || {phase,failure,maintenanceReport};
+      creationDraft={candidate:{dataDirectory:target,libraryDirectory:null,initialized:false},previous};
+      selected.clear();phase='IDLE';failure=null;maintenanceReport=null;return status();
+    };
+    const chooseData=async emptyOnly=>{
+      startupOnly();const result=await dialog.showOpenDialog(window,{title:emptyOnly?'选择空文件夹，新建文件库':'选择已有文件库或空文件夹新建',properties:['openDirectory','createDirectory']});
+      if(result.canceled)return status();
+      startupOnly();
+      let directory=startupPath(result.filePaths[0],installRoot,profileDirectory);
+      let kind=inspectDirectory(directory).kind;
+      if(kind==='occupied'){
+        const child=startupPath(path.join(directory,'Coffer'),installRoot,profileDirectory);
+        const childKind=inspectDirectory(child).kind;
+        if(childKind!=='empty' && childKind!=='existing')throw new Error('所选位置及其 Coffer 子目录都不是可用的空文件库位置。请选择空文件夹或已有文件库。');
+        directory=child;kind=childKind;
+      }
+      if(kind==='empty')return beginEmptyLibrary(directory);
+      if(kind!=='existing' || emptyOnly)throw new Error('此位置无法创建空库，请选择空文件夹。');
+      if(directory!==settings.dataDirectory)await webSession.clearStorageData();
+      startupOnly();
+      const chosen={dataDirectory:directory,libraryDirectory:null,initialized:true};atomicJson(settingsFile,chosen);
+      selected.clear();creationDraft=null;settings=chosen;failure=null;phase='IDLE';maintenanceReport=null;return status();
+    };
+    handle('coffer:choose-data',()=>chooseData(false));
+    handle('coffer:choose-empty-library',()=>chooseData(true));
+    handle('coffer:cancel-empty-library',()=>{
+      startupOnly();if(creationDraft){const previous=creationDraft.previous;creationDraft=null;phase=previous.phase;failure=previous.failure;maintenanceReport=previous.maintenanceReport;}return status();
+    });
+    const chooseFresh=directory=>{
+      startupOnly();
+      if(!status().firstRun)throw new Error('请先重新定位或恢复原文件库。');
+      const target=startupPath(directory,installRoot,profileDirectory);
+      if(creationDraft)return beginEmptyLibrary(target);
+      delete settings.creationStarted;settings.dataDirectory=target;settings.libraryDirectory=null;failure=null;phase='IDLE';return status();
+    };
+    handle('coffer:choose-new-location',async()=>{
+      startupOnly();if(!status().firstRun)throw new Error('请先重新定位或恢复原文件库。');
+      const result=await dialog.showOpenDialog(window,{title:'选择保存位置，程序会在其中创建 Coffer 文件夹',properties:['openDirectory','createDirectory']});
+      if(result.canceled)return status();
+      return chooseFresh(newLibraryLocation(result.filePaths[0],installRoot,profileDirectory));
+    });
+    handle('coffer:use-default-location',()=>{startupOnly();if(creationDraft)throw new Error('请为新空库选择保存位置。');return chooseFresh(defaultDataDirectory);});
+    handle('coffer:show-library-location',async()=>{
+      startupOnly();if(!status().locationExists)throw new Error('此位置尚未创建，创建文件库后可在文件资源管理器中查看。');
+      const error=await shell.openPath(noLinks(creationDraft?.candidate.dataDirectory || settings.dataDirectory));if(error)throw new Error('无法打开文件资源管理器，请稍后重试。');
     });
     handle('coffer:choose-library',async()=>{
+      if(creationDraft)throw new Error('请先取消新库创建，再定位原文件目录。');
       startupOnly();const result=await dialog.showOpenDialog(window,{title:'选择原文件库目录（绑定必须一致）',properties:['openDirectory']});
-      if(!result.canceled){selected.clear();settings.libraryDirectory=dataPath(result.filePaths[0],installRoot);atomicJson(settingsFile,settings);}return status();
+      if(!result.canceled){startupOnly();selected.clear();settings.libraryDirectory=startupPath(result.filePaths[0],installRoot,profileDirectory);atomicJson(settingsFile,settings);}return status();
     });
     handle('coffer:select-files',async()=>{await user();const result=await dialog.showOpenDialog(window,{title:'选择要交给个人文件库管理的本地文件',properties:['openFile','multiSelections']});return result.canceled?[]:previewPaths(result.filePaths);});
     handle('coffer:preview-drops',previewPaths);
@@ -193,7 +298,7 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
     try{manifest=verifyResources(resourceRoot);supervisor.manifest=manifest;phase=failure?'FAILED':'IDLE';}
     catch(error){phase='FAILED';failure=error.message;log('Resource verification failed: '+failure+'\n');return;}
     const automaticTest=testStartupOptions({packaged:app.isPackaged,requested:argument('--coffer-test-autostart')==='true',explicitData:argument('--coffer-data-directory'),explicitProfile:argument('--coffer-shell-directory'),initialized:settings.initialized,hasBinding:fs.existsSync(path.join(settings.dataDirectory,'.coffer-desktop.json')),hasUpgradeJournal:fs.existsSync(upgradeJournal()),nonempty:status().nonempty});
-    if(!failure && automaticTest)await start(automaticTest,true);
+    if(!failure && automaticTest)await start(automaticTest);
     // Normal packaged startup never initializes missing roots automatically.
     else if(!failure && (settings.initialized || fs.existsSync(upgradeJournal()) || fs.existsSync(path.join(settings.dataDirectory,'.coffer-desktop.json'))))await start({initialize:false,upgrade:false});
   }).catch(error=>{log('Launcher failed: '+error.message+'\n');dialog.showErrorBox('Coffer 启动失败','请检查安装资源、目录权限和启动日志，用户数据没有被自动删除。');app.quit();});

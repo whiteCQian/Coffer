@@ -110,7 +110,7 @@ function formatDate(value: string) {
 
     <form class="form-grid" @submit.prevent="updatePassword">
       <label class="field"><span>当前密码</span><input v-model="currentPassword" type="password" autocomplete="current-password" required /></label>
-      <label class="field"><span>新密码（{{ auth.passwordHint }}）</span><input v-model="newPassword" type="password" autocomplete="new-password" :minlength="auth.status.passwordMinLength ?? 6" maxlength="16" required /></label>
+      <label class="field"><span>新密码（{{ auth.passwordHint }}）</span><input v-model="newPassword" type="password" autocomplete="new-password" :minlength="auth.status.passwordMinLength ?? 8" maxlength="16" required /></label>
       <button class="action-button primary" type="submit" :disabled="busy">更新密码</button>
     </form>
 
@@ -120,7 +120,7 @@ function formatDate(value: string) {
       <p class="note">管理员只管理账号状态与凭据。用户文件、标签、对话和任务按账号隔离。</p>
       <form class="form-grid create-grid" @submit.prevent="addUser">
         <label class="field"><span>新账号</span><input v-model="username" type="text" autocomplete="off" minlength="3" maxlength="64" required /></label>
-        <label class="field"><span>初始密码（{{ auth.passwordHint }}）</span><input v-model="initialPassword" type="password" autocomplete="new-password" :minlength="auth.status.passwordMinLength ?? 6" maxlength="16" required /></label>
+        <label class="field"><span>初始密码（{{ auth.passwordHint }}）</span><input v-model="initialPassword" type="password" autocomplete="new-password" :minlength="auth.status.passwordMinLength ?? 8" maxlength="16" required /></label>
         <button class="action-button primary" type="submit" :disabled="busy">创建用户</button>
       </form>
       <div class="user-list">

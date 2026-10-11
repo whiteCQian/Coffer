@@ -2503,6 +2503,7 @@ export interface components {
             };
         };
         AuthStatusResponse: {
+            storageQuotaEnabled?: boolean;
             desktopPersonal?: boolean;
             passwordMinLength?: number;
             strongPasswordRequired?: boolean;

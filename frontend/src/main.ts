@@ -9,14 +9,14 @@ import App from './App.vue'
 import router from './router'
 import { useAuthStore } from './stores/auth'
 import { useFileViewStore } from './stores/fileView'
-import { applyTheme, getTheme } from './theme'
+import { initializeTheme } from './theme'
 import './styles/global.css'
 import './styles/tokens.css'
 import './styles/desktop.css'
 import './styles/web.css'
 
 // 首屏渲染前应用主题，避免刷新时闪烁
-applyTheme(getTheme())
+const themeReady = initializeTheme()
 
 const app = createApp(App)
 
@@ -25,7 +25,7 @@ app.use(pinia)
 app.use(router)
 app.use(ElementPlus, { locale: zhCn })
 
-app.mount('#app')
+void themeReady.then(() => app.mount('#app'))
 
 window.addEventListener('coffer:auth-expired', () => {
   useAuthStore(pinia).clear()

@@ -3,7 +3,17 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 // Closed methods only: no channel, filesystem path, shell command, launch token or ipcRenderer export.
 contextBridge.exposeInMainWorld('cofferDesktop',Object.freeze({
   status:()=>ipcRenderer.invoke('coffer:status'),
+  getTheme:()=>ipcRenderer.invoke('coffer:get-theme'),
+  saveTheme:value=>ipcRenderer.invoke('coffer:save-theme',value),
+  getPaneWidths:()=>ipcRenderer.invoke('coffer:get-pane-widths'),
+  savePaneWidth:(key,value)=>ipcRenderer.invoke('coffer:save-pane-width',key,value),
   chooseDataDirectory:()=>ipcRenderer.invoke('coffer:choose-data'),
+  chooseEmptyLibrary:()=>ipcRenderer.invoke('coffer:choose-empty-library'),
+  cancelEmptyLibrary:()=>ipcRenderer.invoke('coffer:cancel-empty-library'),
+  manageLibrary:()=>ipcRenderer.invoke('coffer:manage-library'),
+  chooseNewLocation:()=>ipcRenderer.invoke('coffer:choose-new-location'),
+  useDefaultLocation:()=>ipcRenderer.invoke('coffer:use-default-location'),
+  showLibraryLocation:()=>ipcRenderer.invoke('coffer:show-library-location'),
   chooseLibraryDirectory:()=>ipcRenderer.invoke('coffer:choose-library'),
   start:options=>ipcRenderer.invoke('coffer:start',options),
   chooseBackupDestination:()=>ipcRenderer.invoke('coffer:choose-backup-destination'),

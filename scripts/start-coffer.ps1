@@ -211,6 +211,7 @@ try {
     } else { $setupToken = Get-ProcessEnvironment 'COFFER_ADMIN_SETUP_TOKEN' }
 
     if ([string]::IsNullOrWhiteSpace((Get-ProcessEnvironment 'MYSQL_PASSWORD'))) { throw 'MYSQL_PASSWORD is not configured in coffer-local.cmd or the user/machine environment.' }
+    if ([string]::IsNullOrWhiteSpace((Get-ProcessEnvironment 'MYSQL_USERNAME'))) { throw 'MYSQL_USERNAME is not configured in coffer-local.cmd or the user/machine environment.' }
     if ([string]::IsNullOrWhiteSpace((Get-ProcessEnvironment 'MINIO_ROOT_USER')) -or
         [string]::IsNullOrWhiteSpace((Get-ProcessEnvironment 'MINIO_ROOT_PASSWORD'))) {
         throw 'MINIO_ROOT_USER and MINIO_ROOT_PASSWORD must be configured in coffer-local.cmd or the user/machine environment.'
@@ -277,6 +278,27 @@ try {
         Wait-TcpPort $minioPort 30 'MinIO'
         Write-Host 'MinIO is ready.'
     } else { Write-Host 'MinIO is already listening; reusing it.' }
+
+    # The production capacity gate requires a fresh sample of the actual MinIO volume.
+    $capacityVolume = Get-ProcessEnvironment 'COFFER_MINIO_DATA'
+    if ([string]::IsNullOrWhiteSpace($capacityVolume)) { $capacityVolume = 'D:\Compiler\MinIO\data' }
+    $capacityReceipt = Join-Path $runtimeDir 'minio-capacity.json'
+    $capacityScript = Join-Path $PSScriptRoot 'minio-capacity-probe.cjs'
+    & $node.Source $capacityScript "--volume=$capacityVolume" "--receipt=$capacityReceipt" --once
+    if ($LASTEXITCODE -ne 0) { throw 'Could not measure the actual MinIO data volume.' }
+    Set-ProcessEnvironment 'COFFER_WEB_LIMITS_CAPACITY_RECEIPT' $capacityReceipt
+    $capacityRunning = $false
+    foreach ($entry in @($state.processes | Where-Object { $_.role -eq 'capacity' })) {
+        $candidate = Get-CimInstance Win32_Process -Filter "ProcessId = $($entry.pid)" -ErrorAction SilentlyContinue
+        if ($candidate -and $candidate.ExecutablePath -eq $node.Source -and $candidate.CommandLine.Contains($capacityScript)) { $capacityRunning = $true; break }
+    }
+    if (-not $capacityRunning) {
+        $capacityArgs = '"{0}" "--volume={1}" "--receipt={2}"' -f $capacityScript, $capacityVolume, $capacityReceipt
+        $capacityProcess = Start-Process -FilePath $node.Source -ArgumentList $capacityArgs -WorkingDirectory $root -WindowStyle Hidden -PassThru `
+            -RedirectStandardOutput (Join-Path $logDir 'capacity.out.log') -RedirectStandardError (Join-Path $logDir 'capacity.err.log')
+        Add-ManagedProcess $state 'capacity' $capacityProcess $node.Source
+    }
+    Write-Host 'MinIO volume capacity probe is ready.'
 
     $jar = Join-Path $backendDir 'target\coffer-backend-0.0.1-SNAPSHOT.jar'
     $sourceRoot = Join-Path $backendDir 'src\main'

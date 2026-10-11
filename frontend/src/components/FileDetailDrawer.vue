@@ -948,7 +948,7 @@ watch(
 </style>
 
 <style scoped>
-.drawer-wrap.is-inline { position: relative; inset: auto; flex: 0 0 340px; width: 340px; min-width: 0; height: 100%; z-index: 1; pointer-events: auto; border-left: 1px solid var(--line); }
+.drawer-wrap.is-inline { position: relative; inset: auto; flex: 0 0 var(--workbench-side-width,340px); width: var(--workbench-side-width,340px); min-width: 0; height: 100%; z-index: 1; pointer-events: auto; border-left: 1px solid var(--line); }
 .is-inline .drawer-panel { position: relative; inset: auto; height: 100%; width: 100%; border: 0; border-radius: 0; padding: 20px; transform: none; transition: none; box-shadow: none; background: var(--panel); }
 .inspector-heading { display: flex; justify-content: space-between; font-weight: 600; font-size: 13px; margin-bottom: 20px; }
 .inspector-heading span { color: var(--text-3); font-size: 11px; font-weight: 400; }
@@ -967,6 +967,6 @@ watch(
 .inspector-empty small { font-size: 11px; margin-top: 14px; }
 .empty-file-icon { font-size: 32px; }
 .is-inline .modal-mask { position: fixed; z-index: 150; }
-@media (max-width: 1200px) { .drawer-wrap.is-inline { flex-basis: 300px; width: 300px; } .is-inline .drawer-panel { padding: 16px; } }
+@media (max-width: 1200px) { .drawer-wrap.is-inline { flex-basis: var(--workbench-side-width,300px); width: var(--workbench-side-width,300px); } .is-inline .drawer-panel { padding: 16px; } }
 @media (max-width: 960px) { .drawer-wrap.is-inline.is-open { position: fixed; inset: 0 0 0 auto; width: min(380px, calc(100vw - 210px)); z-index: 100; box-shadow: -8px 0 24px #0002; } .drawer-wrap.is-inline:not(.is-open) { display: none; } }
 </style>

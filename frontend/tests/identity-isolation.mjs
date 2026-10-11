@@ -47,7 +47,7 @@ await context.route(url => new URL(url).pathname.startsWith('/api/'), async rout
 })
 async function signIn(name) {
   await page.locator('input[autocomplete="username"]').fill(name)
-  await page.locator('input[autocomplete="current-password"]').fill('fixture-password-123')
+  await page.locator('input[autocomplete="current-password"]').fill('Fixture9!abcdef')
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await page.waitForURL(name === 'admin' ? '**/admin' : /\/($|files)/)
 }

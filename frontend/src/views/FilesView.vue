@@ -12,6 +12,8 @@ import FileDetailDrawer from '@/components/FileDetailDrawer.vue'
 import FileTile from '@/components/FileTile.vue'
 import DesktopImportPanel from '@/components/DesktopImportPanel.vue'
 import StorageQuotaPanel from '@/components/StorageQuotaPanel.vue'
+import PaneResizeHandle from '@/components/PaneResizeHandle.vue'
+import { usePaneWidth, useWindowWidth } from '@/composables/usePaneWidth'
 import { useAuthStore } from '@/stores/auth'
 import { desktopBridge } from '@/api/desktop'
 import ChatDock from '@/layout/ChatDock.vue'
@@ -24,6 +26,13 @@ import { formatBytes, shortTime, toDisplayTime } from '@/utils/format'
  */
 const PAGE_SIZE = 12
 const auth = useAuthStore()
+const windowWidth=useWindowWidth(),contentElement=ref<HTMLElement>(),contentWidth=ref(0)
+const sidePanelMax=computed(()=>Math.max(280,Math.min(600,contentWidth.value-328)))
+const {width:sidePanelWidth,resize:resizeSidePanel,commit:saveSidePanel,reset:resetSidePanel}=usePaneWidth('coffer:side-panel-width',340,280,sidePanelMax)
+const canResizePanels=computed(()=>auth.isPersonal && windowWidth.value>960)
+let contentObserver:ResizeObserver|undefined
+onMounted(()=>{contentObserver=new ResizeObserver(entries=>{contentWidth.value=entries[0]?.contentRect.width || 0});if(contentElement.value)contentObserver.observe(contentElement.value)})
+onUnmounted(()=>contentObserver?.disconnect())
 
 const keyword = ref('')
 /** 点选标签芯片后的精确筛选标签名（空 = 不限） */
@@ -377,14 +386,14 @@ onUnmounted(() => { listRequest++; clearInterval(pollTimer); window.removeEventL
       <button class="desk-icon-button" :disabled="loading" title="刷新文件库" aria-label="刷新文件库" @click="reload"><el-icon><Refresh /></el-icon></button>
       <button class="desk-icon-button" :title="showInspector && !aiOpen ? '收起详情面板' : '展开详情面板'" :aria-label="showInspector && !aiOpen ? '收起详情面板' : '展开详情面板'" :aria-expanded="showInspector && !aiOpen" @click="toggleInspector"><el-icon><Fold v-if="showInspector && !aiOpen" /><Expand v-else /></el-icon></button>
     </div>
-    <StorageQuotaPanel v-if="!auth.isPersonal && auth.status.strongPasswordRequired" />
+    <StorageQuotaPanel v-if="!auth.isPersonal && auth.status.storageQuotaEnabled" />
     <DesktopImportPanel ref="nativeImport" compact @queued="reload" />
     <div v-if="activeTag || (keyword.trim() && (suggestions.length || suggesting))" class="desk-filter-bar">
       <span v-if="activeTag" class="desk-tag">{{ activeTag }}<button aria-label="取消标签筛选" @click="clearActiveTag">×</button></span>
       <template v-else><span>{{ suggesting ? '正在匹配标签…' : '相关标签' }}</span><button v-for="suggestion in suggestions" :key="suggestion.name" class="desk-tag" @click="chooseSuggestion(suggestion.name)">{{ suggestion.name }} · {{ suggestion.fileCount }}</button></template>
       <button v-if="keyword.trim()" class="desk-text-button" :disabled="suggesting" @click="suggestWithModel">AI 标签联想</button>
     </div>
-    <div class="workbench-content">
+    <div ref="contentElement" class="workbench-content" :style="auth.isPersonal?{'--workbench-side-width':`${sidePanelWidth}px`}:undefined">
       <section class="file-browser" aria-label="文件浏览区" :aria-busy="loading">
         <div v-if="selectedCount" class="selection-toolbar"><strong>已选择 {{ selectedCount }} 个文件</strong><button class="desk-button" @click="createPreview">生成整理预览</button><button class="desk-button" @click="reanalyzeSelected">重新分析</button><button class="desk-text-button" @click="clearSelection">取消选择</button></div>
         <div class="file-scroll">
@@ -402,6 +411,7 @@ onUnmounted(() => { listRequest++; clearInterval(pollTimer); window.removeEventL
         </div>
         <footer class="browser-footer"><span>{{ selectedCount ? `已选择 ${selectedCount} 个文件` : '单击查看详情 · 右键查看更多操作' }}</span><el-pagination v-if="totalPages > 1" v-model:current-page="page" :page-size="PAGE_SIZE" :total="total" layout="prev, pager, next" :pager-count="5" small /></footer>
       </section>
+      <PaneResizeHandle v-if="canResizePanels && (showInspector || aiOpen)" label="调整主区域右边界" :size="sidePanelWidth" :min="280" :max="sidePanelMax" reverse @resize="resizeSidePanel" @commit="saveSidePanel" @reset="resetSidePanel"/>
       <FileDetailDrawer v-show="showInspector && !aiOpen" v-model="drawerId" inline @changed="reload" @reanalyzed="goToReanalysis" />
       <aside v-if="aiMounted" v-show="aiOpen" class="workbench-ai"><div class="ai-panel-heading"><span>AI 文件助手</span><button class="desk-icon-button" aria-label="收起 AI 助手" @click="aiOpen = false">×</button></div><ChatDock /></aside>
     </div>
@@ -490,10 +500,10 @@ button.desk-tag { cursor: pointer; }
 .desk-empty > .el-icon { font-size: 40px; color: var(--accent); background: rgb(var(--accent-rgb) / .06); border-radius: 14px; padding: 20px; box-sizing: content-box; }
 .desk-empty h2 { font-size: 16px; font-weight: 500; margin: 12px 0 0; }
 .desk-empty p { color: var(--text-3); font-size: 12px; margin: 0 0 12px; }
-.workbench-ai { flex: 0 0 360px; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); }
+.workbench-ai { flex: 0 0 var(--workbench-side-width,360px); display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); }
 .ai-panel-heading { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px 0; font-size: 13px; font-weight: 600; }
 .workbench-ai :deep(.chat-card) { flex: 1; min-height: 0; border-radius: 0; }
-.workbench-status { display: flex; align-items: center; gap: 12px; flex: none; padding: 9px 24px; min-height: 36px; background: var(--bg); border-top: 1px solid var(--line); color: var(--text-3); font-size: 10px; }
+.workbench-status { display: flex; align-items: center; gap: 12px; flex: none; padding: 9px 24px; min-height: 36px; background: var(--bg); border-top: 1px solid var(--line); color: var(--text-3); font-size: 11px; }
 .status-indicator { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
 .workbench-status a { text-decoration: none; color: var(--accent); }
 .workbench-status .status-error { color: var(--danger); }
@@ -502,6 +512,6 @@ button.desk-tag { cursor: pointer; }
 .file-context-menu button { display: block; width: 100%; border: 0; background: transparent; color: var(--text-1); text-align: left; padding: 8px 10px; font-size: 12px; border-radius: 5px; cursor: pointer; }
 .file-context-menu button:hover { background: var(--hover-bg); }
 @media (max-width: 1350px) { .date-column { display: none; } .tags-column { width: 104px; } }
-@media (max-width: 1200px) { .workbench-ai { flex-basis: 320px; } .size-column { display: none; } .ai-search-link { display: none; } .workbench-header, .workbench-toolbar { padding-inline: 20px; } }
+@media (max-width: 1200px) { .workbench-ai { flex-basis: var(--workbench-side-width,320px); } .size-column { display: none; } .ai-search-link { display: none; } .workbench-header, .workbench-toolbar { padding-inline: 20px; } }
 @media (max-width: 960px) { .workbench-ai { position: fixed; top: 0; bottom: 36px; right: 0; width: min(360px, calc(100vw - 210px)); z-index: 50; background: var(--panel); box-shadow: -8px 0 24px #0002; } .header-actions { gap: 6px; } .desk-search kbd { display: none; } }
 </style>

@@ -66,6 +66,29 @@ class DesktopBackupIntegrationTest {
             TenantContext.set(sample.ownerB());assertThat(files.findById(sample.fileB())).isPresent();assertThat(files.findById(sample.fileA())).isEmpty();
         }
     }
+    @Test void restoredLocationSurvivesMaintenanceProcessExit() throws Exception {
+        Path source=temp.resolve("个人资料 with spaces").resolve("Coffer");
+        try(var created=start(source,true)) { assertThat(created.getBean(DesktopDataDirectory.class).initializedNow()).isTrue(); }
+        Path media=Files.createDirectory(temp.resolve("process-snapshots"));
+        var backup=new DesktopBackupService().backup(source,source.resolve("library"),media,PASSWORD,true,Map.of());
+        Path target=Files.createDirectory(temp.resolve("process-restored"));
+        String executable=System.getProperty("coffer.maintenance.java",Path.of(System.getProperty("java.home"),"bin",System.getProperty("os.name").startsWith("Windows")?"java.exe":"java").toString());
+        String classpath=System.getProperty("surefire.test.class.path",System.getProperty("java.class.path"));
+        var process=new ProcessBuilder(executable,"-cp",classpath,BackupMaintenanceProbeMain.class.getName()).redirectErrorStream(true).start();
+        try {
+            try(var input=process.getOutputStream()) {
+                input.write(DesktopBackupService.JSON.writeValueAsBytes(Map.of("action","restore","archive",backup.packagePath(),"targetDirectory",target.toString(),"password",new String(PASSWORD))));
+            }
+            assertThat(process.waitFor(90,java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            String output=new String(process.getInputStream().readAllBytes(),java.nio.charset.StandardCharsets.UTF_8);
+            assertThat(process.exitValue()).withFailMessage(output).isZero();
+            var jdbc=new org.springframework.jdbc.core.JdbcTemplate(new org.springframework.jdbc.datasource.DriverManagerDataSource(SnapshotDatabase.url(target,false),"sa",""));
+            assertThat(jdbc.queryForObject("SELECT library_root FROM desktop_library_binding WHERE id=1",String.class)).isEqualTo(target.resolve("library").toRealPath().toString());
+            try(var restored=start(target,false)) {
+                assertThat(restored.getBean(DesktopDataDirectory.class).libraryRoot()).isEqualTo(target.resolve("library").toRealPath());
+            }
+        } finally { if(process.isAlive())process.destroyForcibly(); }
+    }
     @Test void missingKeyOrFormalBodyRefusesBackupAndWrongPasswordNeverCreatesANewLibrary() throws Exception {
         Path source=temp.resolve("source");seed(source);var service=new DesktopBackupService();Path media=Files.createDirectory(temp.resolve("snapshots"));
         var backup=service.backup(source,source.resolve("library"),media,PASSWORD,true,Map.of());Path target=temp.resolve("failed-restore");

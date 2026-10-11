@@ -19,7 +19,7 @@ import java.util.*;
 /** Offline, owner-aware verification without starting workers, migrating or sending model content. */
 final class SnapshotDatabase {
     static String h2Version() throws Exception {return (String)Class.forName("org.h2.engine.Constants").getField("VERSION").get(null);}
-    static String url(Path data,boolean writable){return "jdbc:h2:file:"+data.resolve("database/coffer").toString().replace('\\','/')+";IFEXISTS=TRUE;DB_CLOSE_ON_EXIT=FALSE"+(writable?"":";ACCESS_MODE_DATA=r");}
+    static String url(Path data,boolean writable){return "jdbc:h2:file:"+data.resolve("database/coffer").toString().replace('\\','/')+";IFEXISTS=TRUE;DB_CLOSE_ON_EXIT=FALSE"+(writable?";ACCESS_MODE_DATA=rw;WRITE_DELAY=0":";ACCESS_MODE_DATA=r");}
     static Map<String,SnapshotManifest.TableFact> facts(Path data) throws Exception {
         var result=new TreeMap<String,SnapshotManifest.TableFact>();
         try(var connection=DriverManager.getConnection(url(data,false),"sa","");var tables=connection.createStatement().executeQuery("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='PUBLIC' AND TABLE_TYPE='BASE TABLE' ORDER BY TABLE_NAME")){
@@ -90,7 +90,32 @@ final class SnapshotDatabase {
         var object=TenantContext.supplyAs(owner,()->storage.stat(key));if(object.size()!=size || !object.sha256().equals(sha))throw new IOException("BACKUP_FILE_IDENTITY_MISMATCH");
     }
     static void relocate(Path data,Path stagedLibrary,Path finalLibrary,SnapshotManifest manifest) throws Exception {
-        var jdbc=new JdbcTemplate(new DriverManagerDataSource(url(data,true),"sa",""));
+        // Verification opened this database read-only. Release that engine before
+        // reopening it for persistent relocation writes in the maintenance JVM.
+        try(var connection=DriverManager.getConnection(url(data,false),"sa","");var statement=connection.createStatement()) {
+            statement.execute("SHUTDOWN");
+        }
+        try(var connection=DriverManager.getConnection(url(data,true),"sa","")) {
+            connection.setAutoCommit(false);
+            var jdbc=new JdbcTemplate(new org.springframework.jdbc.datasource.SingleConnectionDataSource(connection,true));
+            try {
+                relocateRecords(jdbc,stagedLibrary,finalLibrary,manifest);
+                connection.commit();
+                // Persist all relocated paths before the staged database is moved or the JVM exits.
+                try(var statement=connection.createStatement()) {
+                    statement.execute("CHECKPOINT SYNC");
+                    statement.execute("SHUTDOWN");
+                }
+            } catch(Exception failed) {
+                if(!connection.isClosed())connection.rollback();
+                throw failed;
+            }
+        }
+        try(var connection=DriverManager.getConnection(url(data,false),"sa","");var statement=connection.createStatement();var rows=statement.executeQuery("SELECT library_root FROM desktop_library_binding WHERE id=1")) {
+            if(!rows.next() || !finalLibrary.toString().equals(rows.getString(1)))throw new IOException("RESTORE_LIBRARY_BINDING_MISMATCH");
+        }
+    }
+    private static void relocateRecords(JdbcTemplate jdbc,Path stagedLibrary,Path finalLibrary,SnapshotManifest manifest) throws Exception {
         jdbc.update("UPDATE desktop_library_binding SET library_root=? WHERE id=1",finalLibrary.toString());
         var rebound=new HashSet<String>();
         if(table(jdbc,"INBOX_IMPORT_RECORD"))for(var row:jdbc.queryForList("SELECT * FROM inbox_import_record ORDER BY id DESC")) {

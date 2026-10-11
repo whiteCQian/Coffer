@@ -7,6 +7,11 @@ declare global {
   interface Window {
     cofferDesktop?: {
       status(): Promise<DesktopStatus>
+      getTheme?(): Promise<'light' | 'dark' | null>
+      saveTheme?(theme: 'light' | 'dark'): Promise<void>
+      getPaneWidths?(): Promise<Record<string, number>>
+      savePaneWidth?(key: string, value: number): Promise<void>
+      manageLibrary?(): Promise<DesktopStatus>
       selectFiles(): Promise<NativeSelection[]>
       previewDroppedFiles(files: File[]): Promise<NativeSelection[]>
       commitInbox(items: { id: string; targetPath: string }[]): Promise<NativeReceipt[]>

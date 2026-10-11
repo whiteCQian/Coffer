@@ -29,7 +29,7 @@ await page.route('http://127.0.0.1:5177/api/**', async route => {
   requests.push({ path, method })
   let data = []
   if (path === '/auth/csrf') data = 'fixture-csrf'
-  else if (path === '/auth/status') data = { setupRequired: false, setupAvailable: false, desktopPersonal: false }
+  else if (path === '/auth/status') data = { setupRequired: false, setupAvailable: false, desktopPersonal: false, passwordMinLength: 8, strongPasswordRequired: false, storageQuotaEnabled: true }
   else if (path === '/auth/me') {
     if (!user) return route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ code: 401, msg: '请先登录', data: null }) })
     data = user
@@ -76,6 +76,8 @@ async function capture(name, path, width = 1440, height = 960) {
 try {
   await capture('home', '/')
   await capture('files', '/files')
+  await page.locator('.quota-panel').getByText(/存储已用/).waitFor()
+  await page.locator('.quota-panel').screenshot({ path: artifacts + 'quota-light.png' })
   await capture('search', '/search')
   await capture('settings', '/settings')
   await capture('operations', '/operations')
@@ -162,6 +164,11 @@ try {
     await page.setViewportSize({ width: 1440, height: 960 })
     await page.getByLabel('切换到深色主题', { exact: true }).click()
     await capture('dark-home', '/')
+    assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).filter), 'none')
+    assert.equal(await page.locator('.icon-rail').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(34, 38, 39)')
+    assert.equal(await page.locator('.web-shell').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(27, 30, 32)')
+    await capture('dark-files', '/files')
+    await page.locator('.quota-panel').screenshot({ path: artifacts + 'quota-dark.png' })
     await page.getByLabel('切换到亮色主题', { exact: true }).click()
     await capture('tablet-home', '/', 1024, 768)
     await fit()
@@ -169,13 +176,34 @@ try {
     user = { id: 3, username: 'admin', role: 'ADMIN', enabled: true }
     const adminStart = requests.length
     await capture('admin', '/admin')
+    const creation = page.locator('.create-grid')
+    await creation.locator('input[autocomplete="off"]').fill('numeric-fixture')
+    await creation.locator('input[autocomplete="new-password"]').fill('12345678')
+    const [creationRequest] = await Promise.all([
+      page.waitForRequest(request => new URL(request.url()).pathname === '/api/admin/users' && request.method() === 'POST'),
+      creation.getByRole('button', { name: '创建用户', exact: true }).click(),
+    ])
+    assert.equal(creationRequest.postDataJSON().password, '12345678')
     assert.equal(await page.locator('.web-global-search').count(), 0)
     assert.equal(await page.locator('.web-tags').count(), 0)
     assert.ok(!requests.slice(adminStart).some(request => /^\/(files|tasks|chat|settings|model|privacy)/.test(request.path)), 'admin UI must not load user file APIs')
     user = null
     await page.goto('http://127.0.0.1:5177/login')
     await page.getByRole('heading', { name: '登录 Coffer', exact: true }).waitFor()
+    const passwordField = page.locator('input[autocomplete="current-password"]')
+    assert.equal(await passwordField.getAttribute('minlength'), '8')
+    assert.equal(await passwordField.getAttribute('maxlength'), '16')
+    await page.getByText('8–16 个字符', { exact: true }).waitFor()
     await page.screenshot({ path: artifacts + 'after-login.png', animations: 'disabled' })
+    await page.locator('input[autocomplete="username"]').fill('lin')
+    await passwordField.fill('Fx8!mP2')
+    const loginRequests = requests.filter(request => request.path === '/auth/login').length
+    await page.getByRole('button', { name: '登录', exact: true }).click()
+    assert.equal(requests.filter(request => request.path === '/auth/login').length, loginRequests)
+    await passwordField.fill('12345678')
+    await page.getByRole('button', { name: '登录', exact: true }).click()
+    await page.locator('.icon-rail').waitFor()
+    assert.equal(requests.filter(request => request.path === '/auth/login').length, loginRequests + 1)
     assert.deepEqual(errors, [])
     console.log('PASS: Web navigation/search, recent file opening, view persistence, bulk selection, tags, upload/model consent, AI citations, settings sections, mobile/tablet sizing, themes and admin isolation.')
   }

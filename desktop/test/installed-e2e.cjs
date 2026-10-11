@@ -44,9 +44,9 @@ async function configureModel(page,baseUrl){
   if(!modelServer.listening)throw new Error('All approved local model fixture ports are occupied');
   application=await electron.launch({executablePath:executable,args:[`--coffer-data-directory=${path.join(fixtureRoot,'data')}`,`--coffer-shell-directory=${path.join(fixtureRoot,'shell')}`],env,timeout:45000});
   const page=await application.firstWindow();const errors=[];page.on('pageerror',error=>errors.push(error.message));
-  await page.getByRole('button',{name:'初始化空目录',exact:true}).waitFor();
-  await application.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});});
-  await page.getByRole('button',{name:'初始化空目录',exact:true}).click();
+  await page.getByRole('button',{name:'下一步',exact:true}).waitFor();
+  await page.getByRole('button',{name:'下一步',exact:true}).click();
+  await page.getByRole('button',{name:'创建并进入',exact:true}).click();
   await page.waitForURL(url=>url.pathname!=='/__desktop/start',{timeout:90000});
   await wait(page,async()=> (await api(page,'/auth/status')).body.data?.desktopPersonal===true);
   assert.equal(await page.evaluate(()=>typeof window.require),'undefined');assert.equal(await page.evaluate(()=>typeof window.process),'undefined');
@@ -104,7 +104,7 @@ async function configureModel(page,baseUrl){
   const browserPid=await application.evaluate(({app})=>app.getAppMetrics().find(metric=>metric.type==='Browser').pid);
   execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-Command','$ownedPid=[int]$env:COFFER_PROBE_PID; $owned=Get-CimInstance Win32_Process -Filter ("ProcessId="+$ownedPid); $parentMatches=$owned -and $owned.ParentProcessId -eq [int]$env:COFFER_PROBE_PARENT; $jarMatches=$owned -and $owned.CommandLine -and $owned.CommandLine.Replace("/","\\").Contains($env:COFFER_PROBE_JAR.Replace("/","\\")); if(-not $parentMatches -or -not $jarMatches){throw ("Backend ownership mismatch: actualParent="+$owned.ParentProcessId+", expectedParent="+$env:COFFER_PROBE_PARENT+", jarMatches="+$jarMatches)}; Stop-Process -Id $ownedPid -Force'],{env:{...process.env,COFFER_PROBE_PID:String(ports.backendPid),COFFER_PROBE_PARENT:String(browserPid),COFFER_PROBE_JAR:path.join(path.dirname(executable),'resources/coffer/backend/coffer-backend.jar')},windowsHide:true});
   await page.getByText(/本地后台异常退出/).waitFor({timeout:15000});
-  await page.getByRole('button',{name:'打开已有数据 / 重启',exact:true}).click();
+  await page.getByRole('button',{name:'重新打开',exact:true}).click();
   await page.waitForURL(url=>url.pathname!=='/__desktop/start',{timeout:90000});
   assert.equal((await api(page,'/auth/me')).body.data.id,ownerA);
   const preserved=(await api(page,`/files/${file.id}`)).body.data;assert.equal(preserved.revision,detail.revision);

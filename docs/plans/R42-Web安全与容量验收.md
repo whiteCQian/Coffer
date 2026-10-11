@@ -6,7 +6,7 @@
 
 - HTTPS 仅发布 443，TLS 1.2/1.3；Caddy 的 HSTS、nosniff、Referrer-Policy、DENY framing、Permissions-Policy 和 CSP 保护生产静态页。CSP 限制脚本/网络到同源，允许 Element Plus 的内联样式及受控 blob 图片/PDF 预览。开发 CORS 只在 dev 激活。
 - 服务端 JDBC 会话；登录删除旧会话并分配新 ID/创建时间，Cookie 为 HttpOnly/Secure/SameSite=Lax、浏览器会话 Cookie；JDBC 空闲有效期 30m，prod 绝对有效期 8h。退出、停用及管理员改密继续撤销会话；CSRF 使用 Secure、SameSite=Strict 的双提交 Cookie 和请求头。CSRF Cookie 供前端读取，因此不设置 HttpOnly。
-- 保持原 6–16 字符登录合同以便原账号改密；prod 创建、初始化、重置及改密要求 12–16 字符，包含大小写和数字、拒绝常见弱口令片段。前端从 `/api/auth/status` 读取策略。发布旧数据库前，运维应确认旧账号完成强口令重置；不会从密码哈希推测既有密码强度。
+- 账号登录、创建、初始化、重置及新密码仅限制长度为 8–16 个字符，不要求字符组合，也不拦截常见弱口令。前端从 `/api/auth/status` 读取长度策略；存储配额使用独立能力标志，不依赖密码规则。
 - prod 限流窗口持久化到数据库：登录每 IP 10 次/15m、每账号 30 次/15m；初始化、改密/重置、模型验证保留原端点规则。只保存 SHA-256 限流键，重启不清空窗口；20,000 个有效桶上限时拒绝新增键，不逐出其他账号窗口。拒绝返回 429/Retry-After；数据库不可用时不放行认证限流。
 - MinIO 私有 bucket/子服务密钥、`users/<ownerId>/` 校验继续使用 R23 授权正文入口；匿名、B 账号和管理员不能直接读取 A 的正文。没有静态 bucket 或公开预签名下载 URL。下载响应仍为 private/no-store，单段 Range/指纹/对象版本绑定合同不变。
 - MySQL 强制 require_secure_transport，运行及迁移账号 REQUIRE SSL，Connector/J 验证 CA 与 mysql DNS 身份；MinIO 验证独立 CA 与 minio DNS 身份。数据库/MinIO CA 私钥由不同离线口令加密，应用 master key、两类服务凭据、备份加密口令独立。Compose 不放明文凭据/默认 root/空口令。后端只接收 DB app + MinIO 子密钥及各自信任证书，不接收服务器私钥、root 或迁移密钥。MySQL 包装入口在降权前读取文件 secrets，避免官方 mysql UID 无法读取 root:10001 的宿主 secret。
@@ -25,7 +25,7 @@ MinIO 容量探针直接 statfs 实际 MinIO 持久卷，每 10s 写入一次无
 
 ## 自动化与目标验收
 
-本机用例包括 SQL 并发双预约只能一个成功、A/B 用量隔离、重启保留预约、删除释放、额度/实际低容量/过期探针拒绝、待处理及并发名额、持久限流窗口、强口令、绝对会话过期、同账号重复上传及异常后释放、匿名 multipart 零解析。MinIO TLS 用本机 HTTPS 夹具实际握手：可信证书成功、错误信任源/主机名不匹配失败。M1 与 R23 的 OwnerAuthorization/AgentIsolation/Privacy/FileController 回归仍验证匿名/A/B/管理员/停用账号授权矩阵。真实 MySQL TLS 与 MinIO 卷权限需目标 Docker 验收。
+本机用例包括 SQL 并发双预约只能一个成功、A/B 用量隔离、重启保留预约、删除释放、额度/实际低容量/过期探针拒绝、待处理及并发名额、持久限流窗口、密码长度边界与无复杂度限制、绝对会话过期、同账号重复上传及异常后释放、匿名 multipart 零解析。MinIO TLS 用本机 HTTPS 夹具实际握手：可信证书成功、错误信任源/主机名不匹配失败。M1 与 R23 的 OwnerAuthorization/AgentIsolation/Privacy/FileController 回归仍验证匿名/A/B/管理员/停用账号授权矩阵。真实 MySQL TLS 与 MinIO 卷权限需目标 Docker 验收。
 
 安装/密钥生成/证书检查见 [生产发布说明](../../deploy/README.md)。在隔离服务器实际跑全量验收：
 

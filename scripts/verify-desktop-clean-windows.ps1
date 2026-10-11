@@ -32,7 +32,7 @@ $snapshot.resourcesVerified=$manifest.files.Count;$snapshot.bundledJavaVersion=$
 $sample=Join-Path $EvidenceDirectory '本地验收资料.txt';[IO.File]::WriteAllText($sample,'Public report for Coffer clean Windows verification. No personal information.',[Text.UTF8Encoding]::new($false))
 $sampleSha=(Get-FileHash -LiteralPath $sample -Algorithm SHA256).Hash
 $started=[DateTime]::UtcNow;$application=Start-Process -FilePath $exe -PassThru
-Write-Host '请在应用中明确初始化空目录；应直接进入个人文件库，无需创建账号或登录。'
+Write-Host '请按两步引导选择保存位置并点击“创建并进入”；应直接进入个人文件库，无需创建账号或登录。'
 Write-Host ('本地验证文件：'+$sample)
 Write-Host '选择/拖入该文件，核对收件箱与正式目标路径；如验证 AI 闭环，先配置并验证自己的模型端点。'
 Write-Host '正式入库并校验成功后，应删除该样本的原路径文件。完成文件查看、受控工作副本编辑/保存、归档/撤销。'

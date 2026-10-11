@@ -43,13 +43,14 @@ public class AuthController {
     private final SecurityContextRepository securityContextRepository;
     private final RequestRateLimiter rateLimiter;
     private final ClientAddressResolver clientAddressResolver;
+    private final org.springframework.core.env.Environment environment;
     @org.springframework.beans.factory.annotation.Autowired(required=false)
     private com.coffer.desktop.DesktopPersonalWorkspace personal;
 
     @GetMapping("/status")
     public Result<AuthStatusResponse> status() {
         if (personal != null) return Result.success(new AuthStatusResponse(false, false, 0, false, true));
-        return Result.success(new AuthStatusResponse(accounts.isSetupRequired(), accounts.isSetupAvailable(), accounts.passwordMinimumLength(), accounts.strongPasswordRequired()));
+        return Result.success(new AuthStatusResponse(accounts.isSetupRequired(), accounts.isSetupAvailable(), accounts.passwordMinimumLength(), accounts.strongPasswordRequired(), false, environment.matchesProfiles("prod")));
     }
 
     @GetMapping("/csrf")

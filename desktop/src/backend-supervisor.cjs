@@ -16,7 +16,7 @@ function request(port, token, route, options={}) {
 }
 class BackendSupervisor {
   constructor(resourceRoot,manifest,onExit,log) {this.root=resourceRoot;this.manifest=manifest;this.onExit=onExit;this.log=log;this.port=null;this.stopping=false;}
-  async start(dataDirectory,{initialize=false,libraryDirectory,upgrade=false,upgradeProbeId}={}) {
+  async start(dataDirectory,{initialize=false,libraryDirectory,upgrade=false,upgradeProbeId,onProgress}={}) {
     if(this.child && this.child.exitCode===null)throw new Error('BACKEND_ALREADY_OWNED');
     this.instance=crypto.randomUUID();this.token=crypto.randomBytes(32).toString('hex');this.nativeToken=crypto.randomBytes(32).toString('hex');this.stopping=false;this.port=null;
     const env={};
@@ -41,6 +41,7 @@ class BackendSupervisor {
         const info=fs.statSync(regularFile(ready,4096));
         const body=JSON.parse(fs.readFileSync(ready,'utf8'));
         if(body.instanceId!==this.instance || body.pid!==child.pid || !Number.isInteger(body.port) || body.port<1 || body.port>65535 || info.mtimeMs<started-2000)throw new Error('RENDEZVOUS_INVALID');
+        onProgress?.();
         const health=await request(body.port,this.token,'/actuator/health',{timeout:1500});
         if(health.status===200 && health.data?.status==='UP'){this.port=body.port;return;}
       }catch(error){if(error.message==='RENDEZVOUS_INVALID')throw error;}
@@ -49,7 +50,7 @@ class BackendSupervisor {
     await this.stop();throw new Error('BACKEND_START_TIMEOUT');
   }
   diagnostic(){
-    const known=['DESKTOP_MULTIPLE_LEGACY_OWNERS','DESKTOP_LEGACY_OWNER_DISABLED','UPGRADE_BACKUP_REQUIRED','UPGRADE_BACKUP_FAILED','DOWNGRADE_REFUSED','KEY_MISSING','KEY_MISMATCH','LIBRARY_MISSING','DATABASE_MISSING','IN_USE','INITIALIZATION_REFUSED','BINDING_INVALID'];
+    const known=['DESKTOP_MULTIPLE_LEGACY_OWNERS','DESKTOP_LEGACY_OWNER_DISABLED','UPGRADE_BACKUP_REQUIRED','UPGRADE_BACKUP_FAILED','DOWNGRADE_REFUSED','KEY_MISSING','KEY_MISMATCH','LIBRARY_MISSING','DATABASE_MISSING','IN_USE','INITIALIZATION_REFUSED','BINDING_INVALID','NOT_INITIALIZED','IO_FAILED','INVALID_DIRECTORY','DATABASE_INVALID','REBIND_REQUIRED','REBIND_PENDING','LIBRARY_CONTENT_MISMATCH'];
     for(const code of known)if(this.errorText.includes(code))return code;
     if(this.errorText.includes('升级备份失败'))return 'UPGRADE_BACKUP_FAILED';
     if(this.errorText.includes('不能降级写入'))return 'DOWNGRADE_REFUSED';

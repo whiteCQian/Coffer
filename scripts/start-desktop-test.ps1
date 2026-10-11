@@ -117,6 +117,7 @@ try {
                 if ($state.phase -eq 'FAILED') { throw ('Desktop backend failed: ' + $state.error + '. See the desktop startup page and launcher.log.') }
                 if ($state.phase -eq 'READY' -and $state.backendPid -and $state.backendPort) {
                     Write-Host ('Desktop and backend ready. Backend PID: ' + $state.backendPid + ', loopback port: ' + $state.backendPort)
+                    if ($state.dataDirectory) { Write-Host ('Active desktop library: ' + $state.dataDirectory) }
                     $ready = $true; break
                 }
             }
