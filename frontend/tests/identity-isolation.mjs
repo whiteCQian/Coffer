@@ -10,7 +10,8 @@ const { chromium } = require(process.env.COFFER_PLAYWRIGHT_MODULE || 'playwright
 const browser = await chromium.launch({ channel: 'msedge', headless: true })
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } })
 const page = await context.newPage()
-page.on('pageerror', error => console.error('Browser error:', error.message))
+const pageErrors = []
+page.on('pageerror', error => { pageErrors.push(error.message); console.error('Browser error:', error.message) })
 let user = null
 let delayFiles = false
 let releaseFiles
@@ -29,6 +30,8 @@ await context.route(url => new URL(url).pathname.startsWith('/api/'), async rout
   if (!user) return reply(null, 401)
   if (path === '/admin/users') return reply([account('alice'), account('bob'), account('admin')])
   if (path === '/admin/audit') return reply([])
+  if (path === '/runtime/status' || path === '/admin/runtime') return reply({ readiness: 'UP', components: [], queues: {}, connections: {}, alerts: [] })
+  if (path === '/admin/runtime/key-rotation') return reply({ keyId: 'fixture-key', remaining: 0, verified: 0, rewritten: 0 })
   if (path === '/admin/operations') return reply({ pendingTasks: 0, failedTasks: 0 })
   if (path === '/files' || path === '/files/search') {
     const captured = user
@@ -65,7 +68,7 @@ try {
   assert.doesNotMatch(await page.locator('body').innerText(), /alice_PRIVATE|alice_SUMMARY/)
   // A delayed result captured for Bob must not update Alice's new page or show a stale error toast.
   delayFiles = true
-  await page.getByTitle('首页', { exact: true }).click()
+  await page.getByTitle('工作台', { exact: true }).click()
   await page.waitForFunction(() => true)
   for (let i=0; i<100 && !releaseFiles; i++) await new Promise(resolve => setTimeout(resolve, 20))
   assert.ok(releaseFiles, 'delayed request was dispatched')
@@ -87,6 +90,7 @@ try {
   user = null
   await page.waitForURL('**/login?reason=expired')
   assert.doesNotMatch(await page.locator('body').innerText(), /(?:alice|bob)_PRIVATE|(?:alice|bob)_SUMMARY/)
+  assert.deepEqual(pageErrors, [])
   console.log('PASS: same browser Alice/Bob/admin, drawer clearing, delayed response rejection, admin route/API isolation, expired session')
 } catch (error) { console.error('URL:', page.url(), 'Body:', await page.locator('body').innerText(), 'Requests:', requests); throw error }
 finally { releaseFiles?.(); await browser.close(); await server.close() }

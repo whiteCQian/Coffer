@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import { listFiles } from '@/api/files'
 import type { FileListResponse } from '@/api/types'
 import FileTile from '@/components/FileTile.vue'
 import { useFileViewStore } from '@/stores/fileView'
+import { useRouter } from 'vue-router'
 
 const view = useFileViewStore()
+const router = useRouter()
 
 /** 每屏展示条数 = 「最近上传」队列长度：默认（无标签）状态展示最近 8 个上传，先进先出窗口 */
 const SHOW = 8
@@ -15,6 +17,8 @@ const SHOW = 8
 const files = ref<FileListResponse[]>([])
 const total = ref(0)
 const loading = ref(false)
+const loadFailed = ref(false)
+let requestId = 0
 
 const shown = computed(() => files.value.slice(0, SHOW))
 const hasMore = computed(() => total.value > shown.value.length)
@@ -52,6 +56,7 @@ function descOf(f: FileListResponse) {
 
 /** 行右侧状态文案 */
 function stateOf(f: FileListResponse) {
+  if (f.status === 'COMPLETED' && f.tags?.some(tag => tag.confirmationStatus === 'PENDING_CONFIRMATION')) return '待确认'
   if (f.status === 'COMPLETED') return '完成'
   if (f.status === 'PROCESSING') return '解析中'
   if (f.status === 'FAILED') return '失败'
@@ -59,6 +64,7 @@ function stateOf(f: FileListResponse) {
 }
 
 async function load() {
+  const current = ++requestId
   loading.value = true
   try {
     const { data } = await listFiles({
@@ -66,17 +72,22 @@ async function load() {
       size: SHOW,
       tag: view.activeTag || undefined,
     })
+    if (current !== requestId) return
+    loadFailed.value = false
     files.value = data.data?.content ?? []
     total.value = data.data?.totalElements ?? 0
   } catch {
+    if (current !== requestId) return
+    loadFailed.value = true
     files.value = []
     total.value = 0
   } finally {
-    loading.value = false
+    if (current === requestId) loading.value = false
   }
 }
 
 onMounted(load)
+onUnmounted(() => { requestId++ })
 watch(() => view.activeTag, load)
 </script>
 
@@ -88,7 +99,7 @@ watch(() => view.activeTag, load)
     </div>
 
     <ul v-if="shown.length" class="recent-list">
-      <li v-for="f in shown" :key="f.id" class="recent-item">
+      <li v-for="f in shown" :key="f.id" class="recent-item" tabindex="0" role="button" :aria-label="`查看 ${f.fileName}`" @click="router.push({ path: '/files', query: { file: String(f.id) } })" @keydown.enter.prevent="router.push({ path: '/files', query: { file: String(f.id) } })">
         <FileTile :file-type="f.fileType" size="sm" />
         <div class="file-info">
           <span class="file-name">{{ f.fileName }}</span>
@@ -96,7 +107,7 @@ watch(() => view.activeTag, load)
             {{ descOf(f) }}
           </span>
         </div>
-        <span class="file-state" :class="`is-${String(f.status).toLowerCase()}`">
+        <span class="file-state" :class="stateOf(f) === '待确认' ? 'is-awaiting' : `is-${String(f.status).toLowerCase()}`">
           {{ stateOf(f) }}
         </span>
       </li>
@@ -104,7 +115,8 @@ watch(() => view.activeTag, load)
 
     <!-- 空态 -->
     <div v-else-if="!loading" class="recent-empty">
-      {{ emptyText }}
+      {{ loadFailed ? '暂时无法读取文件，请稍后重试。' : emptyText }}
+      <button v-if="loadFailed" class="recent-more" @click="load">重新加载</button>
     </div>
 
     <!-- 超出展示上限时给出入口 -->

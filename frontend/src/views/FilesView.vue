@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { Search, UploadFilled } from '@element-plus/icons-vue'
+import { Search, UploadFilled, Grid, List, Refresh, ChatDotRound, Fold, Expand, FolderOpened, ArrowRight } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import * as fileApi from '@/api/files'
-import { listTagCandidates, suggestTags } from '@/api/fileTags'
+import { suggestTags } from '@/api/fileTags'
 import * as governanceApi from '@/api/governance'
 import type { FileListResponse, FileStatus, TagCandidate } from '@/api/types'
 import FileDetailDrawer from '@/components/FileDetailDrawer.vue'
@@ -14,6 +14,8 @@ import DesktopImportPanel from '@/components/DesktopImportPanel.vue'
 import StorageQuotaPanel from '@/components/StorageQuotaPanel.vue'
 import { useAuthStore } from '@/stores/auth'
 import { desktopBridge } from '@/api/desktop'
+import ChatDock from '@/layout/ChatDock.vue'
+import { useWorkspaceStore } from '@/stores/workspace'
 import { formatBytes, shortTime, toDisplayTime } from '@/utils/format'
 
 /**
@@ -31,9 +33,48 @@ const page = ref(1)
 const drawerId = ref<number | null>(null)
 const selectedIds = ref<Set<number>>(new Set())
 const router = useRouter()
+const route = useRoute(), workspace = useWorkspaceStore()
+const aiOpen = ref(false), aiMounted = ref(false), showInspector = ref(true)
+const searchInput = ref<HTMLInputElement>()
+const viewMode = ref<'list' | 'grid'>((() => { try { return localStorage.getItem('coffer:file-view') === 'grid' ? 'grid' : 'list' } catch { return 'list' } })())
+watch(viewMode, value => { try { localStorage.setItem('coffer:file-view', value) } catch { /* Session-only preference. */ } })
+const contextMenu = ref<{ id: number; x: number; y: number } | null>(null)
+const allPageSelected = computed(() => items.value.length > 0 && items.value.every(file => selectedIds.value.has(file.id)))
+function togglePageSelection() {
+  const next = new Set(selectedIds.value)
+  for (const file of items.value) { if (allPageSelected.value) next.delete(file.id); else next.add(file.id) }
+  selectedIds.value = next
+}
+function inspect(id: number) { drawerId.value = id; showInspector.value = true; aiOpen.value = false; contextMenu.value = null }
+function toggleAi() { aiMounted.value = true; aiOpen.value = !aiOpen.value }
+function toggleInspector() {
+  if (aiOpen.value) { aiOpen.value = false; showInspector.value = true }
+  else showInspector.value = !showInspector.value
+}
+const unavailableImages = ref(new Set<number>())
+function imagePreview(file: ListItem) {
+  return ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(file.fileType?.toLowerCase() ?? '') && !unavailableImages.value.has(file.id)
+}
+function markImageUnavailable(id: number) { unavailableImages.value = new Set(unavailableImages.value).add(id) }
+function openContext(event: MouseEvent, id: number) {
+  event.preventDefault()
+  contextMenu.value = { id, x: Math.max(8, Math.min(event.clientX, window.innerWidth - 190)), y: Math.max(8, Math.min(event.clientY, window.innerHeight - 160)) }
+}
+function dismissContext() { contextMenu.value = null }
+function onKey(event: KeyboardEvent) {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); searchInput.value?.focus() }
+  if (event.key === 'Escape') { dismissContext(); aiOpen.value = false }
+}
+function setRouteTag() {
+  activeTag.value = typeof route.query.tag === 'string' ? route.query.tag : ''
+}
+watch(() => route.query.tag, setRouteTag, { immediate: true })
+watch(() => route.query.keyword, value => { keyword.value = typeof value === 'string' ? value : '' }, { immediate: true })
+watch(() => route.query.file, value => {
+  const id = Number(value)
+  if (Number.isSafeInteger(id) && id > 0) inspect(id)
+}, { immediate: true })
 
-/** 常用标签：库中真实、覆盖文件数靠前的标签（常驻导航，替代原分类 tab） */
-const tagCandidates = ref<TagCandidate[]>([])
 /** 输入联想：AI/字面从真实标签中挑出的候选 */
 const suggestions = ref<TagCandidate[]>([])
 const suggesting = ref(false)
@@ -94,9 +135,6 @@ const loading = ref(false)
 
 const totalPages = computed(() => Math.max(1, serverTotalPages.value))
 const selectedCount = computed(() => selectedIds.value.size)
-const gridRows = computed(() =>
-  items.value.length > 6 ? 'repeat(2, minmax(0, 1fr))' : 'auto',
-)
 
 /** 关键词防抖：输入即搜 + 同步做标签联想；空词清空联想 */
 let kwTimer: ReturnType<typeof setTimeout> | undefined
@@ -133,8 +171,11 @@ watch(keyword, (v) => {
   }, 260)
 })
 /** 标签芯片选中/取消：翻回第一页刷新 */
-watch(activeTag, () => {
+watch(activeTag, value => {
   page.value = 1
+  if (value !== String(route.query.tag ?? '')) {
+    void router.replace({ query: { ...route.query, tag: value || undefined } })
+  }
   loadList()
 })
 watch(sortMode, () => {
@@ -143,7 +184,10 @@ watch(sortMode, () => {
 })
 watch(page, () => loadList())
 
+let listRequest = 0
+const loadFailed = ref(false)
 async function loadList() {
+  const request = ++listRequest
   loading.value = true
   try {
     const { data } = await fileApi.listFiles({
@@ -153,6 +197,8 @@ async function loadList() {
       page: page.value - 1,
       size: PAGE_SIZE,
     })
+    if (request !== listRequest) return
+    loadFailed.value = false
     items.value = (data.data?.content ?? []).map(mapRow)
     total.value = data.data?.totalElements ?? 0
     serverTotalPages.value = data.data?.totalPages ?? 0
@@ -161,32 +207,23 @@ async function loadList() {
       page.value = Math.min(page.value, serverTotalPages.value)
     }
   } catch {
+    if (request === listRequest) { loadFailed.value = true; items.value = []; total.value = 0; serverTotalPages.value = 0 }
     /* 拦截器已弹错 */
   } finally {
-    loading.value = false
+    if (request === listRequest) loading.value = false
   }
 }
 
-/** 列表刷新（抽屉内写操作成功后调用；标签芯片数据另由 loadCommonTags 更新） */
+/** 写操作后刷新文件列表、导航标签与任务计数。 */
 async function reload() {
   await loadList()
-  loadCommonTags()
+  void workspace.refresh()
 }
 
 /** 清空一切筛选（关键词 + 已选标签） */
 function resetFilters() {
   keyword.value = ''
   activeTag.value = ''
-}
-
-/** 常用标签：取库中真实、被采用次数 Top 12，作常驻导航 */
-async function loadCommonTags() {
-  try {
-    const { data } = await listTagCandidates()
-    tagCandidates.value = (data.data ?? []).slice(0, 12)
-  } catch {
-    tagCandidates.value = []
-  }
 }
 
 /** 切换标签筛选：点同一芯片取消 */
@@ -268,6 +305,8 @@ async function reanalyzeSelected() {
 function goToReanalysis(previewId: string) {
   router.push({ name: 'governance-preview', params: { previewId } })
 }
+const taskDestination = computed(() => auth.isPersonal ? { path: '/', query: { view: 'inbox' } } : { path: '/', hash: '#web-task-progress' })
+const pendingDestination = computed(() => auth.isPersonal ? { path: '/', query: { view: 'pending' } } : { path: '/', hash: '#web-task-progress' })
 
 function descOf(f: ListItem) {
   if (f.status === 'FAILED') return '解析失败'
@@ -278,6 +317,7 @@ function descOf(f: ListItem) {
 }
 
 function stateMini(f: ListItem) {
+  if (f.status === 'COMPLETED' && f.tags.some(tag => tag.status === 'PENDING_CONFIRMATION')) return { label: '待确认', cls: 'is-wait' }
   if (f.status === 'COMPLETED') return { label: '完成', cls: 'is-ok' }
   if (f.status === 'PROCESSING') return { label: '处理中', cls: 'is-run' }
   if (f.status === 'FAILED') return { label: '失败', cls: 'is-fail' }
@@ -312,600 +352,156 @@ async function onUploadPicked(e: Event) {
   }
 }
 
+let pollTimer: ReturnType<typeof setInterval> | undefined
 onMounted(() => {
   reload()
-  loadCommonTags()
+  pollTimer = setInterval(() => { if (!loading.value && !document.hidden) void loadList() }, 10000)
+  window.addEventListener('keydown', onKey)
+  window.addEventListener('click', dismissContext)
 })
+onUnmounted(() => { listRequest++; clearInterval(pollTimer); window.removeEventListener('keydown', onKey); window.removeEventListener('click', dismissContext) })
 </script>
 
 <template>
-  <div class="pg files">
-    <!-- 页头 -->
-    <header class="pg-head">
-      <div>
-        <h1 class="pg-title">全部文件</h1>
-        <p class="pg-sub">共 {{ total }} 个文件 · AI 自动打标与摘要</p>
-      </div>
-      <div class="file-head-actions">
-        <button class="upload-btn" @click="onUploadClick">
-          <el-icon class="upload-ic"><UploadFilled /></el-icon>
-          上传文件
-        </button>
-        <button class="preview-btn" :disabled="!selectedCount" @click="createPreview">
-          生成整理预览<span v-if="selectedCount">（{{ selectedCount }}）</span>
-        </button>
-        <button class="reanalyze-btn" :disabled="!selectedCount" @click="reanalyzeSelected">
-          重新分析<span v-if="selectedCount">（{{ selectedCount }}）</span>
-        </button>
-      </div>
+  <div class="desktop-files" :class="{ 'web-files': !auth.isPersonal }">
+    <header class="workbench-header">
+      <div><div class="workbench-breadcrumb">{{ auth.isPersonal ? '个人文件库' : '我的文件空间' }} <el-icon><ArrowRight /></el-icon> {{ activeTag ? '标签' : '文件浏览' }}</div><h1>{{ activeTag || '全部文件' }}<span class="file-total">{{ total }} 个文件</span></h1><p>让每一份文件，都有迹可循。</p></div>
+      <div class="header-actions"><button class="desk-button" :class="{ 'is-active': aiOpen }" :aria-expanded="aiOpen" @click="toggleAi"><el-icon><ChatDotRound /></el-icon>AI 助手</button><button class="desk-button is-primary" @click="onUploadClick"><el-icon><UploadFilled /></el-icon>{{ auth.isPersonal ? '导入文件' : '上传文件' }}</button></div>
       <input ref="uploadInput" type="file" hidden @change="onUploadPicked" />
     </header>
-    <StorageQuotaPanel v-if="auth.status.strongPasswordRequired" />
-
-    <DesktopImportPanel ref="nativeImport" @queued="reload()" />
-    <!-- 浏览面板 -->
-    <div class="pg-panel browse">
-      <!-- 工具栏：搜索 + 排序 -->
-      <div class="toolbar">
-        <div class="search-box">
-          <el-icon class="search-ic"><Search /></el-icon>
-          <input
-            v-model="keyword"
-            class="search-input"
-            type="text"
-            placeholder="搜索文件名 / 摘要，或描述你想找的（如「上次出差的发票」）…"
-          />
-          <button v-if="keyword" class="search-clear" title="清空" @click="keyword = ''">✕</button>
-        </div>
-        <select v-model="sortMode" class="sort-select" title="排序">
-          <option v-for="o in SORT_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
-        </select>
-        <el-button :disabled="!keyword.trim() || suggesting" @click="suggestWithModel">AI 标签联想</el-button>
-      </div>
-
-      <!-- 标签智能条：输入联想 / 常用标签 / 正在查看的标签（标签为主要组织维度） -->
-      <div class="tagline">
-        <template
-          v-if="keyword.trim() && !activeTag && (suggesting || suggestions.length)"
-        >
-          <span class="tagline-label">{{ suggesting ? '正在查找标签…' : '相关标签：' }}</span>
-          <button
-            v-for="s in suggestions"
-            :key="s.name"
-            class="tag-chip is-sug"
-            title="按此标签筛选"
-            @click="chooseSuggestion(s.name)"
-          >
-            {{ s.name }}<span class="chip-count">{{ s.fileCount }}</span>
-          </button>
-        </template>
-
-        <template
-          v-else-if="!keyword.trim() && !activeTag && tagCandidates.length"
-        >
-          <span class="tagline-label">常用标签：</span>
-          <button
-            v-for="c in tagCandidates"
-            :key="c.name"
-            class="tag-chip"
-            title="按此标签筛选（再点取消）"
-            @click="toggleTag(c.name)"
-          >
-            {{ c.name }}<span class="chip-count">{{ c.fileCount }}</span>
-          </button>
-        </template>
-
-        <template v-else-if="activeTag">
-          <span class="tagline-label">正在查看标签：</span>
-          <span class="tag-pill">
-            标签：{{ activeTag }}
-            <button class="tag-pill-x" title="取消该标签筛选" @click="clearActiveTag">✕</button>
-          </span>
-        </template>
-      </div>
-
-      <!-- 文件卡片网格（标签为主要分类维度，无固定分类 tab/徽标） -->
-      <div v-if="items.length" class="grid" :style="{ gridTemplateRows: gridRows }">
-        <article
-          v-for="f in items"
-          :key="f.id"
-          class="fcard"
-          :class="{ 'is-selected': selectedIds.has(f.id) }"
-          tabindex="0"
-          @click="drawerId = f.id"
-          @keyup.enter="drawerId = f.id"
-        >
-          <header class="fcard-head">
-            <div class="fcard-select">
-              <input
-                type="checkbox"
-                :checked="selectedIds.has(f.id)"
-                :aria-label="`选择 ${f.fileName}`"
-                @click.stop
-                @change="toggleSelection(f.id)"
-              />
-              <FileTile :file-type="f.fileType" size="sm" />
-            </div>
-            <span class="fcard-state" :class="stateMini(f).cls">{{ stateMini(f).label }}</span>
-          </header>
-
-          <h3 class="fcard-name">{{ f.fileName }}</h3>
-          <p class="fcard-desc" :class="{ 'is-error': f.status === 'FAILED' }">{{ descOf(f) }}</p>
-
-          <div v-if="f.tags.length" class="fcard-tags">
-            <span
-              v-for="t in f.tags.filter((x) => x.status !== 'REJECTED').slice(0, 3)"
-              :key="t.id"
-              class="mini-tag"
-            >
-              {{ t.name }}
-            </span>
-          </div>
-          <p v-else class="fcard-no-tags">
-            {{ f.status === 'PROCESSING' ? '等待 AI 打标…' : '未打标' }}
-          </p>
-
-          <footer class="fcard-foot">
-            <span class="fcard-time">{{ shortTime(f.uploadTime) }} · {{ formatBytes(f.fileSize) }}</span>
-          </footer>
-        </article>
-      </div>
-
-      <!-- 空态 -->
-      <div v-else class="empty">
-        <p class="empty-title">没有找到匹配的文件</p>
-        <p class="empty-sub">
-          {{
-            keyword
-              ? '换个关键词试试。'
-              : activeTag
-                ? `标签「${activeTag}」下还没有文件，试试其他标签。`
-                : '上传文件后，AI 会自动打标归档到这里。'
-          }}
-        </p>
-        <button v-if="keyword" class="empty-btn" @click="resetFilters">
-          清空搜索
-        </button>
-      </div>
-
-      <!-- 分页 -->
-      <footer v-if="total > 0" class="pager">
-        <button class="pg-arrow" :disabled="page <= 1" @click="page--">‹</button>
-        <button
-          v-for="p in totalPages"
-          :key="p"
-          class="pg-num"
-          :class="{ 'is-active': p === page }"
-          @click="page = p"
-        >
-          {{ p }}
-        </button>
-        <button class="pg-arrow" :disabled="page >= totalPages" @click="page++">›</button>
-        <span class="pg-info">第 {{ page }} / {{ totalPages }} 页</span>
-      </footer>
+    <div class="workbench-toolbar">
+      <label class="desk-search"><el-icon><Search /></el-icon><input ref="searchInput" v-model="keyword" type="search" placeholder="搜索文件名、摘要或标签" aria-label="搜索文件名、摘要或标签" /><kbd>Ctrl K</kbd></label>
+      <button class="desk-button ai-search-link" @click="aiMounted = true; aiOpen = true"><el-icon><ChatDotRound /></el-icon>用 AI 找文件</button>
+      <select v-model="sortMode" class="desk-sort" aria-label="文件排序"><option v-for="option in SORT_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option></select>
+      <div class="view-switch" aria-label="文件展示方式"><button :class="{ active: viewMode === 'list' }" title="列表视图" aria-label="列表视图" :aria-pressed="viewMode === 'list'" @click="viewMode = 'list'"><el-icon><List /></el-icon></button><button :class="{ active: viewMode === 'grid' }" title="网格视图" aria-label="网格视图" :aria-pressed="viewMode === 'grid'" @click="viewMode = 'grid'"><el-icon><Grid /></el-icon></button></div>
+      <button class="desk-icon-button" :disabled="loading" title="刷新文件库" aria-label="刷新文件库" @click="reload"><el-icon><Refresh /></el-icon></button>
+      <button class="desk-icon-button" :title="showInspector && !aiOpen ? '收起详情面板' : '展开详情面板'" :aria-label="showInspector && !aiOpen ? '收起详情面板' : '展开详情面板'" :aria-expanded="showInspector && !aiOpen" @click="toggleInspector"><el-icon><Fold v-if="showInspector && !aiOpen" /><Expand v-else /></el-icon></button>
     </div>
-
-    <!-- 详情抽屉：恒走真实接口，写操作成功后回调 reload 刷新列表 -->
-    <FileDetailDrawer v-model="drawerId" @changed="reload" @reanalyzed="goToReanalysis" />
+    <StorageQuotaPanel v-if="!auth.isPersonal && auth.status.strongPasswordRequired" />
+    <DesktopImportPanel ref="nativeImport" compact @queued="reload" />
+    <div v-if="activeTag || (keyword.trim() && (suggestions.length || suggesting))" class="desk-filter-bar">
+      <span v-if="activeTag" class="desk-tag">{{ activeTag }}<button aria-label="取消标签筛选" @click="clearActiveTag">×</button></span>
+      <template v-else><span>{{ suggesting ? '正在匹配标签…' : '相关标签' }}</span><button v-for="suggestion in suggestions" :key="suggestion.name" class="desk-tag" @click="chooseSuggestion(suggestion.name)">{{ suggestion.name }} · {{ suggestion.fileCount }}</button></template>
+      <button v-if="keyword.trim()" class="desk-text-button" :disabled="suggesting" @click="suggestWithModel">AI 标签联想</button>
+    </div>
+    <div class="workbench-content">
+      <section class="file-browser" aria-label="文件浏览区" :aria-busy="loading">
+        <div v-if="selectedCount" class="selection-toolbar"><strong>已选择 {{ selectedCount }} 个文件</strong><button class="desk-button" @click="createPreview">生成整理预览</button><button class="desk-button" @click="reanalyzeSelected">重新分析</button><button class="desk-text-button" @click="clearSelection">取消选择</button></div>
+        <div class="file-scroll">
+          <table v-if="items.length && viewMode === 'list'" class="file-table">
+            <thead><tr><th class="check-column"><input type="checkbox" :checked="allPageSelected" :indeterminate="selectedCount > 0 && !allPageSelected" aria-label="选择本页全部文件" @change="togglePageSelection" /></th><th>名称</th><th class="tags-column">标签</th><th class="date-column">导入时间</th><th class="size-column">大小</th><th class="state-column">状态</th></tr></thead>
+            <tbody><tr v-for="file in items" :key="file.id" :class="{ inspected: drawerId === file.id, selected: selectedIds.has(file.id) }" tabindex="0" @click="inspect(file.id)" @keydown.enter.prevent="inspect(file.id)" @keydown.space.prevent="toggleSelection(file.id)" @contextmenu="openContext($event, file.id)">
+              <td class="check-column"><input type="checkbox" :checked="selectedIds.has(file.id)" :aria-label="`选择 ${file.fileName}`" @click.stop @keydown.stop @change="toggleSelection(file.id)" /></td>
+              <td><div class="desk-file-name"><FileTile :file-type="file.fileType" size="sm" /><div><span :title="file.fileName">{{ file.fileName }}</span><small>{{ descOf(file) }}</small></div></div></td>
+              <td class="tags-column"><div class="desk-row-tags"><span v-for="tag in file.tags.filter(t => t.status !== 'REJECTED').slice(0, 2)" :key="tag.id" class="desk-tag" :class="{ pending: tag.status === 'PENDING_CONFIRMATION' }">{{ tag.name }}</span><span v-if="!file.tags.length" class="muted">—</span></div></td>
+              <td class="date-column">{{ shortTime(file.uploadTime) }}</td><td class="size-column">{{ formatBytes(file.fileSize) }}</td><td class="state-column"><span class="desk-state" :class="stateMini(file).cls">{{ stateMini(file).label }}</span></td>
+            </tr></tbody>
+          </table>
+          <div v-else-if="items.length" class="desk-file-grid"><article v-for="file in items" :key="file.id" class="desk-file-card" :class="{ inspected: drawerId === file.id, selected: selectedIds.has(file.id) }" tabindex="0" @click="inspect(file.id)" @keydown.enter.prevent="inspect(file.id)" @contextmenu="openContext($event, file.id)"><div class="desk-card-top"><input type="checkbox" :checked="selectedIds.has(file.id)" :aria-label="`选择 ${file.fileName}`" @click.stop @keydown.stop @change="toggleSelection(file.id)" /><span class="desk-state" :class="stateMini(file).cls">{{ stateMini(file).label }}</span></div><div class="desk-card-preview"><img v-if="imagePreview(file)" :src="`/api/files/${file.id}/content`" :alt="file.fileName" loading="lazy" @error="markImageUnavailable(file.id)" /><FileTile v-else :file-type="file.fileType" size="lg" /></div><h3 :title="file.fileName">{{ file.fileName }}</h3><p>{{ descOf(file) }}</p><div class="desk-row-tags"><span v-for="tag in file.tags.filter(t => t.status !== 'REJECTED').slice(0, 2)" :key="tag.id" class="desk-tag" :class="{ pending: tag.status === 'PENDING_CONFIRMATION' }">{{ tag.name }}</span></div><footer>{{ shortTime(file.uploadTime) }}<span>{{ formatBytes(file.fileSize) }}</span></footer></article></div>
+          <div v-else class="desk-empty"><el-icon><FolderOpened /></el-icon><h2>{{ loading ? '正在读取文件库…' : loadFailed ? '文件库暂时无法加载' : keyword || activeTag ? '没有找到匹配的文件' : '你的文件库，从这里开始' }}</h2><p>{{ loadFailed ? (auth.isPersonal ? '请检查本地后台状态，再刷新重试。' : '请检查服务连接，再刷新重试。') : keyword || activeTag ? '试试其他关键词，或清除当前筛选条件。' : '导入文档、图片和资料，在这里浏览、查找与整理。' }}</p><button class="desk-button" @click="loadFailed ? reload() : keyword || activeTag ? resetFilters() : onUploadClick()">{{ loadFailed ? '重新加载' : keyword || activeTag ? '清除筛选' : '导入第一个文件' }}</button></div>
+        </div>
+        <footer class="browser-footer"><span>{{ selectedCount ? `已选择 ${selectedCount} 个文件` : '单击查看详情 · 右键查看更多操作' }}</span><el-pagination v-if="totalPages > 1" v-model:current-page="page" :page-size="PAGE_SIZE" :total="total" layout="prev, pager, next" :pager-count="5" small /></footer>
+      </section>
+      <FileDetailDrawer v-show="showInspector && !aiOpen" v-model="drawerId" inline @changed="reload" @reanalyzed="goToReanalysis" />
+      <aside v-if="aiMounted" v-show="aiOpen" class="workbench-ai"><div class="ai-panel-heading"><span>AI 文件助手</span><button class="desk-icon-button" aria-label="收起 AI 助手" @click="aiOpen = false">×</button></div><ChatDock /></aside>
+    </div>
+    <footer class="workbench-status"><span class="status-indicator"></span><span>{{ workspace.unavailable ? '任务状态暂时不可用' : !workspace.overview ? '正在读取任务状态…' : workspace.overview.processingCount ? `正在解析 ${workspace.overview.processingCount} 个文件` : '当前没有正在解析的文件' }}</span><RouterLink v-if="workspace.overview?.pendingConfirmCount" :to="pendingDestination">{{ workspace.overview.pendingConfirmCount }} 个文件待确认标签</RouterLink><RouterLink v-if="workspace.overview?.failedCount" :to="taskDestination" class="status-error">{{ workspace.overview.failedCount }} 个任务失败</RouterLink><RouterLink :to="taskDestination" class="status-tasks">查看任务 <el-icon><ArrowRight /></el-icon></RouterLink></footer>
+    <div v-if="contextMenu" class="file-context-menu" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @click.stop><button @click="inspect(contextMenu.id)">查看文件详情</button><button @click="selectedIds = new Set([contextMenu.id]); contextMenu = null; createPreview()">生成整理预览</button><button @click="toggleSelection(contextMenu.id); contextMenu = null">{{ selectedIds.has(contextMenu.id) ? '取消选择' : '选择文件' }}</button></div>
   </div>
 </template>
 
 <style scoped>
-.files {
-  gap: 14px;
-}
-.upload-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 20px;
-  border: none;
-  border-radius: var(--radius-pill);
-  background: var(--accent);
-  color: #fff;
-  font-size: 14px;
-  font-family: inherit;
-  cursor: pointer;
-  box-shadow: 0 4px 14px rgb(var(--accent-rgb) / 0.25);
-}
-.file-head-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.preview-btn {
-  display: inline-flex;
-  align-items: center;
-  padding: 10px 16px;
-  border: 1px solid var(--accent);
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--accent);
-  font-size: 13px;
-  font-family: inherit;
-  cursor: pointer;
-}
-.preview-btn:hover:not(:disabled) {
-  background: rgb(var(--accent-rgb) / 0.1);
-}
-.preview-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.reanalyze-btn {
-  display: inline-flex;
-  align-items: center;
-  padding: 10px 16px;
-  border: 1px solid var(--accent);
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--accent);
-  font-size: 13px;
-  font-family: inherit;
-  cursor: pointer;
-}
-.reanalyze-btn:hover:not(:disabled) {
-  background: rgb(var(--accent-rgb) / 0.1);
-}
-.reanalyze-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.upload-btn:hover {
-  background: var(--accent-hover);
-}
-.upload-ic {
-  font-size: 15px;
-}
-
-/* —— 面板 —— */
-.browse {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  overflow: hidden;
-}
-
-.toolbar {
-  flex: none;
-  display: flex;
-  gap: 12px;
-  align-items: center;
-}
-.search-box {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 40px;
-  padding: 0 12px 0 14px;
-  border-radius: var(--radius-pill);
-  background: var(--panel-3);
-}
-.search-ic {
-  flex: none;
-  color: var(--text-3);
-}
-.search-input {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  background: transparent;
-  color: var(--text-1);
-  font-size: 13.5px;
-  font-family: inherit;
-  outline: none;
-}
-.search-input::placeholder {
-  color: var(--text-3);
-}
-.search-clear {
-  flex: none;
-  border: none;
-  background: transparent;
-  color: var(--text-3);
-  cursor: pointer;
-  font-size: 12px;
-}
-.search-clear:hover {
-  color: var(--text-1);
-}
-
-.sort-select {
-  flex: none;
-  height: 40px;
-  padding: 0 12px;
-  border: none;
-  border-radius: var(--radius-pill);
-  background: var(--panel-3);
-  color: var(--text-1);
-  font-size: 13px;
-  font-family: inherit;
-  outline: none;
-  cursor: pointer;
-}
-.sort-select option {
-  background: var(--panel-2);
-}
-
-/* 卡片网格：每页 12 个，固定 6 列；行高由 gridRows 动态给出 */
-.grid {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 14px;
-  padding: 2px;
-  margin: -2px;
-}
-.fcard {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 16px;
-  border-radius: var(--radius-inner);
-  background: var(--panel-3);
-  border: 1px solid transparent;
-  cursor: pointer;
-  min-width: 0;
-  transition: border-color 0.15s ease, background-color 0.15s ease;
-}
-.fcard.is-selected {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgb(var(--accent-rgb) / 0.1);
-}
-.fcard:hover,
-.fcard:focus-visible {
-  border-color: var(--line-hover);
-  background: var(--card-hover-bg);
-  outline: none;
-}
-
-.fcard-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.fcard-select {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-.fcard-select input {
-  width: 15px;
-  height: 15px;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
-.fcard-state {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  font-weight: 600;
-}
-.fcard-state.is-ok {
-  color: var(--ok);
-}
-.fcard-state.is-run {
-  color: var(--warn);
-}
-.fcard-state.is-fail {
-  color: var(--danger);
-}
-.fcard-state.is-wait {
-  color: var(--text-3);
-}
-
-.fcard-name {
-  margin: 4px 0 0;
-  font-size: 13.5px;
-  font-weight: 600;
-  color: var(--text-1);
-  line-height: 1.45;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  min-height: 2.9em;
-}
-.fcard-desc {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-2);
-  line-height: 1.55;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  min-height: 3em;
-}
-.fcard-desc.is-error {
-  color: var(--danger);
-}
-
-.fcard-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.mini-tag {
-  padding: 3px 12px;
-  border-radius: var(--radius-pill);
-  background: var(--tag-bg);
-  color: var(--text-2);
-  font-size: 12px;
-}
-.fcard-no-tags {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-3);
-}
-
-.fcard-foot {
-  margin-top: auto;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  padding-top: 6px;
-  border-top: 1px dashed var(--line);
-}
-.fcard-time {
-  font-size: 11px;
-  color: var(--text-3);
-  white-space: nowrap;
-}
-
-/* 空态 */
-.empty {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-}
-.empty-title {
-  margin: 0;
-  font-size: 15px;
-  color: var(--text-1);
-}
-.empty-sub {
-  margin: 0;
-  font-size: 12.5px;
-  color: var(--text-3);
-}
-.empty-btn {
-  margin-top: 10px;
-  padding: 7px 18px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--text-1);
-  font-size: 13px;
-  font-family: inherit;
-  cursor: pointer;
-}
-.empty-btn:hover {
-  background: var(--hover-bg);
-}
-
-/* 分页 */
-.pager {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-}
-.pg-arrow,
-.pg-num {
-  min-width: 30px;
-  height: 30px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-inner);
-  background: transparent;
-  color: var(--text-2);
-  font-size: 13px;
-  font-family: inherit;
-  cursor: pointer;
-}
-.pg-arrow:hover:not(:disabled),
-.pg-num:hover {
-  color: var(--text-1);
-  border-color: var(--line-hover-strong);
-}
-.pg-arrow:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
-.pg-num.is-active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-}
-.pg-info {
-  margin-left: 10px;
-  font-size: 12px;
-  color: var(--text-3);
-}
-
-/* —— 标签智能条 —— */
-.tagline {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 30px;
-  padding: 2px 0 0;
-  overflow-x: auto;
-}
-.tagline-label {
-  flex: none;
-  font-size: 12px;
-  color: var(--text-3);
-  white-space: nowrap;
-}
-.tag-chip {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--text-2);
-  font-size: 12.5px;
-  font-family: inherit;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
-}
-.tag-chip:hover {
-  color: var(--hover-ink);
-  border-color: rgb(var(--accent-rgb) / 0.6);
-  background: rgb(var(--accent-rgb) / 0.08);
-}
-.tag-chip.is-sug {
-  border-color: rgb(var(--accent-rgb) / 0.45);
-  color: var(--accent-soft-text);
-}
-.chip-count {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-3);
-}
-.tag-chip:hover .chip-count {
-  color: rgb(var(--accent-soft-rgb) / 0.7);
-}
-.tag-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 8px 4px 14px;
-  border-radius: var(--radius-pill);
-  background: rgb(var(--accent-rgb) / 0.14);
-  border: 1px solid rgb(var(--accent-rgb) / 0.4);
-  color: var(--accent-soft-text);
-  font-size: 12.5px;
-  white-space: nowrap;
-}
-.tag-pill-x {
-  width: 18px;
-  height: 18px;
-  display: grid;
-  place-items: center;
-  border: none;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--accent-soft-text);
-  font-size: 11px;
-  cursor: pointer;
-}
-.tag-pill-x:hover {
-  background: rgb(var(--accent-rgb) / 0.25);
-  color: var(--accent-soft-text);
-}
+.desktop-files { height: 100%; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--panel); }
+.workbench-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 27px 28px 22px; flex: none; }
+.workbench-breadcrumb { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--text-3); margin-bottom: 9px; }
+.workbench-breadcrumb .el-icon { font-size: 9px; }
+.workbench-header h1 { font-size: 24px; letter-spacing: -.5px; margin: 0; line-height: 1.4; display: flex; align-items: center; gap: 12px; }
+.file-total { font-size: 11px; font-weight: 400; color: var(--text-3); border: 1px solid var(--line); padding: 2px 8px; border-radius: 5px; letter-spacing: 0; }
+.workbench-header p { margin: 6px 0 0; font-size: 12px; color: var(--text-3); }
+.header-actions { display: flex; gap: 10px; align-items: center; }
+.desk-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--panel); color: var(--text-2); font-size: 12px; padding: 7px 12px; white-space: nowrap; cursor: pointer; }
+.desk-button:hover { background: var(--hover-bg); color: var(--text-1); }
+.desk-button.is-primary { background: var(--accent); border-color: var(--accent); color: #fff; padding-inline: 16px; }
+.desk-button.is-primary:hover { background: var(--accent-hover); }
+.desk-button.is-active { color: var(--accent); background: rgb(var(--accent-rgb) / .08); border-color: rgb(var(--accent-rgb) / .3); }
+.desk-button .el-icon { font-size: 15px; }
+.workbench-toolbar { display: flex; align-items: center; gap: 10px; padding: 0 28px 18px; border-bottom: 1px solid var(--line); flex: none; }
+.desk-search { display: flex; align-items: center; gap: 10px; min-width: 160px; flex: 1; max-width: 560px; padding: 0 12px; height: 37px; background: var(--panel-3); border: 1px solid var(--line); border-radius: 7px; color: var(--text-3); }
+.desk-search:focus-within { border-color: var(--accent); }
+.desk-search input { flex: 1; min-width: 0; background: transparent; border: 0; outline: none !important; font-size: 12px; color: var(--text-1); height: 100%; }
+.desk-search input::placeholder { color: var(--text-3); }
+.desk-search kbd { font-family: inherit; font-size: 10px; border: 1px solid var(--line-strong); border-radius: 4px; padding: 1px 5px; white-space: nowrap; }
+.ai-search-link { color: var(--accent); border-color: transparent; background: transparent; font-size: 11px; padding-inline: 6px; }
+.desk-sort { margin-left: auto; font-size: 11px; color: var(--text-2); border: 0; background: var(--panel); padding: 7px 5px; max-width: 100px; }
+.view-switch { display: flex; border: 1px solid var(--line); border-radius: 7px; padding: 3px; gap: 2px; }
+.view-switch button, .desk-icon-button { width: 28px; height: 28px; display: grid; place-items: center; background: transparent; border: 0; border-radius: 5px; font-size: 15px; color: var(--text-3); cursor: pointer; }
+.view-switch button.active { background: rgb(var(--accent-rgb) / .1); color: var(--accent); }
+.view-switch button:hover, .desk-icon-button:hover { background: var(--hover-bg); }
+.desk-icon-button:disabled { opacity: .4; cursor: wait; }
+.desk-filter-bar { padding: 10px 28px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; border-bottom: 1px solid var(--line); font-size: 11px; color: var(--text-3); }
+.desk-tag { display: inline-flex; align-items: center; gap: 4px; color: var(--text-2); background: var(--tag-bg); border: 0; border-radius: 4px; padding: 2px 6px; font-size: 10px; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.desk-tag { cursor: pointer; }
+.desk-tag button { background: transparent; border: 0; padding: 0 2px; color: inherit; cursor: pointer; }
+.desk-tag.pending { color: var(--warn); background: var(--warn-tint); }
+.desk-text-button { border: 0; background: transparent; color: var(--accent); font-size: 11px; cursor: pointer; padding: 4px 7px; }
+.workbench-content { display: flex; min-height: 0; min-width: 0; flex: 1; overflow: hidden; }
+.file-browser { display: flex; flex-direction: column; min-width: 0; min-height: 0; flex: 1; }
+.selection-toolbar { display: flex; align-items: center; gap: 8px; padding: 10px 22px; background: rgb(var(--accent-rgb) / .06); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.selection-toolbar strong { color: var(--accent); font-size: 11px; margin-right: auto; font-weight: 500; }
+.selection-toolbar .desk-button { font-size: 11px; padding: 4px 8px; }
+.file-scroll { flex: 1; min-height: 0; overflow: auto; }
+.file-table { border-collapse: separate; border-spacing: 0; width: 100%; table-layout: fixed; font-size: 11px; }
+.file-table th { position: sticky; top: 0; z-index: 1; text-align: left; font-weight: 400; background: var(--bg); color: var(--text-3); padding: 12px 8px; border-bottom: 1px solid var(--line); }
+.file-table td { border-bottom: 1px solid var(--line); padding: 16px 8px; color: var(--text-2); }
+.file-table th:last-child, .file-table td:last-child { padding-right: 16px; }
+.file-table tbody tr { cursor: pointer; }
+.file-table tbody tr:hover { background: var(--card-hover-bg); }
+.file-table tbody tr.inspected, .file-table tbody tr.selected { background: rgb(var(--accent-rgb) / .06); }
+.file-table tbody tr.inspected td:nth-child(2) { color: var(--accent); }
+.check-column { width: 38px; text-align: center !important; }
+.check-column input { cursor: pointer; width: 12px; height: 12px; }
+.tags-column { width: 120px; }
+.date-column { width: 90px; font-variant-numeric: tabular-nums; }
+.size-column { width: 68px; font-variant-numeric: tabular-nums; }
+.state-column { width: 76px; }
+.desk-file-name { display: flex; align-items: center; gap: 10px; }
+.desk-file-name > div { min-width: 0; }
+.desk-file-name > div > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-1); font-size: 12px; font-weight: 500; }
+.desk-file-name small { display: block; color: var(--text-3); font-size: 10px; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.desk-row-tags { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; min-width: 0; }
+.desk-state { font-size: 10px; padding: 3px 6px; border-radius: 4px; white-space: nowrap; background: var(--tag-bg); color: var(--text-3); }
+.desk-state.is-ok { color: var(--ok); background: rgb(var(--ok-rgb) / .09); }
+.desk-state.is-wait { color: var(--warn); background: var(--warn-tint); }
+.desk-state.is-run { color: var(--accent); background: rgb(var(--accent-rgb) / .1); }
+.desk-state.is-fail { color: var(--danger); background: rgb(var(--danger-rgb) / .1); }
+.muted { color: var(--text-3); }
+.browser-footer { display: flex; align-items: center; justify-content: space-between; padding: 12px 22px; font-size: 10px; color: var(--text-3); border-top: 1px solid var(--line); gap: 8px; flex-wrap: wrap; min-height: 44px; }
+.desk-file-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; padding: 20px; }
+.desk-file-card { border: 1px solid var(--line); border-radius: 9px; padding: 14px; min-width: 0; cursor: pointer; }
+.desk-file-card:hover { border-color: var(--line-strong); background: var(--card-hover-bg); }
+.desk-file-card.inspected, .desk-file-card.selected { border-color: var(--accent); background: rgb(var(--accent-rgb) / .04); }
+.desk-card-top { display: flex; align-items: center; justify-content: space-between; }
+.desk-card-preview { background: var(--panel-3); display: grid; place-items: center; height: 104px; border-radius: 6px; margin: 12px 0; }
+.desk-card-preview img { width: 100%; height: 104px; object-fit: contain; border-radius: 6px; }
+.desk-file-card h3 { margin: 0; font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.desk-file-card p { margin: 4px 0 10px; color: var(--text-3); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.desk-file-card footer { display: flex; justify-content: space-between; color: var(--text-3); font-size: 10px; border-top: 1px solid var(--line); padding-top: 10px; margin-top: 14px; }
+.desk-empty { min-height: 300px; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 8px; padding: 28px; }
+.desk-empty > .el-icon { font-size: 40px; color: var(--accent); background: rgb(var(--accent-rgb) / .06); border-radius: 14px; padding: 20px; box-sizing: content-box; }
+.desk-empty h2 { font-size: 16px; font-weight: 500; margin: 12px 0 0; }
+.desk-empty p { color: var(--text-3); font-size: 12px; margin: 0 0 12px; }
+.workbench-ai { flex: 0 0 360px; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); }
+.ai-panel-heading { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px 0; font-size: 13px; font-weight: 600; }
+.workbench-ai :deep(.chat-card) { flex: 1; min-height: 0; border-radius: 0; }
+.workbench-status { display: flex; align-items: center; gap: 12px; flex: none; padding: 9px 24px; min-height: 36px; background: var(--bg); border-top: 1px solid var(--line); color: var(--text-3); font-size: 10px; }
+.status-indicator { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+.workbench-status a { text-decoration: none; color: var(--accent); }
+.workbench-status .status-error { color: var(--danger); }
+.status-tasks { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+.file-context-menu { position: fixed; z-index: 110; min-width: 180px; padding: 5px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--panel); box-shadow: 0 6px 20px #0001; }
+.file-context-menu button { display: block; width: 100%; border: 0; background: transparent; color: var(--text-1); text-align: left; padding: 8px 10px; font-size: 12px; border-radius: 5px; cursor: pointer; }
+.file-context-menu button:hover { background: var(--hover-bg); }
+@media (max-width: 1350px) { .date-column { display: none; } .tags-column { width: 104px; } }
+@media (max-width: 1200px) { .workbench-ai { flex-basis: 320px; } .size-column { display: none; } .ai-search-link { display: none; } .workbench-header, .workbench-toolbar { padding-inline: 20px; } }
+@media (max-width: 960px) { .workbench-ai { position: fixed; top: 0; bottom: 36px; right: 0; width: min(360px, calc(100vw - 210px)); z-index: 50; background: var(--panel); box-shadow: -8px 0 24px #0002; } .header-actions { gap: 6px; } .desk-search kbd { display: none; } }
 </style>

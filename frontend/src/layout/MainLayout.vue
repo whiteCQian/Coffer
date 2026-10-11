@@ -1,14 +1,22 @@
 <script setup lang="ts">
 // 应用外壳：左侧 64px 图标导航 + 右侧页面视口（路由出口）
 import IconRail from './IconRail.vue'
+import DesktopSidebar from './DesktopSidebar.vue'
+import { useAuthStore } from '@/stores/auth'
+import WebTopbar from './WebTopbar.vue'
+import { ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
+const auth = useAuthStore()
+const mobileMenu = ref(false), route = useRoute()
+watch(() => route.fullPath, () => { mobileMenu.value = false })
 </script>
 
 <template>
-  <div class="app-shell">
-    <IconRail />
-    <main class="page-viewport">
-      <router-view />
-    </main>
+  <div class="app-shell" :class="auth.isPersonal ? 'desktop-shell' : 'web-shell'">
+    <DesktopSidebar v-if="auth.isPersonal" />
+    <IconRail v-else :mobile-open="mobileMenu" @navigate="mobileMenu = false" />
+    <div class="main-workspace"><WebTopbar v-if="!auth.isPersonal" :menu-open="mobileMenu" @toggle-menu="mobileMenu = !mobileMenu" @close-menu="mobileMenu = false" /><main class="page-viewport"><router-view /></main></div>
+    <button v-if="!auth.isPersonal && mobileMenu" class="web-menu-backdrop" aria-label="关闭导航" @click="mobileMenu = false"></button>
   </div>
 </template>
 
@@ -29,4 +37,11 @@ import IconRail from './IconRail.vue'
   min-height: 0;
   overflow: hidden;
 }
+.desktop-shell { grid-template-columns: 220px minmax(0, 1fr); gap: 0; padding: 0; }
+.main-workspace { display: flex; flex-direction: column; min-width: 0; min-height: 0; }.main-workspace .page-viewport { flex: 1; }
+.web-shell { grid-template-columns: 224px minmax(0, 1fr); gap: 0; padding: 0; }
+.web-shell .page-viewport { overflow-y: auto; }
+.web-menu-backdrop { display: none; }
+@media (max-width: 850px) { .web-shell { grid-template-columns: minmax(0, 1fr); }.web-menu-backdrop { display: block; position: fixed; inset: 0; z-index: 90; background: #14293666; border: 0; } }
+@media (max-width: 1100px) { .desktop-shell { grid-template-columns: 190px minmax(0, 1fr); } }
 </style>

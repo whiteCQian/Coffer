@@ -8,6 +8,7 @@ import { confirmTag, rejectTag } from '@/api/fileTags'
 import type { ChatCitation, FileDetailResponse, FileStatus } from '@/api/types'
 import FileTile from '@/components/FileTile.vue'
 import WorkCopyPanel from '@/components/WorkCopyPanel.vue'
+import { desktopBridge } from '@/api/desktop'
 import { formatBytes, shortTime, toDisplayTime } from '@/utils/format'
 
 /**
@@ -37,6 +38,8 @@ const props = defineProps<{
   source?: ChatCitation
   /** 在对话放大态打开时提升抽屉层级，避免被对话遮罩覆盖。 */
   elevated?: boolean
+  /** Workbench inspector; retains the same real actions and confirmation dialogs. */
+  inline?: boolean
 }>()
 const emit = defineEmits<{
   (e: 'update:modelValue', v: number | null): void
@@ -88,17 +91,20 @@ const file = computed<DrawerFile | undefined>(() => {
   return detail.value ? fromDetail(detail.value) : undefined
 })
 
+let detailRequest = 0
 async function loadDetail(id: number) {
+  const request = ++detailRequest
   loading.value = true
   try {
     const { data } = await fileApi.getFileDetail(id, props.revision)
-    detail.value = data.data
+    if (request === detailRequest && props.modelValue === id) detail.value = data.data
   } catch {
+    if (request !== detailRequest || props.modelValue !== id) return
     /* 拦截器已弹错：加载失败直接收起抽屉 */
     emit('unavailable', id)
     emit('update:modelValue', null)
   } finally {
-    loading.value = false
+    if (request === detailRequest) loading.value = false
   }
 }
 
@@ -220,7 +226,7 @@ async function submitReject() {
 }
 
 /* —— 预览 —— */
-const isImage = computed(() => ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(file.value?.fileType ?? ''))
+const isImage = computed(() => ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(file.value?.fileType?.toLowerCase() ?? ''))
 const sourceLabel = computed(() => {
   const source = props.source
   if (!source) return ''
@@ -247,6 +253,7 @@ const rejectedTags = computed(() => file.value?.tags.filter((t) => t.status === 
 /* —— 关闭 / 文件被删时复位 —— */
 watch(open, (v) => {
   if (!v) {
+    detailRequest++
     action.value = null
     editingTag.value = null
     detail.value = null
@@ -262,20 +269,22 @@ watch(
       await nextTick()
     }
   },
+  { immediate: true },
 )
 </script>
 
 <template>
   <div
     class="drawer-wrap"
-    :class="{ 'is-open': open, 'is-elevated': props.elevated }"
-    :aria-hidden="!open"
+    :class="{ 'is-open': open, 'is-elevated': props.elevated, 'is-inline': props.inline }"
+    :aria-hidden="!open && !props.inline"
   >
     <!-- 遮罩 -->
-    <div class="drawer-mask" @click="close"></div>
+    <div v-if="!props.inline" class="drawer-mask" @click="close"></div>
 
     <!-- 抽屉面板 -->
     <aside v-if="file" class="drawer-panel">
+      <div v-if="props.inline" class="inspector-heading">文件详情 <span>预览与 AI 信息</span></div>
       <!-- 顶栏：图章 + 文件名 + 操作 -->
       <div class="drawer-head">
         <div class="drawer-title-row">
@@ -307,7 +316,6 @@ watch(
 
       <!-- 预览区 -->
       <div class="drawer-body">
-        <WorkCopyPanel :file-id="file.id" @saved="emit('changed', file.id); loadDetail(file.id)" />
         <div class="preview" :class="{ 'is-image': isImage }">
           <template v-if="isImage">
             <img v-if="file.previewUrl" :src="file.previewUrl" class="preview-photo" alt="文件预览" />
@@ -317,9 +325,9 @@ watch(
           <template v-else>
             <FileTile :file-type="file.fileType" size="lg" />
             <p class="preview-note">
-              该类型暂不支持内嵌预览<template v-if="previewLink">
+              {{ desktopBridge ? '文档可通过下方的工作副本，在外部应用中查看或编辑。' : '该类型暂不支持内嵌预览' }}<template v-if="previewLink && !desktopBridge">
                 ，可
-                <a class="preview-link" :href="previewLink" target="_blank" rel="noreferrer">在浏览器中打开</a>
+                <a class="preview-link" :href="previewLink" target="_blank" rel="noreferrer">打开文件预览</a>
               </template>
             </p>
           </template>
@@ -422,12 +430,18 @@ watch(
             </div>
           </dl>
         </section>
+
+        <WorkCopyPanel :key="file.id" :file-id="file.id" @saved="emit('changed', file.id); loadDetail(file.id)" />
       </div>
     </aside>
 
     <!-- 打开瞬间的加载 / 加载失败兜底 -->
     <aside v-else-if="open" class="drawer-panel drawer-panel--load">
+      <button class="head-x" title="关闭详情" @click="close">✕</button>
       <p class="drawer-loading-text">{{ loading ? '正在加载文件详情…' : '无法加载该文件（可能已被删除）' }}</p>
+    </aside>
+    <aside v-else-if="props.inline" class="drawer-panel inspector-empty">
+      <span class="empty-file-icon">▤</span><h2>文件详情</h2><p>选择一个文件，查看预览、AI 摘要和标签。</p><small>也可以双击文件查看详情</small>
     </aside>
 
     <!-- 动作模态：仅在有文件上下文时展示 -->
@@ -931,4 +945,28 @@ watch(
   background: var(--danger);
   color: #fff;
 }
+</style>
+
+<style scoped>
+.drawer-wrap.is-inline { position: relative; inset: auto; flex: 0 0 340px; width: 340px; min-width: 0; height: 100%; z-index: 1; pointer-events: auto; border-left: 1px solid var(--line); }
+.is-inline .drawer-panel { position: relative; inset: auto; height: 100%; width: 100%; border: 0; border-radius: 0; padding: 20px; transform: none; transition: none; box-shadow: none; background: var(--panel); }
+.inspector-heading { display: flex; justify-content: space-between; font-weight: 600; font-size: 13px; margin-bottom: 20px; }
+.inspector-heading span { color: var(--text-3); font-size: 11px; font-weight: 400; }
+.is-inline .drawer-actions { flex-wrap: wrap; gap: 6px; }
+.is-inline .act-btn { border-radius: 6px; padding: 5px 8px; font-size: 11px; }
+.is-inline .drawer-body { padding-top: 18px; }
+.is-inline .summary { background: var(--panel-3); font-size: 12px; line-height: 1.8; }
+.is-inline .tag.is-pending { background: var(--warn-tint); color: var(--warn); }
+.is-inline .tag { padding-inline: 8px; font-size: 11px; border-radius: 5px; }
+.is-inline .meta-value { margin-left: 0; font-size: 12px; }
+.is-inline .meta-item dt { font-size: 12px; }
+.is-inline .drawer-panel--load .head-x { position: absolute; top: 14px; right: 14px; }
+.inspector-empty { align-items: center; justify-content: center; text-align: center; color: var(--text-3); }
+.inspector-empty h2 { color: var(--text-2); font-size: 14px; margin: 16px 0 8px; }
+.inspector-empty p { max-width: 230px; font-size: 12px; margin: 0; }
+.inspector-empty small { font-size: 11px; margin-top: 14px; }
+.empty-file-icon { font-size: 32px; }
+.is-inline .modal-mask { position: fixed; z-index: 150; }
+@media (max-width: 1200px) { .drawer-wrap.is-inline { flex-basis: 300px; width: 300px; } .is-inline .drawer-panel { padding: 16px; } }
+@media (max-width: 960px) { .drawer-wrap.is-inline.is-open { position: fixed; inset: 0 0 0 auto; width: min(380px, calc(100vw - 210px)); z-index: 100; box-shadow: -8px 0 24px #0002; } .drawer-wrap.is-inline:not(.is-open) { display: none; } }
 </style>

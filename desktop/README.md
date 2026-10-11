@@ -2,6 +2,14 @@
 
 Windows x64 安装包包含 Electron、Vue 生产资源、桌面后端 JAR 和经过 SHA-256 校验的 Eclipse Temurin 21 JRE。用户机器不需要安装 Node、Java、Maven、MySQL、Redis 或 MinIO；启动不使用 Vite 或 `start-all.bat`。
 
+## 桌面文件工作台
+
+桌面默认打开个人文件库。左侧提供全部文件、收件箱、待确认、操作记录、AI 搜索和常用标签；文件区支持列表/图片网格、排序、多选和右键操作。按 `Ctrl+K` 聚焦关键词搜索，点击文件在右侧查看预览、AI 摘要并确认标签；详情与 AI 助手均可收起。图片可直接预览，文档通过受控工作副本在外部应用中查看或编辑。
+
+“用 AI 找文件”打开对话面板，回复中的文件引用仍使用真实文件版本和原文位置。关键词搜索与 AI 对话保留各自的接口；远端模型授权、入库接管确认和工作副本冲突处理沿用原流程。Web/NAS 使用带账号入口的响应式工作台；桌面端保留本地文件库导航与原生导入入口。
+
+源码测试使用 `start-desktop-test.bat`。浏览器交互回归为 `frontend/tests/desktop-workbench.mjs`；真实 Electron/捆绑 Java 检查为 `desktop/test/workbench-smoke.cjs`，使用安装目录之外的新建隔离数据目录，仅预览并取消样本导入，不调用 AI 模型、不修改用户文件。运行测试时可用 `COFFER_PLAYWRIGHT_MODULE` 指定本机 Playwright 模块路径。更换安装版界面仍需重新构建安装包。
+
 ## 安装与首次使用
 
 1. 核对安装包与同目录的 `SHA256SUMS.txt`，双击 `Coffer-0.2.1-windows-x64-setup.exe`，选择独立程序目录。安装目录必须为空或已有 Coffer 程序目录，不能是数据库/文件库目录。

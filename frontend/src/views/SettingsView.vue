@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import AccountPanel from '@/components/AccountPanel.vue'
 import DesktopBackupPanel from '@/components/DesktopBackupPanel.vue'
 import { desktopBridge } from '@/api/desktop'
+import { useAuthStore } from '@/stores/auth'
 import ModelPrivacyPanel from '@/components/ModelPrivacyPanel.vue'
 import PrivacyPanel from '@/components/PrivacyPanel.vue'
 import {
@@ -36,6 +37,9 @@ const capabilityMeta: Record<RuntimeCapability, { title: string; description: st
 }
 
 const loading = ref(true)
+const auth = useAuthStore()
+const settingsTab = ref('models')
+const settingsTabs = [{ id: 'models', label: '模型连接' }, { id: 'account', label: '账号与安全' }, { id: 'privacy', label: '数据与隐私' }, { id: 'about', label: '关于' }]
 const modeLoading = ref(false)
 const selectedMode = ref<RuntimeMode>('API')
 const modeStatus = ref<RuntimeModeStatus | null>(null)
@@ -251,14 +255,15 @@ onMounted(load)
   <div class="pg settings">
     <header class="pg-head">
       <div>
-        <h1 class="pg-title">模型配置</h1>
-        <p class="pg-sub">统一配置 Chat / RAG 服务，Vision 保持独立端点；保存后可按能力测试连通性。</p>
+        <h1 class="pg-title">{{ auth.isPersonal ? '模型配置' : '设置' }}</h1>
+        <p class="pg-sub">{{ auth.isPersonal ? '统一配置 Chat / RAG 服务，Vision 保持独立端点；保存后可按能力测试连通性。' : '管理模型连接、账号安全与数据隐私。' }}</p>
       </div>
       <span v-if="loading" class="loading-text">读取中...</span>
     </header>
 
-    <div class="settings-layout">
-      <section class="pg-panel runtime-panel">
+    <nav v-if="!auth.isPersonal" class="web-settings-tabs" role="tablist" aria-label="设置分类"><button v-for="tab in settingsTabs" :id="`settings-tab-${tab.id}`" :key="tab.id" role="tab" :aria-selected="settingsTab === tab.id" aria-controls="web-settings-panel" :class="{ active: settingsTab === tab.id }" @click="settingsTab = tab.id">{{ tab.label }}</button></nav>
+    <div :id="auth.isPersonal ? undefined : 'web-settings-panel'" class="settings-layout" :role="auth.isPersonal ? undefined : 'tabpanel'" :aria-labelledby="auth.isPersonal ? undefined : `settings-tab-${settingsTab}`">
+      <section v-show="auth.isPersonal || settingsTab === 'models'" class="pg-panel runtime-panel">
         <div class="runtime-head">
           <div>
             <p class="eyebrow">CURRENT RUNTIME</p>
@@ -296,7 +301,7 @@ onMounted(load)
         </div>
       </section>
 
-      <section class="config-section">
+      <section v-show="auth.isPersonal || settingsTab === 'models'" class="config-section">
         <div class="section-heading">
           <div><p class="eyebrow">{{ selectedMode }}</p><h2 class="section-title">{{ modeLabel(selectedMode) }}端点</h2></div>
           <p class="section-note">配置来源为 <span class="source-chip">环境变量 / 默认值</span> 时，页面展示的是当前回退值。</p>
@@ -360,7 +365,7 @@ onMounted(load)
         <p class="security-note">API Key 只在服务端加密保存，接口和页面仅展示脱敏结果；保存端点或密钥后，当前模式校验会自动失效。</p>
       </section>
 
-      <section class="pg-panel about-panel">
+      <section v-show="auth.isPersonal || settingsTab === 'about'" class="pg-panel about-panel">
         <h2 class="panel-title">关于 Coffer</h2>
         <div class="brand"><div class="brand-mark">智</div><div><h3 class="brand-name">Coffer · 智能文件管家</h3><p class="brand-desc">{{ desktopBridge ? '管理自己的本机文件库：AI 读取内容、自动归类打标，让检索像聊天一样自然。' : '面向个人与团队的文件存储：AI 读取内容、自动归类打标，你只需确认标签，让检索像聊天一样自然。' }}</p></div></div>
         <dl class="kv-list">
@@ -369,15 +374,17 @@ onMounted(load)
           <div class="kv"><dt class="kv-label">模式</dt><dd class="kv-value">{{ desktopBridge ? '本机个人文件库（无需账号）' : '多账号私有工作区' }}</dd></div>
         </dl>
       </section>
-      <AccountPanel v-if="!desktopBridge" />
+      <AccountPanel v-if="!desktopBridge" v-show="auth.isPersonal || settingsTab === 'account'" />
       <DesktopBackupPanel v-else />
-      <ModelPrivacyPanel />
-      <PrivacyPanel />
+      <ModelPrivacyPanel v-show="auth.isPersonal || settingsTab === 'privacy'" />
+      <PrivacyPanel v-show="auth.isPersonal || settingsTab === 'privacy'" />
     </div>
   </div>
 </template>
 
 <style scoped>
+.web-settings-tabs { display: flex; gap: 24px; border-bottom: 1px solid var(--line); flex: none; }
+.web-settings-tabs button { border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--text-2); font-size: 12px; padding: 10px 0; cursor: pointer; }.web-settings-tabs button.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
 .settings-layout { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--gap); overflow-y: auto; padding-bottom: 8px; }
 .runtime-panel, .about-panel { flex: none; }
 .runtime-head, .section-heading, .endpoint-head, .runtime-status { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }

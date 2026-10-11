@@ -8,6 +8,16 @@ import { confirmInboxImport, getInboxImportProgress, getOverview, retryInboxImpo
 import type { InboxImportItemResponse, InboxImportProgressResponse, TaskOverviewResponse } from '@/api/types'
 import FileTile from '@/components/FileTile.vue'
 import { desktopBridge } from '@/api/desktop'
+import { useAuthStore } from '@/stores/auth'
+
+const props = defineProps<{ pendingOnly?: boolean }>()
+const emit = defineEmits<{ (e: 'open-file', id: number): void }>()
+const auth = useAuthStore()
+function openPending(id: number) {
+  if (auth.isPersonal) emit('open-file', id)
+  else router.push({ path: '/files', query: { file: String(id) } })
+}
+defineExpose({ refresh: load })
 
 const router = useRouter()
 
@@ -27,6 +37,8 @@ const POLL_MS = 5000
 const overview = ref<TaskOverviewResponse | null>(null)
 const inbox = ref<InboxImportProgressResponse | null>(null)
 const loading = ref(false)
+const loadFailed = ref(false)
+let loadRequest = 0
 const confirmingImportId = ref<number | null>(null)
 let timer: ReturnType<typeof setInterval> | null = null
 
@@ -73,7 +85,7 @@ const rows = computed<OverviewRow[]>(() => {
       error: f.error,
     })
   }
-  return list
+  return props.pendingOnly ? list.filter(row => row.kind === 'pending') : list
 })
 
 /** 从文件名提取扩展名（无则返回 null），驱动 FileTile 图章 */
@@ -83,20 +95,26 @@ function extOf(name: string): string | null {
 }
 
 async function load() {
+  const request = ++loadRequest
   loading.value = true
   try {
     const { data } = await getOverview()
+    if (request !== loadRequest) return
     overview.value = data.data
+    loadFailed.value = false
   } catch {
+    if (request !== loadRequest) return
+    loadFailed.value = true
     /* 拦截器已弹错：保留上次数据，避免整卡闪烁 */
   }
   try {
     const { data } = await getInboxImportProgress()
+    if (request !== loadRequest) return
     inbox.value = data.data
   } catch {
     /* C04 接口不可用时不影响既有 AI 任务面板 */
   } finally {
-    loading.value = false
+    if (request === loadRequest) loading.value = false
   }
 }
 
@@ -152,6 +170,7 @@ onMounted(() => {
   timer = setInterval(load, POLL_MS)
 })
 onUnmounted(() => {
+  loadRequest++
   if (timer) clearInterval(timer)
   timer = null
 })
@@ -160,15 +179,17 @@ onUnmounted(() => {
 <template>
   <section class="progress-card">
     <div class="card-head">
-      <h2 class="card-title">AI 解析进度</h2>
+      <h2 class="card-title">{{ props.pendingOnly ? '待确认标签的文件' : '导入与解析进度' }}</h2>
       <span class="card-count">
         处理中 {{ overview?.processingCount ?? 0 }} · 待确认
         {{ overview?.pendingConfirmCount ?? 0 }} · 失败 {{ overview?.failedCount ?? 0 }}
-        <template v-if="inbox?.enabled"> · 批量导入 {{ inboxCompletedCount }}/{{ inbox.totalCount }}</template>
+        <template v-if="inbox?.enabled && !props.pendingOnly"> · 批量导入 {{ inboxCompletedCount }}/{{ inbox.totalCount }}</template>
       </span>
     </div>
+    <p v-if="props.pendingOnly && overview && overview.pendingConfirmCount > rows.length" class="progress-empty-sub">显示最近 {{ rows.length }} 个待确认文件，处理后会更新下一批。</p>
+    <p v-if="loadFailed" role="alert">任务状态暂时无法加载。<button class="task-btn is-select" @click="load">重新加载</button></p>
 
-    <div v-if="inbox?.enabled" class="inbox-summary">
+    <div v-if="inbox?.enabled && !props.pendingOnly" class="inbox-summary">
       <div class="inbox-summary-head">
         <span>收件箱批量导入</span>
         <span>{{ inboxProgressPercent }}%</span>
@@ -224,7 +245,7 @@ onUnmounted(() => {
         <button
           v-else-if="t.kind === 'pending'"
           class="task-btn is-select"
-          @click="router.push('/files')"
+          @click="t.fileId && openPending(t.fileId)"
         >
           去确认标签
         </button>
@@ -235,9 +256,9 @@ onUnmounted(() => {
     </ul>
 
     <!-- 空态 -->
-    <div v-else class="progress-empty">
-      <p>当前没有待处理的任务</p>
-      <p class="progress-empty-sub">上传文件后，AI 会自动开始解析与分类。</p>
+    <div v-else-if="!loadFailed" class="progress-empty">
+      <p>{{ props.pendingOnly ? '标签都已确认' : '当前没有待处理的任务' }}</p>
+      <p class="progress-empty-sub">{{ props.pendingOnly ? 'AI 提出的新标签会显示在这里，确认后会从列表移除。' : '导入文件后，可在这里核对路径并查看解析结果。' }}</p>
     </div>
   </section>
 </template>

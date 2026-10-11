@@ -1,0 +1,80 @@
+/* Shared workspace palette; layout rules are scoped by client surface. */
+html[data-desktop] {
+  --bg: #f7f9fb; --rail: #f1f4f6;
+  --panel: #ffffff; --panel-2: #ffffff; --panel-3: #f5f7f9;
+  --accent: #19818d; --accent-hover: #126d78; --accent-rgb: 25 129 141;
+  --accent-soft-rgb: 25 129 141; --accent-soft-text: #19818d;
+  --text-1: #243342; --text-2: #667685; --text-3: #7b8996;
+  --line: #e5eaee; --line-strong: #d7dfe5; --border-panel: #e5eaee;
+  --line-dashed: #cbd5de; --line-hover: #cbd5de; --line-hover-strong: #19818d;
+  --tag-bg: #eef3f5; --hover-bg: #e8eef2; --hover-bg-strong: #e1e9ee;
+  --card-hover-bg: #f4f8fa; --hover-ink: #19818d; --icon: #667685;
+  --upload: #f2f8f9; --ice: #ffffff; --olive: #ffffff; --mint: #ffffff;
+  --ink-teal: #243342; --ink-peach: #243342; --ink-amber: #243342; --ink-mint: #243342;
+  --ink-teal-rgb: 36 51 66; --ink-peach-rgb: 36 51 66; --ink-amber-rgb: 36 51 66; --ink-mint-rgb: 36 51 66;
+  --chat: #ffffff; --text-on-dark: #243342; --text-on-dark-2: #667685;
+  --chat-gold: #19818d; --chat-gold-rgb: 25 129 141; --chat-user-bubble: #e7f3f4;
+  --ok: #24785a; --ok-rgb: 36 120 90; --warn: #996815; --warn-tint: #fff3d8;
+  --danger: #bc4545; --danger-rgb: 188 69 69;
+  --radius-card: 12px; --radius-inner: 8px; --gap: 16px; --pad: 20px;
+  --font-display: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-body: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+  --el-color-primary-light-3: #5eabb3; --el-color-primary-light-5: #8fc5cb;
+  --el-color-primary-light-7: #b9dee2; --el-color-primary-light-8: #d0e9ec;
+  --el-color-primary-light-9: #e8f4f5; --el-color-primary-dark-2: #126d78;
+  --el-bg-color: var(--panel); --el-bg-color-overlay: var(--panel);
+  --el-fill-color-blank: var(--panel); --el-fill-color-light: var(--panel-3);
+  --el-text-color-primary: var(--text-1); --el-text-color-regular: var(--text-2);
+  --el-border-color: var(--line-strong); --el-border-color-light: var(--line);
+}
+html[data-desktop][data-theme='dark'] {
+  --bg: #151c23; --rail: #19222b; --panel: #1d2731; --panel-2: #1d2731; --panel-3: #24313d;
+  --text-1: #e2eaf1; --text-2: #a5b5c3; --text-3: #8a9eae;
+  --accent: #64c5cf; --accent-hover: #7bd3db; --accent-rgb: 100 197 207;
+  --accent-soft-rgb: 100 197 207; --accent-soft-text: #64c5cf;
+  --line: #303d49; --line-strong: #415360; --border-panel: #303d49; --line-dashed: #415360;
+  --line-hover: #415360; --line-hover-strong: #64c5cf;
+  --tag-bg: #293a46; --hover-bg: #243440; --hover-bg-strong: #304553; --card-hover-bg: #253540;
+  --upload: #1d2731; --ice: #1d2731; --olive: #1d2731; --mint: #1d2731;
+  --ink-teal: #e2eaf1; --ink-peach: #e2eaf1; --ink-amber: #e2eaf1; --ink-mint: #e2eaf1;
+  --ink-teal-rgb: 226 234 241; --ink-peach-rgb: 226 234 241; --ink-amber-rgb: 226 234 241; --ink-mint-rgb: 226 234 241;
+  --chat: #1d2731; --text-on-dark: #e2eaf1; --text-on-dark-2: #a5b5c3; --chat-user-bubble: #2a454e;
+  --hover-ink: #64c5cf; --warn: #ebbc63; --warn-tint: #403625; --ok: #77c9a0; --ok-rgb: 119 201 160;
+  --danger: #ed9090; --danger-rgb: 237 144 144;
+  --el-color-primary-light-3: #4e939c; --el-color-primary-light-5: #3c727c;
+  --el-color-primary-light-7: #2e515e; --el-color-primary-light-8: #28434f;
+  --el-color-primary-light-9: #243740; --el-color-primary-dark-2: #7bd3db;
+}
+html[data-desktop] button, html[data-desktop] input, html[data-desktop] select { font-family: inherit; }
+html[data-desktop] button:focus-visible, html[data-desktop] a:focus-visible, html[data-desktop] input:focus-visible, html[data-desktop] select:focus-visible, html[data-desktop] [tabindex='0']:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+html[data-desktop] input[type='checkbox'] { accent-color: var(--accent); }
+html[data-desktop] .file-tile { border-radius: 6px; }
+html[data-desktop] .page-viewport > .pg:not(.desktop-files):not(.desktop-queue) { padding: 28px 30px 20px; }
+html[data-desktop] .chat-card { border-radius: 10px; background: var(--panel); }
+html[data-desktop] .chat-card .card-title { color: var(--text-1); }
+html[data-desktop] .chat-card .expand-btn { background: var(--panel-3); box-shadow: none; color: var(--text-2); border: 1px solid var(--line-strong); width: 26px; height: 26px; border-radius: 6px; }
+html[data-desktop] .chat-card .expand-btn::after { content: '⤢'; font-size: 17px; }
+html[data-desktop] .chat-card .chat-status { font-size: 10px; }
+html[data-desktop] .chat-card .msg.is-ai { background: var(--panel-3); }
+html[data-desktop] .chat-card .quick-chip { border-color: var(--line-strong); }
+html[data-desktop] .chat-card .chat-input { background: var(--panel-3); border-color: var(--line-strong); }
+html[data-desktop] .chat-card .chat-guide { background: var(--panel-3); color: var(--text-2); }
+html[data-desktop] .chat-card .msg, html[data-desktop] .chat-card .msg.is-user { color: var(--text-1); }
+html[data-desktop] .chat-card .chat-empty, html[data-desktop] .chat-card .msg.is-typing { color: var(--text-3); }
+html[data-desktop] .chat-card .quick-chip { color: var(--text-2); background: var(--panel-3); border-radius: 6px; font-size: 11px; padding: 5px 8px; }
+html[data-desktop] .chat-card .quick-chip:hover { color: var(--accent); background: var(--hover-bg); }
+html[data-desktop] .chat-card .chat-input { background: transparent; }
+html[data-desktop] .chat-card .chat-input-field { color: var(--text-1); background: var(--panel-3); font-size: 12px; }
+html[data-desktop] .chat-card .chat-input-field::placeholder { color: var(--text-3); }
+html[data-desktop] .chat-card .chat-send { width: 34px; height: 34px; border-radius: 7px; }
+html[data-desktop] .chat-card .citation-card { border-color: var(--line-strong); background: var(--panel); }
+html[data-desktop] .chat-card .citation-name { color: var(--text-1); }
+html[data-desktop] .chat-card .citation-heading, html[data-desktop] .chat-card .citation-snippet, html[data-desktop] .chat-card .citation-meta { color: var(--text-2); }
+html[data-desktop] .chat-card .citation-section { border-color: var(--line); }
+html[data-desktop] .chat-card .chat-status.is-unconfigured, html[data-desktop] .chat-card .chat-status.is-failed { color: var(--warn); }
+html[data-desktop] .progress-card .task-item { background: var(--panel-3); }
+html[data-desktop] .progress-card .task-btn.is-select { background: rgb(var(--accent-rgb) / .1); color: var(--accent); }
+html[data-desktop] .progress-card .task-tag.is-processing { background: rgb(var(--accent-rgb) / .1); color: var(--accent); }
+html[data-desktop] .work-copy-actions button { color: var(--text-1); border-color: var(--line-strong); }
+@media (max-width: 1100px) { html[data-desktop] .page-viewport > .pg:not(.desktop-files):not(.desktop-queue) { padding: 20px; } }
+@media (prefers-reduced-motion: reduce) { html[data-desktop] *, html[data-desktop] *::before, html[data-desktop] *::after { animation: none !important; transition: none !important; } }

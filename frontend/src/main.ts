@@ -12,6 +12,8 @@ import { useFileViewStore } from './stores/fileView'
 import { applyTheme, getTheme } from './theme'
 import './styles/global.css'
 import './styles/tokens.css'
+import './styles/desktop.css'
+import './styles/web.css'
 
 // 首屏渲染前应用主题，避免刷新时闪烁
 applyTheme(getTheme())

@@ -12,6 +12,7 @@ import { useFileViewStore } from '@/stores/fileView'
  * 点真实标签联动「最近上传」区按该标签过滤。
  */
 const view = useFileViewStore()
+const props = defineProps<{ compact?: boolean }>()
 
 const candidates = ref<TagCandidate[]>([])
 const loading = ref(false)
@@ -40,9 +41,9 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="suggest-card">
+  <section class="suggest-card" :class="{ compact: props.compact }">
     <div class="card-head">
-      <h2 class="card-title">猜你需要的标签</h2>
+      <h2 class="card-title">{{ props.compact ? '按标签快速浏览' : '猜你需要的标签' }}</h2>
       <span class="head-side">
         <span class="card-sub">{{ loading ? '加载中…' : `${shown.length} 个候选标签` }}</span>
       </span>
@@ -158,4 +159,9 @@ onMounted(async () => {
   font-size: 12.5px;
   color: rgb(var(--ink-peach-rgb) / 0.6);
 }
+</style>
+
+<style scoped>
+.suggest-card.compact { background: var(--panel); padding: 16px 20px; border: 1px solid var(--line); border-radius: 10px; flex: none; }
+.compact .card-head { margin-bottom: 10px; flex-wrap: wrap; gap: 5px; }.compact .card-title { color: var(--text-1); font-family: var(--font-body); font-size: 12px; }.compact .card-sub { font-size: 10px; color: var(--text-3); }.compact .tag-grid { display: flex; flex-wrap: wrap; gap: 7px; flex: none; }.compact .tag-cell { width: auto; height: auto; padding: 5px 12px; color: var(--text-2); background: var(--panel-3); font-size: 11px; border-radius: 6px; }.compact .tag-cell.is-active { background: rgb(var(--accent-rgb) / .1); color: var(--accent); }.compact .tag-cell:hover { color: var(--accent); }.compact .suggest-empty { padding: 10px 0; display: block; text-align: left; color: var(--text-3); font-size: 11px; }
 </style>

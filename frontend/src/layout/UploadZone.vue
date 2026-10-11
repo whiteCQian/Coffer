@@ -4,10 +4,13 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { uploadFile } from '@/api/files'
+import { UploadFilled } from '@element-plus/icons-vue'
 import DesktopImportPanel from '@/components/DesktopImportPanel.vue'
 import { desktopBridge } from '@/api/desktop'
 
 const router = useRouter()
+const props = defineProps<{ compact?: boolean }>()
+defineExpose({ pick: pickFile })
 const inputRef = ref<HTMLInputElement>()
 const uploading = ref(false)
 const lastUpload = ref<{ signature: string; requestId: string } | null>(null)
@@ -20,7 +23,16 @@ async function onPicked(e: Event) {
   const input = e.target as HTMLInputElement
   const file = input.files?.[0]
   input.value = ''
-  if (!file || uploading.value) return
+  if (!file) return
+  await upload(file)
+}
+async function onDrop(event: DragEvent) {
+  const file = event.dataTransfer?.files[0]
+  if (file) await upload(file)
+}
+async function upload(file: File) {
+  if (uploading.value) return
+  if (file.size > 32 * 1024 * 1024) { ElMessage.warning('单个文件不能超过 32MB'); return }
   uploading.value = true
   const fd = new FormData()
   fd.append('file', file)
@@ -32,7 +44,6 @@ async function onPicked(e: Event) {
     await uploadFile(fd, lastUpload.value.requestId)
     lastUpload.value = null
     ElMessage.success(`「${file.name}」已上传，AI 开始解析…`)
-    // 首页其余模块仍走 mock，跳「全部文件」页查看真实解析进度
     router.push({ name: 'files' })
   } catch {
     /* 拦截器已弹错 */
@@ -44,10 +55,11 @@ async function onPicked(e: Event) {
 
 <template>
   <DesktopImportPanel v-if="desktopBridge" />
-  <section v-else class="upload-zone">
+  <section v-else class="upload-zone" :class="{ compact: props.compact }" @dragover.prevent @drop.prevent="onDrop">
     <div class="uz-inner">
       <div class="uz-main">
-        <p class="uz-title">拖拽文件到此处，或</p>
+        <span v-if="props.compact" class="upload-symbol"><el-icon><UploadFilled /></el-icon></span>
+        <div><p class="uz-title">{{ props.compact ? '把文件交给你的 AI 管家' : '拖拽文件到此处，或' }}</p><p v-if="props.compact" class="uz-description">拖入文档或图片，AI 帮你提取摘要、建议标签。</p></div>
         <button class="uz-btn" :disabled="uploading" @click="pickFile">
           {{ uploading ? '上传中…' : '上传文件' }}
         </button>
@@ -118,4 +130,12 @@ async function onPicked(e: Event) {
 .uz-file {
   display: none;
 }
+</style>
+
+<style scoped>
+.upload-zone.compact { padding: 0; border: 1px dashed rgb(var(--accent-rgb) / .3); background: rgb(var(--accent-rgb) / .04); border-radius: 10px; flex: none; }
+.compact .uz-inner { border: 0; padding: 19px 22px; gap: 6px; align-items: stretch; }
+.compact .uz-main { gap: 14px; }.compact .uz-title { font-size: 14px; font-weight: 600; color: var(--text-1); }.compact .uz-description { margin: 4px 0 0; color: var(--text-2); font-size: 11px; }.compact .uz-btn { margin-left: auto; flex-shrink: 0; background: var(--accent); color: white; font-size: 12px; padding: 8px 14px; border-radius: 7px; }.compact .uz-hint { margin-left: 52px; font-size: 10px; color: var(--text-3); }
+.upload-symbol { display: grid; place-items: center; flex-shrink: 0; width: 38px; height: 38px; border-radius: 9px; color: var(--accent); background: rgb(var(--accent-rgb) / .1); font-size: 22px; }
+@media (max-width: 540px) { .compact .uz-inner { padding: 18px 14px; }.compact .uz-main { flex-wrap: wrap; }.compact .uz-main > div { flex: 1; min-width: 160px; }.compact .uz-btn { margin: 0 0 0 52px; }.compact .uz-description { max-width: 230px; }.compact .uz-hint { margin-top: 4px; } }
 </style>

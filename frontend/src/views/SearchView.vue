@@ -6,9 +6,12 @@ import { searchFiles } from '@/api/files'
 import type { FileListResponse } from '@/api/types'
 import FileDetailDrawer from '@/components/FileDetailDrawer.vue'
 import FileTile from '@/components/FileTile.vue'
+import ChatDock from '@/layout/ChatDock.vue'
+import { useWorkspaceStore } from '@/stores/workspace'
 import { formatBytes, shortTime, toDisplayTime } from '@/utils/format'
 
 const keyword = ref('')
+const workspace = useWorkspaceStore()
 const tag = ref('')
 const ran = ref(false)
 const searching = ref(false)
@@ -78,12 +81,13 @@ function uploadTimeOf(f: FileListResponse) {
     <!-- 页头 -->
     <header class="pg-head">
       <div>
-        <h1 class="pg-title">语义搜索</h1>
-        <p class="pg-sub">按文件名或 AI 标签检索文件（标签含已确认与待确认，排除已拒绝）</p>
+        <h1 class="pg-title">AI 搜索</h1>
+        <p class="pg-sub">按关键词找文件，或让 AI 助手理解你的问题并给出文件引用。</p>
       </div>
     </header>
 
     <!-- 搜索面板 -->
+    <div class="search-workspace is-desktop">
     <div class="pg-panel search-panel">
       <div class="search-controls">
         <label class="field">
@@ -120,7 +124,7 @@ function uploadTimeOf(f: FileListResponse) {
         </div>
 
         <ul v-if="results.length" class="result-list">
-          <li v-for="f in results" :key="f.id" class="result-row" @click="drawerId = f.id">
+          <li v-for="f in results" :key="f.id" class="result-row" tabindex="0" role="button" :aria-label="`查看 ${f.fileName}`" @click="drawerId = f.id" @keydown.enter.prevent="drawerId = f.id">
             <FileTile :file-type="f.fileType" size="md" />
             <div class="row-main">
               <div class="row-name-line">
@@ -162,25 +166,27 @@ function uploadTimeOf(f: FileListResponse) {
 
       <!-- 初始引导 -->
       <div v-else class="guide">
-        <p class="guide-title">像聊天一样找文件</p>
+        <p class="guide-title">从一个关键词开始</p>
         <p class="guide-sub">
           输入文件名关键词或 AI 生成的标签，系统按文件名 / 摘要 / 标签实时检索真实文件。
         </p>
-        <div class="guide-chips">
+        <div v-if="workspace.tags.length" class="guide-chips">
           <button
-            v-for="q in ['实习', '发票', '安全教育', '生产实习']"
-            :key="q"
+            v-for="q in workspace.tags.slice(0, 4)"
+            :key="q.name"
             class="guide-chip"
-            @click="tag = q; doSearch()"
+            @click="tag = q.name; doSearch()"
           >
-            {{ q }}
+            {{ q.name }}
           </button>
         </div>
       </div>
     </div>
+    <aside v-show="drawerId === null" class="search-ai"><ChatDock /></aside>
 
     <!-- 详情抽屉 -->
-    <FileDetailDrawer v-model="drawerId" @changed="doSearch" />
+    <FileDetailDrawer v-show="drawerId !== null" v-model="drawerId" inline @changed="doSearch" />
+    </div>
   </div>
 </template>
 
@@ -188,6 +194,17 @@ function uploadTimeOf(f: FileListResponse) {
 .search {
   gap: 14px;
 }
+.search-workspace { display: contents; }
+.search-workspace.is-desktop { display: flex; gap: 20px; min-height: 0; flex: 1; }
+.is-desktop .search-panel { border: 1px solid var(--line); }
+.search-ai { flex: 0 0 340px; min-width: 0; display: flex; }
+.search-ai :deep(.chat-card) { width: 100%; border: 1px solid var(--line); }
+.is-desktop .search-controls { grid-template-columns: 1fr; }
+.is-desktop .field-input { height: 38px; }
+.is-desktop .do-search { height: 36px; justify-self: start; }
+.is-desktop .result-row { border: 1px solid var(--line); background: var(--panel); }
+.is-desktop .row-side { gap: 8px; }
+@media (max-width: 1200px) { .search-ai { flex-basis: 300px; } .is-desktop .row-meta { display: none; } }
 .search-panel {
   flex: 1;
   display: flex;
