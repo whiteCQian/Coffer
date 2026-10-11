@@ -5,7 +5,7 @@ powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\st
 set "EXIT_CODE=%ERRORLEVEL%"
 if not "%EXIT_CODE%"=="0" (
     echo.
-    echo Desktop test startup failed. See the message above.
+    echo Desktop backend test startup failed. See the message above.
     pause
 )
 endlocal & exit /b %EXIT_CODE%

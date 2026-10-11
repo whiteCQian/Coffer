@@ -20,24 +20,28 @@ Windows x64 安装包包含 Electron、Vue 生产资源、桌面后端 JAR 和�
 
 ## 构建与本机自动验收
 
-### 源码桌面测试一键启动
+### 桌面后端测试一键启动
 
-在仓库根目录双击 `start-desktop-test.bat`，打开当前源码的 Electron 桌面窗口。默认测试业务数据为 `%LOCALAPPDATA%\Coffer-desktop-test`，窗口配置/缓存为 `%APPDATA%\Coffer-shell-desktop-test`，与正式默认目录分开；再次启动继续使用已有测试账号和文件。首次在桌面启动页确认初始化，再创建管理员和业务账号；已有数据需要升级时按界面提示先完成加密备份，脚本不清空或强制初始化数据。
+在仓库根目录双击 `start-desktop-test.bat`，直接启动 desktop profile 的 Java 后端，默认地址 `http://127.0.0.1:8080`。它使用 H2、SQL 会话/记忆和本地文件库；不打开 Electron 或前端，不需要 Node/npm、MySQL、MinIO、Redis。控制台显示后端日志，保持窗口打开，按 Ctrl+C 停止。
 
-脚本核对生产资源版本、H2 迁移版本及源文件更新时间，缺失/过期时调用同一 `build-desktop.ps1 -Unpacked` 构建；资源完整性由桌面启动器校验。首次构建需要 Node.js 22.12+、npm、JDK 17+ 和 Maven（或后端 wrapper），没有 node_modules 时使用 npm ci 安装锁定依赖；资源就绪后使用捆绑 JRE 与已准备的 Electron，不启动 Vite/MySQL/MinIO/Redis。测试窗口使用独立 shell profile，关闭窗口由原桌面生命周期停止其 Java 子进程。
+默认数据目录为 `%LOCALAPPDATA%\Coffer-desktop-backend-test`，与正式默认目录及之前的 GUI 测试目录分开。首次仅对不存在或空的测试目录自动初始化，后续复用账号、数据库、文件与密钥；不会清空非空目录或删除业务数据。首次管理员初始化令牌在该目录的 `coffer-initial-admin-token.txt`，只显示路径、不打印令牌；完成管理员初始化后按原应用规则移除该文件。日志位于数据目录的 `logs` 子目录。
+
+后端 JAR 缺失或源文件变更时自动调用 Maven `-Pdesktop package`，不构建服务器 JAR或前端。运行优先使用捆绑 Java，其次使用 Java 17+；首次构建需要 JDK 17+ 与 Maven（或后端 wrapper）。拒绝带服务端 MinIO 依赖的 JAR；不会继承 Web/NAS 的数据库/主密钥环境配置。已有测试库遵循 desktop 启动验证及 Flyway 规则；正式数据升级继续使用原整套加密备份/回滚流程。
 
 ```powershell
-# 强制重建后启动：
+# 改用独立测试端口：
+.\start-desktop-test.bat -Port 8082
+# 强制重新编译后端并启动：
 .\start-desktop-test.bat -Rebuild
-# 只准备资源，不打开桌面：
+# 只准备后端 JAR，不启动服务：
 .\start-desktop-test.bat -PrepareOnly
-# 只读检查版本、重建原因和目录，不下载/构建/初始化：
+# 只读检查路径、重建和空目录初始化状态：
 .\start-desktop-test.bat -CheckOnly
-# 使用明确的独立测试目录（路径有空格时加引号）：
-.\start-desktop-test.bat -DataDirectory "D:\Coffer Test\data" -ShellDirectory "D:\Coffer Test\shell"
+# 指定明确的测试数据目录：
+.\start-desktop-test.bat -DataDirectory "D:\Coffer Backend Test\data" -Port 8082
 ```
 
-工具不在 PATH 时可指定 `-NodePath`、`-NpmPath`（npm.cmd）、`-MavenPath`、`-JavaPath`（JDK java.exe）。测试目录不得与 desktop 程序目录重叠，不接受链接/junction；数据与窗口缓存也必须分开。启动失败时批处理窗口保留错误信息，桌面生命周期日志位于测试 shell profile 的 `launcher.log`。
+可指定 `-JarPath`（desktop JAR）、`-JavaPath`、`-MavenPath`。端口占用时拒绝启动，不终止已有进程；测试目录不得与程序/构建目录重叠或使用链接/junction。启动失败时批处理窗口保留错误信息。需要测试完整 Electron 窗口时，另按下方桌面包构建/安装说明执行。
 
 构建需要 Java 17+、Maven 和 Node 22.12+。运行 `npm ci --prefix desktop`，然后：
 
