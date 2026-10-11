@@ -7,6 +7,7 @@ import { approveFileModel, assessFileModel, retryFile, type ModelCapability } fr
 import { confirmInboxImport, getInboxImportProgress, getOverview, retryInboxImport } from '@/api/tasks'
 import type { InboxImportItemResponse, InboxImportProgressResponse, TaskOverviewResponse } from '@/api/types'
 import FileTile from '@/components/FileTile.vue'
+import { desktopBridge } from '@/api/desktop'
 
 const router = useRouter()
 
@@ -137,10 +138,10 @@ async function doConfirmInbox(item: InboxImportItemResponse) {
   if (!item.id || !item.targetPath || confirmingImportId.value !== null) return
   confirmingImportId.value = item.id
   try {
-    await ElMessageBox.confirm(`文件：${item.fileName}\n目标：${item.targetPath}\n\n复制到此路径，保留收件箱原文件。目标被占用时停止，不覆盖或改名。`,
-      '确认本地导入路径', { confirmButtonText: '确认复制', cancelButtonText: '取消', type: 'warning' })
+    await ElMessageBox.confirm(`文件：${item.fileName}\n目标：${item.targetPath}\n\n${desktopBridge ? '正式入库并校验成功后，删除通过本机选择或拖放导入的原路径文件。失败或来源变化时保留源文件。' : '复制到此路径，保留收件箱原文件。'}目标被占用时停止，不覆盖或改名。`,
+      '确认本地导入路径', { confirmButtonText: desktopBridge ? '确认入库并接管' : '确认复制', cancelButtonText: '取消', type: 'warning' })
     await confirmInboxImport(item.id, item.targetPath)
-    ElMessage.success('已复制入库并登记处理任务')
+    ElMessage.success('已入库并登记处理任务，请查看导入结果')
   } catch { /* Cancellation or HTTP errors are handled by the existing request boundary. */ }
   finally { confirmingImportId.value = null }
   await load()
@@ -185,13 +186,14 @@ onUnmounted(() => {
            :key="`confirm-${item.id}`" class="inbox-import-preview">
         <strong>{{ item.fileName }}</strong>
         <span>目标：{{ item.targetPath }}</span>
-        <button class="task-btn is-select" :disabled="confirmingImportId !== null" @click="doConfirmInbox(item)">确认路径并复制</button>
+        <button class="task-btn is-select" :disabled="confirmingImportId !== null" @click="doConfirmInbox(item)">{{ desktopBridge ? '确认入库并接管' : '确认路径并复制' }}</button>
       </div>
       <div v-for="item in inbox.items.filter(i => i.status === 'MANUAL_REVIEW')"
            :key="item.id" class="inbox-manual-item">
         <span>{{ item.fileName }}：{{ item.error }}</span>
         <button v-if="item.id" class="task-btn is-retry" @click="doRetryInbox(item.id)">核对后重试</button>
       </div>
+      <p v-for="item in inbox.items.filter(i => i.status === 'IMPORTED' && i.error)" :key="`retained-${item.id}`" role="status">{{ item.fileName }}：{{ item.error }}</p>
     </div>
 
     <div v-if="loading && !rows.length" class="progress-empty">

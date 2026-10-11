@@ -49,7 +49,7 @@ class BackendSupervisor {
     await this.stop();throw new Error('BACKEND_START_TIMEOUT');
   }
   diagnostic(){
-    const known=['UPGRADE_BACKUP_REQUIRED','UPGRADE_BACKUP_FAILED','DOWNGRADE_REFUSED','KEY_MISSING','KEY_MISMATCH','LIBRARY_MISSING','DATABASE_MISSING','IN_USE','INITIALIZATION_REFUSED','BINDING_INVALID'];
+    const known=['DESKTOP_MULTIPLE_LEGACY_OWNERS','DESKTOP_LEGACY_OWNER_DISABLED','UPGRADE_BACKUP_REQUIRED','UPGRADE_BACKUP_FAILED','DOWNGRADE_REFUSED','KEY_MISSING','KEY_MISMATCH','LIBRARY_MISSING','DATABASE_MISSING','IN_USE','INITIALIZATION_REFUSED','BINDING_INVALID'];
     for(const code of known)if(this.errorText.includes(code))return code;
     if(this.errorText.includes('升级备份失败'))return 'UPGRADE_BACKUP_FAILED';
     if(this.errorText.includes('不能降级写入'))return 'DOWNGRADE_REFUSED';

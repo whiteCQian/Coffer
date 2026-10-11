@@ -12,12 +12,13 @@ async function request(page,route,method='GET',body){return page.evaluate(async(
 async function waitReady(page){await page.waitForURL(url=>url.pathname!=='/__desktop/start',{timeout:90000});}
 (async()=>{
   app=await electron.launch({executablePath:exe,args:[`--coffer-data-directory=${source}`,`--coffer-shell-directory=${path.join(root,'source-shell')}`],env});const page=await app.firstWindow();await waitReady(page);
-  assert.equal((await request(page,'/auth/login','POST',{username:'r34-user-a',password:'R34-user-pass'})).status,200);
+  const owner=(await request(page,'/auth/me')).data.id;
+  assert.equal((await request(page,'/auth/status')).data.desktopPersonal,true);
   const file=(await request(page,'/files')).data.content[0];assert.ok(file);
   const before=(await request(page,`/files/${file.id}`)).data;
   const work=(await request(page,'/desktop/work-copies','POST',{fileId:file.id})).data;fs.writeFileSync(work.workPath,'R35 未完成工作副本，在恢复后继续处理。');
   await request(page,`/desktop/work-copies/${work.id}/close`,'POST',{action:'KEEP'});
-  assert.equal((await request(page,'/auth/login','POST',{username:'r34-admin',password:'R34-admin-pass'})).status,200);await page.reload();const origin=new URL(page.url()).origin;await page.goto(origin+'/admin');
+  const origin=new URL(page.url()).origin;await page.goto(origin+'/settings');
   await app.evaluate(({dialog},directory)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[directory]});dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});},copies);
   const panel=page.locator('.desktop-backup');await panel.getByRole('button',{name:'选择备份介质目录',exact:true}).click();
   await panel.locator('input[type=password]').nth(0).fill(password);await panel.locator('input[type=password]').nth(1).fill(password);
@@ -33,11 +34,11 @@ async function waitReady(page){await page.waitForURL(url=>url.pathname!=='/__des
   await recovery.getByRole('button',{name:'验证并恢复整套数据',exact:true}).click();await recovery.getByText(/整套恢复已验证/).waitFor({timeout:180000});
   assert.deepEqual(fs.readFileSync(path.join(target,'.coffer-encryption-key')),key);assert.equal(fs.existsSync(emptySource),false);
   await recovery.getByRole('button',{name:'打开已有数据 / 重启',exact:true}).click();await waitReady(recovery);
-  assert.equal((await request(recovery,'/auth/login','POST',{username:'r34-user-a',password:'R34-user-pass'})).status,200);
+  assert.equal((await request(recovery,'/auth/me')).data.id,owner);
   const restored=(await request(recovery,`/files/${file.id}`)).data;assert.equal(restored.fileName,before.fileName);assert.equal(restored.contentSha256,before.contentSha256);
   const copy=(await request(recovery,`/desktop/work-copies/${work.id}`)).data;assert.equal(copy.status,'KEPT');assert.match(fs.readFileSync(copy.workPath,'utf8'),/未完成工作副本/);
-  assert.equal((await request(recovery,'/auth/login','POST',{username:'r34-user-b',password:'R34-user-pass'})).status,200);assert.equal((await request(recovery,`/files/${file.id}`)).status,404);
-  const result={passed:true,localSnapshotOnly:true,independentMediaAcceptance:false,accountLoginRestored:true,chineseFile:before.fileName,fileSha256Verified:true,pendingWorkRestored:true,originalKeyRetained:true,emptyReplacementRefused:true};
+  assert.equal((await request(recovery,'/admin/users')).status,403);
+  const result={passed:true,localSnapshotOnly:true,independentMediaAcceptance:false,personalLibraryRestoredWithoutLogin:true,chineseFile:before.fileName,fileSha256Verified:true,pendingWorkRestored:true,originalKeyRetained:true,emptyReplacementRefused:true};
   fs.writeFileSync(path.join(root,'r35-e2e-result.json'),JSON.stringify(result,null,2));await recovery.screenshot({path:path.join(root,'restored-e2e.png'),fullPage:true});
-  process.stdout.write(`R35 packaged backup/restore PASS: admin encrypted snapshot, new-root restore, original key/accounts/file SHA/pending work, dual-owner isolation; ${root}\n`);
+  process.stdout.write(`Packaged backup/restore PASS: personal encrypted snapshot, new-root restore without login, original key/library identity/file SHA/pending work; ${root}\n`);
 })().finally(async()=>{if(app)await app.close();}).catch(error=>{console.error(error);process.exitCode=1;});

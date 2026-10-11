@@ -28,7 +28,7 @@ async function authorize() {
 }
 async function revoke() { await http.delete('/model-execution/inbox'); await load() }
 async function deleteLogs() {
-  await ElMessageBox.confirm('删除当前账号的全部模型诊断记录？', '删除诊断', { type: 'warning' })
+  await ElMessageBox.confirm('删除我的全部模型诊断记录？', '删除诊断', { type: 'warning' })
   await http.delete('/model-diagnostics'); page.value = 0; await load()
 }
 async function rewrap() {
@@ -64,7 +64,7 @@ onMounted(load)
     <span>{{ page + 1 }} / {{ Math.max(1, totalPages) }}</span>
     <el-button :disabled="page + 1 >= totalPages" @click="turnPage(1)">下一页</el-button>
     <h3>密钥维护</h3>
-    <p>部署管理员轮换加密主密钥后，可在这里更新当前账号的密文；模型发送目标和 API 密钥内容保持不变。</p>
+    <p>加密主密钥轮换后，可在这里更新我的密文；模型发送目标和 API 密钥内容保持不变。</p>
     <el-button @click="rewrap">重新加密我的模型凭据</el-button>
   </section>
 </template>

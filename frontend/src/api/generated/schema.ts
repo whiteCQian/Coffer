@@ -2503,6 +2503,7 @@ export interface components {
             };
         };
         AuthStatusResponse: {
+            desktopPersonal?: boolean;
             passwordMinLength?: number;
             strongPasswordRequired?: boolean;
             setupRequired?: boolean;

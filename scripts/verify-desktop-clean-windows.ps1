@@ -32,10 +32,10 @@ $snapshot.resourcesVerified=$manifest.files.Count;$snapshot.bundledJavaVersion=$
 $sample=Join-Path $EvidenceDirectory '本地验收资料.txt';[IO.File]::WriteAllText($sample,'Public report for Coffer clean Windows verification. No personal information.',[Text.UTF8Encoding]::new($false))
 $sampleSha=(Get-FileHash -LiteralPath $sample -Algorithm SHA256).Hash
 $started=[DateTime]::UtcNow;$application=Start-Process -FilePath $exe -PassThru
-Write-Host '请在应用中明确初始化空目录、创建管理员，再创建两个业务账号并登录第一个。'
+Write-Host '请在应用中明确初始化空目录；应直接进入个人文件库，无需创建账号或登录。'
 Write-Host ('本地验证文件：'+$sample)
 Write-Host '选择/拖入该文件，核对收件箱与正式目标路径；如验证 AI 闭环，先配置并验证自己的模型端点。'
-Write-Host '完成文件查看、受控工作副本编辑/保存、归档/撤销；第二个业务账号不能查看第一个账号的数据。'
+Write-Host '正式入库并校验成功后，应删除该样本的原路径文件。完成文件查看、受控工作副本编辑/保存、归档/撤销。'
 Write-Host '关闭网络后仍应能查看本地已入库文件。强杀主窗口后重新打开，未完成副本/操作应有可见恢复结果。'
 $core=Read-Host '完成以上实际 UI 流程后输入 PASS（失败输入 FAIL；未完成不要记为通过）'
 $snapshot.manualCorePassed=($core -eq 'PASS')
@@ -54,8 +54,8 @@ try{Invoke-WebRequest -Uri ('http://127.0.0.1:'+$owned.port+'/api/files') -UseBa
 catch{if($_.Exception.Response){$ordinary=[int]$_.Exception.Response.StatusCode}else{throw}}
 if($ordinary -ne 403){throw 'Ordinary local webpage/backend request was not rejected'}
 $snapshot.ordinaryLocalRequestStatus=$ordinary
-if((Get-FileHash -LiteralPath $sample -Algorithm SHA256).Hash -ne $sampleSha){throw 'External source file changed during import/edit verification'}
-$snapshot.sourceRetained=$true
+if(Test-Path -LiteralPath $sample){throw 'Confirmed imported sample source was not removed; check the visible handoff warning'}
+$snapshot.sourceDeletedAfterImport=$true;$snapshot.importedSourceSha256=$sampleSha
 if($TestUninstall){
     Write-Host '请先正常关闭 Coffer 和外部编辑文档；下面运行卸载程序，默认保留数据。'
     if((Read-Host '确认已关闭后输入 CLOSED') -ne 'CLOSED'){throw 'Uninstall verification cancelled'}

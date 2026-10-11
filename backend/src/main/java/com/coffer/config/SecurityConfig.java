@@ -51,12 +51,18 @@ public class SecurityConfig {
                                             TenantContextFilter tenantContextFilter,
                                             ObjectMapper objectMapper,
                                             org.springframework.core.env.Environment environment,
-                                            @Value("${coffer.auth.cookie-secure:false}") boolean secureCookie) throws Exception {
+                                            @Value("${coffer.auth.cookie-secure:false}") boolean secureCookie,
+                                            org.springframework.beans.factory.ObjectProvider<com.coffer.desktop.DesktopPersonalWorkspace> personal) throws Exception {
+        var personalWorkspace = personal.getIfAvailable();
         CookieCsrfTokenRepository csrf = CookieCsrfTokenRepository.withHttpOnlyFalse();
         csrf.setCookiePath("/");
         csrf.setSecure(secureCookie);
         csrf.setCookieCustomizer(cookie -> cookie.sameSite("Strict"));
 
+        if (personalWorkspace != null) {
+            http.addFilterAfter(new com.coffer.desktop.DesktopPersonalFilter(personalWorkspace), SecurityContextHolderFilter.class);
+            http.addFilterAfter(tenantContextFilter, com.coffer.desktop.DesktopPersonalFilter.class);
+        } else http.addFilterAfter(tenantContextFilter, SecurityContextHolderFilter.class);
         http
                 .cors(Customizer.withDefaults())
                 .csrf(config -> config.csrfTokenRepository(csrf)
@@ -65,23 +71,26 @@ public class SecurityConfig {
                         .requireExplicitSave(true))
                 .addFilterAfter(new com.coffer.auth.service.SessionLifetimeFilter(environment.matchesProfiles("prod"), objectMapper), SecurityContextHolderFilter.class)
                 .addFilterAfter(new com.coffer.auth.service.WebRequestConcurrencyFilter(environment.matchesProfiles("prod"), objectMapper), SecurityContextHolderFilter.class)
-                .addFilterAfter(tenantContextFilter, SecurityContextHolderFilter.class)
                 .sessionManagement(config -> config.sessionFixation(fixation -> fixation.changeSessionId()))
                 .requestCache(AbstractHttpConfigurer::disable)
                 .formLogin(AbstractHttpConfigurer::disable)
                 .httpBasic(AbstractHttpConfigurer::disable)
-                .logout(config -> config
-                        .logoutUrl("/api/auth/logout")
+                .logout(config -> {
+                    if (personalWorkspace != null) { config.disable(); return; }
+                    config.logoutUrl("/api/auth/logout")
                         .invalidateHttpSession(true)
                         .clearAuthentication(true)
                         .deleteCookies("COFFER_SESSION", "JSESSIONID")
-                        .logoutSuccessHandler((request, response, authentication) -> response.setStatus(HttpStatus.NO_CONTENT.value())))
+                        .logoutSuccessHandler((request, response, authentication) -> response.setStatus(HttpStatus.NO_CONTENT.value()));
+                })
                 .exceptionHandling(config -> config
                         .authenticationEntryPoint((request, response, exception) -> writeError(response, objectMapper,
                                 HttpStatus.UNAUTHORIZED, "请先登录"))
                         .accessDeniedHandler((request, response, exception) -> writeError(response, objectMapper,
                                 HttpStatus.FORBIDDEN, "无权执行此操作")))
-                .authorizeHttpRequests(config -> config
+                .authorizeHttpRequests(config -> {
+                    if (personalWorkspace != null) config.requestMatchers("/api/admin/**", "/api/auth/setup", "/api/auth/login", "/api/auth/logout", "/api/auth/password").denyAll();
+                    config
                         .requestMatchers("/api/auth/status", "/api/auth/csrf", "/api/auth/setup", "/api/auth/login",
                                 "/error", "/actuator/health", "/actuator/health/**").permitAll()
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
@@ -90,7 +99,8 @@ public class SecurityConfig {
                         .requestMatchers("/actuator/**", "/h2-console/**", "/api/test/**").denyAll()
                         .requestMatchers("/api/auth/**").authenticated()
                         .requestMatchers("/api/**").hasRole("USER")
-                        .anyRequest().permitAll());
+                        .anyRequest().permitAll();
+                });
         return http.build();
     }
 

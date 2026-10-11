@@ -63,6 +63,8 @@ public class InboxImportScanner {
     private InboxDirectoryResolver directories;
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.coffer.file.infrastructure.storage.PathGenerator paths;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.coffer.desktop.NativeTransferService nativeTransfers;
 
     private final ReentrantLock scanLock = new ReentrantLock();
     private final java.util.concurrent.ConcurrentHashMap<Long, LocalDateTime> lastScanAt = new java.util.concurrent.ConcurrentHashMap<>();
@@ -499,7 +501,10 @@ public class InboxImportScanner {
         com.coffer.file.storage.StorageKey.requireOwned(target);
         if (!target.startsWith("users/" + TenantContext.requireOwnerId() + "/managed/"))
             throw new SecurityException("导入目标不属于受控文件目录");
-        if (record.getStatus() == InboxImportStatus.IMPORTED) return;
+        if (record.getStatus() == InboxImportStatus.IMPORTED) {
+            if (nativeTransfers != null) nativeTransfers.recover();
+            return;
+        }
         if (record.getStatus() != InboxImportStatus.AWAITING_CONFIRMATION)
             throw new com.coffer.file.storage.StorageConflictException("请等待新的导入预览或核对后重试");
         Path source = directories.requireSource(resolveOwnerDirectory().resolve(record.getSourceFileName()));
@@ -509,6 +514,7 @@ public class InboxImportScanner {
         try {
             fileUploadApplicationService.importInboxFile(source, record.getSourceSize(),
                     record.getSourceModifiedAt().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli(), id);
+            if (nativeTransfers != null) nativeTransfers.recover();
         } catch (RuntimeException failed) {
             var latest = recordRepository.findById(id).orElseThrow();
             if (latest.getStatus() != InboxImportStatus.IMPORTED) {

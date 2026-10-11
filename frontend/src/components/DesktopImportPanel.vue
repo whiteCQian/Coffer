@@ -5,6 +5,8 @@ import { desktopBridge } from '@/api/desktop'
 import type { NativeReceipt, NativeSelection } from '@/api/desktop'
 import { useAuthStore } from '@/stores/auth'
 import { formatBytes } from '@/utils/format'
+import { useRouter } from 'vue-router'
+const router = useRouter()
 const auth = useAuthStore(), busy = ref(false), selected = ref<NativeSelection[]>([]), results = ref<NativeReceipt[]>([])
 const emit = defineEmits<{ (e: 'queued'): void }>()
 function explain(error: unknown) { ElMessage.error(String((error as Error)?.message || '本地文件选择失败').replace(/^Error invoking remote method .*?: Error: /, '')) }
@@ -23,7 +25,7 @@ async function confirm() {
   busy.value = true
   try {
     results.value = await desktopBridge.commitInbox(selected.value.map(item => ({ id: item.id, targetPath: item.targetPath })))
-    if (results.value.some(item => item.ok)) { ElMessage.success('已复制到收件箱，来源保留；请继续核对正式入库路径'); emit('queued') }
+    if (results.value.some(item => item.ok)) { ElMessage.success('已暂存到收件箱；确认正式入库后将删除源文件'); emit('queued') }
     selected.value = []
   } catch (error) { explain(error) } finally { busy.value = false }
 }
@@ -33,11 +35,12 @@ defineExpose({ pick })
 <template>
   <section v-if="desktopBridge" class="desktop-import" @dragover.prevent @drop.prevent="drop">
     <strong>本地文件导入</strong>
-    <p>拖入本机文件，或选择文件。先核对收件箱路径；复制保留来源，正式入库与 AI 分析仍需确认。</p>
+    <p>拖入本机文件，或选择文件。确认接管后先暂存到收件箱；正式入库并校验成功后删除原路径文件。入库失败或来源变化时保留源文件。AI 分析仍需确认。</p>
     <button :disabled="busy" @click="pick">{{ busy ? '核对中…' : '选择本地文件' }}</button>
     <article v-for="item in selected" :key="item.id"><b>{{ item.name }} · {{ formatBytes(item.size) }}</b><p class="native-target">{{ item.targetPath }}</p></article>
-    <div v-if="selected.length" class="native-actions"><button :disabled="busy" @click="confirm">确认这些路径并复制</button><button :disabled="busy" @click="selected = []">取消</button></div>
-    <p v-for="(item, index) in results" :key="index" role="status">{{ item.name }}：{{ item.ok ? '收件箱副本已就绪，等待扫描和正式路径确认' : item.error }}；来源文件保留</p>
+    <div v-if="selected.length" class="native-actions"><button :disabled="busy" @click="confirm">确认接管（入库后删除源文件）</button><button :disabled="busy" @click="selected = []">取消</button></div>
+    <p v-for="(item, index) in results" :key="index" role="status">{{ item.name }}：{{ item.ok ? '收件箱暂存已就绪；完成正式路径确认后删除源文件' : item.error }}</p>
+    <button v-if="results.some(item => item.ok)" @click="router.push({ name: 'home' })">去首页确认入库路径并查看接管结果</button>
   </section>
 </template>
 <style scoped>

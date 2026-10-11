@@ -116,6 +116,8 @@ final class SnapshotDatabase {
             Path body=stagedLibrary.resolve((String)row.get("before_key"));var attrs=SafeLocalPaths.file(body);
             jdbc.update("UPDATE "+quoted(name)+" SET before_file_key=?,before_modified_time=? WHERE id=?",LocalImportSource.key(attrs),attrs.lastModifiedTime().toString(),row.get("id"));
         }
+        // Restoration must never apply old deletion consent to paths on the recovery machine.
+        if(table(jdbc,"DESKTOP_NATIVE_TRANSFER"))jdbc.update("UPDATE desktop_native_transfer SET state='RETAINED',last_error='恢复后不自动删除外部来源，请核对后手动处理' WHERE state IN ('PREPARING','STAGED','REMOVING')");
         // Browser sessions are machine-local authorizations; restored accounts must log in again.
         if(table(jdbc,"SPRING_SESSION_ATTRIBUTES"))jdbc.update("DELETE FROM SPRING_SESSION_ATTRIBUTES");
         if(table(jdbc,"SPRING_SESSION"))jdbc.update("DELETE FROM SPRING_SESSION");

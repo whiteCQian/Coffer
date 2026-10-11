@@ -21,6 +21,7 @@ export const useAuthStore = defineStore('auth', () => {
   function boundary() { resetBoundary(); generation.value += 1 }
   function announce() { localStorage.setItem('coffer:identity-change', String(Date.now()) + Math.random()) }
   const isAdmin = computed(() => user.value?.role === 'ADMIN')
+  const isPersonal = computed(() => status.value.desktopPersonal === true)
   const passwordHint = computed(() => status.value.strongPasswordRequired ? '12–16 个字符，包含大小写字母和数字，避开常见弱口令' : '6–16 个字符')
   function validNewPassword(value: string) {
     return value.length >= (status.value.passwordMinLength ?? 6) && value.length <= 16
@@ -72,5 +73,5 @@ export const useAuthStore = defineStore('auth', () => {
     initialized.value = false
   }
 
-  return { user, status, initialized, generation, isAdmin, passwordHint, validNewPassword, bootstrap, signIn, createInitialAdmin, signOut, clear, resetWorkspace: boundary }
+  return { user, status, initialized, generation, isAdmin, isPersonal, passwordHint, validNewPassword, bootstrap, signIn, createInitialAdmin, signOut, clear, resetWorkspace: boundary }
 })

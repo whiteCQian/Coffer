@@ -20,6 +20,7 @@ public class NativeInboxService {
     private final FileStoragePort storage;
     private final InboxImportScanner scanner;
     private final DesktopDataDirectory directory;
+    private final NativeTransferService transfers;
     public record Preview(String name, long size, long modifiedMillis, String fileKey, String sha256, String targetPath) { }
 
     public Preview preview(String selectedPath) {
@@ -47,8 +48,11 @@ public class NativeInboxService {
         Path source = source(selectedPath); layout.ensureOwnerWorkspace();
         try (var input = LocalImportSource.open(source, confirmed.size(), confirmed.modifiedMillis(), confirmed.fileKey())) {
             if (!input.sha256().equals(confirmed.sha256())) throw new StorageConflictException("所选文件正文已变化，请重新预览");
+            if (storage.exists(confirmed.targetPath())) throw new StorageConflictException("收件箱目标已存在，请重新预览");
+            String transfer = transfers.begin(source, confirmed);
             storage.writeVerified(confirmed.targetPath(), input.stream(), null, confirmed.size(), confirmed.sha256());
             input.verify();
+            transfers.staged(transfer);
         } catch (IOException failure) { throw new IllegalStateException("复制到收件箱失败，来源文件已保留，请检查占用和空间", failure); }
         // No model call or formal registration here. R31 still requires the displayed final path confirmation.
         scanner.scanOnce();

@@ -13,7 +13,7 @@ import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.Objects;
 
-/** Holds one checked read-only handle and a shared lock; importing never removes the source. */
+/** Holds one checked read-only handle and a shared lock; deletion belongs to the committed handoff workflow. */
 public final class LocalImportSource implements AutoCloseable {
     private final Path path;
     private final BasicFileAttributes snapshot;

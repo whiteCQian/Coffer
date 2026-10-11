@@ -43,7 +43,7 @@ async function onPicked(e: Event) {
 </script>
 
 <template>
-  <DesktopImportPanel v-if="desktopBridge" @queued="router.push({ name: 'files' })" />
+  <DesktopImportPanel v-if="desktopBridge" />
   <section v-else class="upload-zone">
     <div class="uz-inner">
       <div class="uz-main">

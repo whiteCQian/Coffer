@@ -48,9 +48,11 @@ router.beforeEach(async (to) => {
   }
 
   if (to.path === '/login') {
+    if (auth.isPersonal) return '/'
     return auth.user ? (auth.isAdmin ? '/admin' : '/') : true
   }
   if (!auth.user) return { name: 'login', query: { redirect: to.fullPath } }
+  if (auth.isPersonal && to.meta.admin) return '/'
   if (to.meta.admin && !auth.isAdmin) return '/forbidden'
   if (auth.isAdmin && !to.meta.admin && !to.meta.shared) return to.path === '/' ? '/admin' : '/forbidden'
   return true

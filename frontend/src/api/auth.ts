@@ -10,6 +10,7 @@ export interface AuthUser {
 }
 
 export interface AuthStatus {
+  desktopPersonal?: boolean
   setupRequired: boolean
   setupAvailable: boolean
   passwordMinLength?: number

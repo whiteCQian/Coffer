@@ -67,7 +67,8 @@ async function signOut() {
       >
         <el-icon><component :is="isDark ? Sunny : Moon" /></el-icon>
       </button>
-      <button class="rail-avatar" :title="`${auth.user?.username || '用户'} · 退出登录`" @click="signOut">
+      <span v-if="auth.isPersonal" class="rail-avatar" title="本机个人文件库">我</span>
+      <button v-else class="rail-avatar" :title="`${auth.user?.username || '用户'} · 退出登录`" @click="signOut">
         {{ auth.user?.username?.slice(0, 1).toUpperCase() || 'Q' }}
       </button>
     </div>

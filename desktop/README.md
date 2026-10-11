@@ -6,13 +6,17 @@ Windows x64 安装包包含 Electron、Vue 生产资源、桌面后端 JAR 和�
 
 1. 核对安装包与同目录的 `SHA256SUMS.txt`，双击 `Coffer-0.2.1-windows-x64-setup.exe`，选择独立程序目录。安装目录必须为空或已有 Coffer 程序目录，不能是数据库/文件库目录。
 2. 启动 Coffer，明确初始化空的数据目录。默认业务数据为 `%LOCALAPPDATA%\Coffer`；窗口缓存/偏好为 `%APPDATA%\Coffer-shell`，均与程序目录分开。可选择已有原数据目录；目录、数据库或密钥缺失时不会建替代空库。
-3. 应用会提供一次性的管理员初始化凭据，无需寻找或复制主密钥。创建管理员后，再创建业务账号并切换登录；管理员与业务账号按原授权规则使用不同入口。
-4. 本地选择/拖放先展示当前账号的收件箱目标。确认后只复制，外部原件保留；正式入库路径与模型目标继续使用 R31 的确认流程。首次使用 AI 时需配置并验证自己的模型端点；模型不作为后台启动硬依赖。
+3. 桌面版仅服务于个人，打开即进入自己的文件库，无需创建管理员、注册或登录。程序内不提供账号管理或用户切换。Web/NAS 部署继续使用独立的多用户授权规则。
+4. 本地选择/拖放先展示收件箱目标，并明确提示接管会删除源文件。确认后暂存并保留来源；完成正式入库路径确认、元数据事务提交和正文 SHA-256 校验后，删除原路径文件。未确认、入库失败、源文件变化或占用时保留来源，删除失败在导入结果中显示原因。正式入库路径与模型目标继续使用 R31 的确认流程。首次使用 AI 时需配置并验证自己的模型端点；模型不作为后台启动硬依赖。
 5. 编辑通过 R33 工作副本进行。外部应用只打开受控 work 文件；先在外部应用保存并关闭文档，再回到 Coffer 提交新版本。原件变化时可另存/放弃，不能自动覆盖。
 
-卸载默认保留业务数据和密钥，重新安装可继续打开。不要把唯一数据目录或密钥当作程序缓存删除。管理员面板已提供整套静态加密备份，启动页可验证并恢复到空的新目录。标准备份必须位于独立设备；明确选择的本机加密快照不算独立介质备份。
+卸载默认保留业务数据和密钥，重新安装可继续打开。不要把唯一数据目录或密钥当作程序缓存删除。设置页提供整套静态加密备份，启动页可验证并恢复到空的新目录。标准备份必须位于独立设备；明确选择的本机加密快照不算独立介质备份。
 
 ## 升级与异常恢复
+
+个人模式保留共享后端的内部库标识及旧 `users/<id>` 存储键，只用于兼容数据库、密钥和已有引用，不提供多用户隔离或切换。已有且仅有一个业务账号的旧库自动沿用原标识；含多个业务账号的旧库会停止打开并提示先备份迁移，避免静默合并或遗失数据。
+
+文件接管记录随数据库持久化。只有正式文件和导入台账已经提交，且正式正文大小/SHA-256 与源文件预览一致时，才删除来源；通过随机同目录临时名称认领原文件并再次校验，可恢复删除中断。删除失败显示来源保留警告，停止自动重试。恢复备份后撤销待执行的外部路径删除授权，需要人工核对。此前按“复制并保留”导入的历史文件不会追溯删除。
 
 安装更新前关闭 Coffer。后端发现数据库版本不匹配时停止正常启动：旧结构需在启动页填写备份口令并明确选择“备份后升级数据库”，持有双锁时建立并读回验证整套加密回滚包，再启动 Flyway；包位于 `.upgrade-backups`。迁移或新后端健康失败时自动恢复整套旧数据，中断事务可重放，不能初始化空库替代。成功也保留加密包；它不替代独立设备副本。
 
@@ -20,28 +24,35 @@ Windows x64 安装包包含 Electron、Vue 生产资源、桌面后端 JAR 和�
 
 ## 构建与本机自动验收
 
-### 桌面后端测试一键启动
+### 桌面程序与后端一键测试启动
 
-在仓库根目录双击 `start-desktop-test.bat`，直接启动 desktop profile 的 Java 后端，默认地址 `http://127.0.0.1:8080`。它使用 H2、SQL 会话/记忆和本地文件库；不打开 Electron 或前端，不需要 Node/npm、MySQL、MinIO、Redis。控制台显示后端日志，保持窗口打开，按 Ctrl+C 停止。
+在仓库根目录双击 `start-desktop-test.bat`：打开 Electron 桌面窗口，并由桌面启动器自动启动、检查和管理捆绑 Java 后端，就绪后进入应用页面。后端使用 desktop profile、H2、SQL 会话/记忆和本地文件库；不启动 MySQL、MinIO、Redis 或 Vite。后端端口由启动器随机分配并绑定 loopback，不固定占用 8080，也不会接管已有后端。
 
-默认数据目录为 `%LOCALAPPDATA%\Coffer-desktop-backend-test`，与正式默认目录及之前的 GUI 测试目录分开。首次仅对不存在或空的测试目录自动初始化，后续复用账号、数据库、文件与密钥；不会清空非空目录或删除业务数据。首次管理员初始化令牌在该目录的 `coffer-initial-admin-token.txt`，只显示路径、不打印令牌；完成管理员初始化后按原应用规则移除该文件。日志位于数据目录的 `logs` 子目录。
+默认测试数据为 `%LOCALAPPDATA%\Coffer-desktop-test`，窗口缓存/配置为 `%APPDATA%\Coffer-shell-desktop-test`。通过明确的源码测试标志，仅对空测试目录自动初始化数据库、文件库和主密钥；随后直接进入个人文件库。再次运行自动打开已有测试数据；非空目录不会重置，旧结构升级仍需在界面填写备份口令。安装版保留原首次初始化确认规则，不启用源码测试自动初始化。
 
-后端 JAR 缺失或源文件变更时自动调用 Maven `-Pdesktop package`，不构建服务器 JAR或前端。运行优先使用捆绑 Java，其次使用 Java 17+；首次构建需要 JDK 17+ 与 Maven（或后端 wrapper）。拒绝带服务端 MinIO 依赖的 JAR；不会继承 Web/NAS 的数据库/主密钥环境配置。已有测试库遵循 desktop 启动验证及 Flyway 规则；正式数据升级继续使用原整套加密备份/回滚流程。
+控制台在桌面和后端就绪后显示实际 Java PID 与 loopback 端口，不显示能力令牌或密码。关闭桌面窗口由原启动器生命周期停止其 Java 后端；再次双击聚焦同一测试窗口。日志位于测试 shell 目录的 `launcher.log`；`test-startup-state.json` 只记录不含令牌的测试就绪/错误状态。已有后端单独测试目录和正式数据目录保持不变。
+
+资源缺失、版本/schema 不一致或后台/前端源文件更新时，脚本调用共同构建入口准备当前静态资源、desktop JAR 与捆绑 JRE；首次构建需要 Node.js 22.12+、npm、JDK 17+ 和 Maven（或 wrapper）。资源就绪后使用已准备的 Electron 与捆绑 Java。路径含空格时加引号，可通过 `-NodePath`、`-NpmPath`、`-MavenPath`、`-JavaPath` 指定开发工具。
 
 ```powershell
-# 改用独立测试端口：
-.\start-desktop-test.bat -Port 8082
-# 强制重新编译后端并启动：
+.\start-desktop-test.bat
 .\start-desktop-test.bat -Rebuild
-# 只准备后端 JAR，不启动服务：
 .\start-desktop-test.bat -PrepareOnly
-# 只读检查路径、重建和空目录初始化状态：
 .\start-desktop-test.bat -CheckOnly
-# 指定明确的测试数据目录：
-.\start-desktop-test.bat -DataDirectory "D:\Coffer Backend Test\data" -Port 8082
+.\start-desktop-test.bat -DataDirectory "D:\Coffer Test\data" -ShellDirectory "D:\Coffer Test\shell"
 ```
 
-可指定 `-JarPath`（desktop JAR）、`-JavaPath`、`-MavenPath`。端口占用时拒绝启动，不终止已有进程；测试目录不得与程序/构建目录重叠或使用链接/junction。启动失败时批处理窗口保留错误信息。需要测试完整 Electron 窗口时，另按下方桌面包构建/安装说明执行。
+### 仅测试后端服务
+
+原后端单独入口保留为 `start-desktop-backend-test.bat`。它使用独立 `%LOCALAPPDATA%\Coffer-desktop-backend-test`，默认 `http://127.0.0.1:8080`，只需要 Java，重建时需要 JDK/Maven；不会打开桌面窗口。保持控制台打开，Ctrl+C 停止。参数 `-Port`、`-JarPath`、`-JavaPath`、`-MavenPath`、`-CheckOnly`、`-PrepareOnly`、`-Rebuild` 沿用；端口占用时拒绝，不终止已有服务。
+
+```powershell
+.\start-desktop-backend-test.bat -Port 8082
+```
+
+2026-10-11 本机验证：Windows PowerShell 5.1 的完整一键脚本在两次真实 Electron/捆绑 Java 联跑中通过首次自动启动、再次打开保持数据标识/主密钥不变、桌面关闭后 Java 退出。10 项 Node 回归通过，包括空目录自动启动、已初始化/非空目录拒绝重置和安装版不启用测试初始化。原始状态/数据仅保留在被忽略的 `.test-tmp/combined-desktop-*` 中。
+
+同日个人模式修正验证：33 项针对性后端回归通过，覆盖免登录单库、账号接口关闭、Web 权限回归、正式入库后删除来源、来源变化/占用/暂存失败时保留，以及恢复后撤销外部删除授权。真实打包程序通过选择/拖放、入库接管、工作副本保存/下载、后端重启和父进程退出检查；个人库的静态加密备份及空目录恢复通过，核对文件 SHA-256、原密钥、库标识和未完成工作副本。证据保存在本地被忽略的 `.test-tmp/desktop-personal-*.log` 和 `personal-packaged-*`、`personal-backup-*`；测试仅使用隔离目录和样本。
 
 构建需要 Java 17+、Maven 和 Node 22.12+。运行 `npm ci --prefix desktop`，然后：
 
@@ -63,7 +74,7 @@ Electron 44 使用按需二进制安装，`npm ci` 本身不保证 `electron.exe
 powershell -NoProfile -ExecutionPolicy Bypass -File .\verify-desktop-clean-windows.ps1 -InstallerPath .\Coffer-0.2.1-windows-x64-setup.exe -TestUninstall
 ```
 
-脚本检查安装包/资源校验、真实后台归属、普通本地请求 403、原件保留和卸载后数据库/密钥不变；实际 UI 核心闭环需操作者完成并明确填写 PASS，机器基线与结果写入 `acceptance.json`。本轮按用户选择先交付包和脚本，没有把本机隔离测试声明为外机干净 Windows 验收。
+脚本检查安装包/资源校验、真实后台归属、普通本地请求 403、确认入库后删除样本来源和卸载后数据库/密钥不变；实际 UI 核心闭环需操作者完成并明确填写 PASS，机器基线与结果写入 `acceptance.json`。本轮按用户选择先交付包和脚本，没有把本机隔离测试声明为外机干净 Windows 验收。
 
 安全配置依据 [Electron 安全指南](https://www.electronjs.org/docs/latest/tutorial/security/) 和 [IPC 指南](https://www.electronjs.org/docs/latest/tutorial/ipc)：renderer 禁用 Node、启用 context isolation/sandbox，来源验证及能力令牌由主进程负责。安装/卸载挂点见 [electron-builder NSIS 文档](https://www.electron.build/docs/nsis/)。JRE 来源与许可证见 [Adoptium](https://adoptium.net/temurin/releases/) 及包内 `runtime/legal`。
 

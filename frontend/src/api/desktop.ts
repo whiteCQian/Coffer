@@ -7,7 +7,6 @@ declare global {
   interface Window {
     cofferDesktop?: {
       status(): Promise<DesktopStatus>
-      setupToken(): Promise<string>
       selectFiles(): Promise<NativeSelection[]>
       previewDroppedFiles(files: File[]): Promise<NativeSelection[]>
       commitInbox(items: { id: string; targetPath: string }[]): Promise<NativeReceipt[]>

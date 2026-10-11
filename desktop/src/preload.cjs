@@ -10,7 +10,6 @@ contextBridge.exposeInMainWorld('cofferDesktop',Object.freeze({
   createBackup:options=>ipcRenderer.invoke('coffer:create-backup',options),
   chooseRestore:()=>ipcRenderer.invoke('coffer:choose-restore'),
   restoreBackup:password=>ipcRenderer.invoke('coffer:restore-backup',password),
-  setupToken:()=>ipcRenderer.invoke('coffer:setup-token'),
   selectFiles:()=>ipcRenderer.invoke('coffer:select-files'),
   previewDroppedFiles:files=>{
     if(!Array.isArray(files) || files.length<1 || files.length>20) return Promise.reject(new Error('一次最多选择 20 个文件'));

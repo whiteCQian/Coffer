@@ -2,6 +2,8 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import AccountPanel from '@/components/AccountPanel.vue'
+import DesktopBackupPanel from '@/components/DesktopBackupPanel.vue'
+import { desktopBridge } from '@/api/desktop'
 import ModelPrivacyPanel from '@/components/ModelPrivacyPanel.vue'
 import PrivacyPanel from '@/components/PrivacyPanel.vue'
 import {
@@ -360,14 +362,15 @@ onMounted(load)
 
       <section class="pg-panel about-panel">
         <h2 class="panel-title">关于 Coffer</h2>
-        <div class="brand"><div class="brand-mark">智</div><div><h3 class="brand-name">Coffer · 智能文件管家</h3><p class="brand-desc">面向个人与团队的文件存储：AI 读取内容、自动归类打标，你只需确认标签，让检索像聊天一样自然。</p></div></div>
+        <div class="brand"><div class="brand-mark">智</div><div><h3 class="brand-name">Coffer · 智能文件管家</h3><p class="brand-desc">{{ desktopBridge ? '管理自己的本机文件库：AI 读取内容、自动归类打标，让检索像聊天一样自然。' : '面向个人与团队的文件存储：AI 读取内容、自动归类打标，你只需确认标签，让检索像聊天一样自然。' }}</p></div></div>
         <dl class="kv-list">
           <div class="kv"><dt class="kv-label">前端</dt><dd class="kv-value">Vue 3 · TypeScript · Vite · Element Plus</dd></div>
-          <div class="kv"><dt class="kv-label">后端</dt><dd class="kv-value">Spring Boot · LangChain4j · MinIO</dd></div>
-          <div class="kv"><dt class="kv-label">模式</dt><dd class="kv-value">多账号私有工作区</dd></div>
+          <div class="kv"><dt class="kv-label">后端</dt><dd class="kv-value">{{ desktopBridge ? 'Spring Boot · LangChain4j · H2 · 本地文件库' : 'Spring Boot · LangChain4j · MinIO' }}</dd></div>
+          <div class="kv"><dt class="kv-label">模式</dt><dd class="kv-value">{{ desktopBridge ? '本机个人文件库（无需账号）' : '多账号私有工作区' }}</dd></div>
         </dl>
       </section>
-      <AccountPanel />
+      <AccountPanel v-if="!desktopBridge" />
+      <DesktopBackupPanel v-else />
       <ModelPrivacyPanel />
       <PrivacyPanel />
     </div>

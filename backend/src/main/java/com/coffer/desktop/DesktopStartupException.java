@@ -24,6 +24,8 @@ public final class DesktopStartupException extends IllegalStateException {
         UPGRADE_BACKUP_FAILED("升级备份失败，请关闭外部应用并检查空间与权限；数据库尚未迁移"),
         DOWNGRADE_REFUSED("数据库版本较新，不能降级写入，请使用兼容安装包"),
         UPGRADE_RECOVERY_REQUIRED("检测到未完成升级，必须先恢复整套旧数据；不会启动混合数据或创建空库"),
+        MULTIPLE_LEGACY_OWNERS("旧文件库包含多个业务账号，请先备份并迁移为个人文件库；原数据保留"),
+        LEGACY_OWNER_DISABLED("旧文件库的业务账号已停用，请先恢复原个人文件库"),
         IO_FAILED("桌面数据目录读写失败，请检查目录权限和可用空间");
         final String message;
         Reason(String message) { this.message = message; }

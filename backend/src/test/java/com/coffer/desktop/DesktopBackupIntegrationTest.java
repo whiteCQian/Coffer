@@ -90,6 +90,25 @@ class DesktopBackupIntegrationTest {
             Path target=temp.resolve("reject-"+UUID.randomUUID());assertThatThrownBy(()->service.restore(malformed,PASSWORD,target)).isInstanceOf(Exception.class);assertThat(target).doesNotExist();
         }
     }
+    @Test void restoredPendingHandoffNeverDeletesAnExternalPathOnTheRecoveryMachine() throws Exception {
+        Path source=temp.resolve("source");var sample=seed(source);
+        Path external=Files.writeString(temp.resolve("pending-source.txt"),"keep-after-restore");
+        try(var context=start(source,false)) {
+            TenantContext.set(sample.ownerA());var inbox=context.getBean(NativeInboxService.class);
+            inbox.commit(external.toString(),inbox.preview(external.toString()));
+            assertThat(context.getBean(org.springframework.jdbc.core.JdbcTemplate.class).queryForObject("SELECT state FROM desktop_native_transfer",String.class)).isEqualTo("STAGED");
+        }
+        var service=new DesktopBackupService();Path media=Files.createDirectory(temp.resolve("handoff-snapshots"));
+        var backup=service.backup(source,source.resolve("library"),media,PASSWORD,true,Map.of());Path target=temp.resolve("restored");
+        service.restore(Path.of(backup.packagePath()),PASSWORD,target);
+        try(var restored=start(target,false)) {
+            TenantContext.set(sample.ownerA());restored.getBean(NativeTransferService.class).recover();
+            var jdbc=restored.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+            assertThat(jdbc.queryForObject("SELECT state FROM desktop_native_transfer",String.class)).isEqualTo("RETAINED");
+            assertThat(jdbc.queryForObject("SELECT last_error FROM desktop_native_transfer",String.class)).contains("恢复后不自动删除");
+            assertThat(external).hasContent("keep-after-restore");
+        }
+    }
     @Test void normalBackupRejectsSamePhysicalMediaAndRestoreRejectsNonemptyDestination() throws Exception {
         Path source=temp.resolve("source");seed(source);var service=new DesktopBackupService();Path media=Files.createDirectory(temp.resolve("same-disk"));
         assertThatThrownBy(()->service.backup(source,source.resolve("library"),media,PASSWORD,false,Map.of())).hasMessageContaining("INDEPENDENT_MEDIA_REQUIRED");

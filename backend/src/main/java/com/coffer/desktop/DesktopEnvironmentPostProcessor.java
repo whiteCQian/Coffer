@@ -32,6 +32,7 @@ public final class DesktopEnvironmentPostProcessor implements EnvironmentPostPro
             if (library.normalize().startsWith(install.toAbsolutePath().normalize())) throw new IllegalArgumentException();
         } catch (Exception invalid) { throw new DesktopStartupException(INVALID_DIRECTORY); }
         Map<String, Object> fixed = new LinkedHashMap<>();
+        if (env.getProperty("coffer.desktop.shell", Boolean.class, false)) fixed.put("coffer.desktop.personal", true);
         fixed.put("coffer.desktop.data-directory", root.toString());
         fixed.put("coffer.storage.local.root", library.normalize().toString());
         fixed.put("coffer.import.inbox.directory", library.normalize().resolve("users/{ownerId}/inbox").toString());
