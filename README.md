@@ -1,168 +1,78 @@
-# Coffer · AI 智能文件管家
+# Coffer · AI 文件管家
 
-> **状态说明：**本 README 描述当前工作区的本机 Web 启动方式；它不代表最终产品合同。最终交付要求 Windows 桌面、服务器 Web、飞牛 OS NAS 三种形态、多账号隔离和独立数据。目标架构是桌面版使用本地文件库且不依赖 MinIO，Web/NAS 保留各自独立的 MinIO 对象存储。请以[最终落地计划](docs/plans/AgentFS最终落地执行计划.md)、[ADR-001](docs/decisions/ADR-001-最终产品合同与存储架构.md)和[需求追踪矩阵](docs/plans/需求追踪矩阵.md)作为目标口径。
->
-基于 AI Agent 的智能文件存储管理系统。核心闭环：**文件上传 → 异步 AI 解析/打标/摘要 → 标签人工确认 → 自然语言对话搜索（工具调用 + 会话记忆）**。附带多模态图片理解（Qwen-VL）与文件分类归档。
+Coffer 用来保存、整理和查找文件：导入或上传后解析内容、生成摘要和标签，用户确认整理结果后归档，并可从操作记录核对或撤销。
 
-Web/NAS 生产构建与安装入口见 [生产发布说明](deploy/README.md)：静态 Vue + HTTPS 代理、独立 MySQL/MinIO 持久卷、可重建的可选 Redis、最小权限账号、镜像摘要与备份恢复检查。生产会话记忆使用 MySQL；下方 Vite/本机旧 MinIO 启动流程仅用于本地运行。目标授权、容器安装和服务器验收未完成前，不视为生产交付完成。prod 必须显式配置 `COFFER_DB_URL`、`MYSQL_USERNAME`、`MYSQL_PASSWORD`，不再默认使用 localhost/root。
+Windows 桌面版是免登录的个人文件库；Web/NAS 是独立部署的多用户服务。各实例的数据、密钥和备份彼此独立。
 
-Web 安全和容量实现及验收见 [R42](docs/plans/R42-Web安全与容量验收.md)：服务间证书校验、持久限流、8h 绝对会话期限、账号存储/任务限额与实际 MinIO 卷预警。账号密码仅限制长度为 8–16 个字符，不要求大小写字母、数字或符号组合，也不拦截常见弱口令。
+当前源码、历史测试结果与尚未完成的发布验收分别记录在[进度与问题](docs/进度与问题.md)和[验收索引](docs/验收索引.md)。
 
-## 目录结构
+## 从哪里开始
 
-```
-Coffer/
-├── backend/              # 后端 Spring Boot（Java / Maven）
-│   ├── src/              # main + test
-│   ├── pom.xml
-├── frontend/             # 前端 Vue3 + Element Plus（Vite）
-│   ├── src/              # 页面 / 组件 / Pinia store / 路由
-│   └── node_modules/     # 依赖（缺失时 start-all.bat 首次会自动 npm install）
-├── desktop/              # Electron 桌面应用、打包配置与测试
-├── docs/                 # 接口、架构、计划、使用说明与历史资料
-├── scripts/              # 启动、构建、备份与验收脚本
-├── logs/                 # 运行日志；archive/ 按整理日期保存历史测试日志
-├── data/                 # 本地 H2 数据（不纳入 Git）
-├── .coffer-runtime/      # 进程状态、Redis 数据与本地运行产物（不纳入 Git）
-├── start-all.bat         # 一键启动（推荐）
-├── stop-all.bat          # 停止后端与前端
-└── README.md
-```
+- 普通用户：阅读[使用与部署](docs/使用与部署.md)，选择 Windows 或 Web/NAS 章节。
+- 开发者：阅读[开发说明](docs/开发说明.md)，了解模块、构建、测试与 API 契约。
+- 查看范围：[产品说明](docs/产品说明.md)。
+- 确定下一步：[进度与问题](docs/进度与问题.md)。
+- 核对过去的结果：[验收索引](docs/验收索引.md)。
 
-完整分类与历史日志位置见[项目目录说明](docs/guides/目录说明.md)。
+这六份文件是工程内的完整说明入口；实现状态只在“进度与问题”维护。
 
-## 一键启动（推荐）
+## Windows 桌面用户
 
-> 依赖前置：JDK 17+、Node 20+；当后端 jar 需要重建时，还需 Maven 3.9.x 和可用的 Maven 依赖缓存/网络。脚本会复用或启动 MySQL(3306)、Redis 8(6379) 与 MinIO(9000/9001)。MySQL、Redis、MinIO 的凭据从环境变量或本地忽略文件读取。
+安装包包含 Electron、静态前端、后端和捆绑 JRE，无需自行安装 Java、Node、MySQL、Redis 或 MinIO。
 
-在 `Coffer` 根目录**双击**：
+首次打开，选择文件库位置并完成两步创建引导；以后直接进入个人文件库。安装程序与业务数据使用不同目录，卸载默认保留数据。
 
-| 脚本 | 作用 |
-|---|---|
-| `start-all.bat` | 检查 JDK/Node，jar 过期时自动构建；复用或启动 Redis 8 与 MinIO；以 **prod 配置**启动后端并等待 `/actuator/health` 为 UP；启动前端 Vite 并检查首页；最后打开浏览器。服务仅监听 `127.0.0.1`。 |
-| `stop-all.bat` | 只停止当前工作区记录的后端/前端 PID，并校验进程路径和启动时间；**保留** MySQL、Redis 与 MinIO。 |
+不要把源码测试启动脚本当成正式安装包。首次使用、接管来源文件、工作副本和备份恢复见[Windows 使用](docs/使用与部署.md#windows)。
 
-批处理入口调用 `scripts/start-coffer.ps1` 与 `scripts/stop-coffer.ps1`。启动脚本会从 `JAVA_HOME`、`COFFER_JAVA_HOME` 和已安装 JDK 中选择 Java 17+；本机 Java 版本低于要求时不会误用。Redis、MinIO 的非默认路径可通过本地 `coffer-local.cmd` 设置 `COFFER_REDIS_EXE`、`COFFER_MINIO_EXE`、`COFFER_MINIO_DATA` 和 `COFFER_MINIO_CONFIG_DIR`。
+## Web / NAS 用户与维护者
 
-首次启动会生成 AES-GCM 主密钥文件 `.coffer-encryption-key`（若 `COFFER_SECRET_KEY` 已配置则沿用），以及一次性管理员初始化令牌 `coffer-initial-admin-token.txt`。在登录页完成管理员初始化后，下一次启动会清除令牌文件。请备份并妥善保管主密钥；丢失后无法解密已保存的模型凭据。运行日志在 `logs/`，受管进程状态在 `.coffer-runtime/`，这些本地文件均已排除在 Git 外。
+普通用户使用维护者提供的 HTTPS 地址登录；管理员建立账号并维护服务设置。
 
-启动成功后访问：
+正式部署使用 `deploy/` 的静态前端、MySQL、私有对象存储和 TLS 配置。Redis 为可选索引依赖，部署与整套恢复按[Web/NAS 操作说明](docs/使用与部署.md#web-nas)执行。
 
-- 前端：http://localhost:5173/
-- 后端 API / Knife4j 文档：http://localhost:8080/doc.html
+本地演练、CI 成功和真实目标环境验收分别登记，不互相替代。
 
-### 模型密钥配置
+## 源码启动
 
-首次启动时，从 `coffer-initial-admin-token.txt` 复制令牌并在前端完成管理员初始化；管理员创建普通用户后，普通用户可登录并进入「设置」页面配置模型目标。密钥只会提交到后端，后端使用 AES-GCM 加密后保存到数据库，前端不会回显密钥。
+下面命令在 `Coffer` 根目录执行。开发工具与构建前置条件见[开发环境](docs/开发说明.md#development)。
 
-本地启动需要基础设施凭据。可在不纳入 Git 的 `coffer-local.cmd` 中配置，或设置为当前用户/机器环境变量：
+本机 Web：
 
 ```powershell
-$env:MYSQL_PASSWORD = "replace-with-mysql-password"
-$env:MINIO_ROOT_USER = "replace-with-minio-user"
-$env:MINIO_ROOT_PASSWORD = "replace-with-minio-password"
+.\start-all.bat
+.\stop-all.bat
 ```
 
-启动脚本只读取 `coffer-local.cmd`，不会覆盖该文件；若没有其他来源的 `COFFER_SECRET_KEY`，会在项目根目录单独创建 `.coffer-encryption-key`。本机 loopback 运行默认将 `COFFER_COOKIE_SECURE` 设为 `false`，生产部署必须使用 HTTPS 并启用 Secure Cookie。
-
-> 说明：端口已被占用时，脚本会复用已运行的 Redis/MinIO；8080 和 5173 则分别做健康/API 与前端首页检查。缺少前端依赖时会使用 `npm ci` 或 `pnpm install`，完成后直接用 Node 启动 Vite。脚本不会按进程名批量杀进程。
-
-> **数据持久化说明（重要）**：`start-all.bat` 以后端 `prod` 配置启动，必须显式配置 `COFFER_DB_URL`、`MYSQL_USERNAME`、`MYSQL_PASSWORD`。本机入口的 Flyway 会在启动时运行数据库迁移，旧的无 owner 数据不会分配给新账号，也不会被启动脚本删除；生产 Compose 则使用独立迁移账号和一次性迁移服务。正式迁移前仍需遵循[最终落地计划](docs/plans/AgentFS最终落地执行计划.md)完成快照和旧数据清理审批。测试环境使用独立内存 H2。旧 `docs/archive/sql/fulltext_search.sql` 仅作为历史参考，不再作为正式迁移入口。
-
-## 技术栈
-
-| 层 | 技术 |
-|---|---|
-| 后端 | Spring Boot 3.5.13 / Java 17+（本机以 JDK 25 编译）/ Maven 3.9.x |
-| 前端 | Vue 3.5 + TypeScript + Element Plus / Vite |
-| AI 编排 | LangChain4j 1.18.1 `AiServices`（`@Tool` 工具 + 原生 `ChatMemory`） |
-| 对话模型 | DeepSeek（OpenAI 兼容，chat + streaming） |
-| 多模态 | Qwen-VL（DashScope，图片分析） |
-| 存储 | MinIO（私有对象存储，鉴权 API 读取）；prod 会话记忆由 MySQL 持久化，Redis 为可选向量缓存；dev 会话记忆仍使用 Redis |
-| 数据库 | dev = H2 文件库；test = H2 内存库；prod = MySQL 8 + Flyway + FULLTEXT（ngram 中文检索） |
-| 接口文档 | Knife4j / OpenAPI（`/doc.html`） |
-
-### Hybrid 检索运维说明
-
-Hybrid 检索默认关闭；启用时设置 `COFFER_EMBEDDING_ENABLED=true` 和
-`COFFER_HYBRID_ENABLED=true`。向量存储使用 Redis 8 原生 Vector Set（`VADD`、`VSIM`、
-`VREM`），词法路仍保留 MySQL FULLTEXT → LIKE 兜底。查询向量路默认最多等待 1500ms，
-超时会直接返回词法召回结果。
-
-文件删除后的向量清理由数据库任务表持久化并自动重试。Redis 丢失或需要全量恢复时，
-调用 `POST /api/vector/reindex` 创建异步重建任务，再用
-`GET /api/vector/reindex/{jobId}` 查询进度；重建写入临时 generation，校验后切换活动
-generation，不会先清空当前可用索引。
-
-## 手动启动（备用）
-
-> 依赖前置：JDK 17+、Maven 3.9、Node 20+；启动后端前需先启动当前实现使用的 MinIO 与 Redis（配置说明见本 README）。日常使用推荐上方的 `start-all.bat`。最终交付架构以[最终落地计划](docs/plans/AgentFS最终落地执行计划.md)为准。
-
-### 后端（端口 8080；持久化请用 prod，见下方说明）
-
-```bash
-cd backend
-# 首次需联网拉依赖；已缓存可加 -o
-mvn package -DskipTests
-# 持久化运行：连接本机 MySQL coffer 库（等价 start-all.bat 的启动方式）
-java -jar target/coffer-backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=prod
-# 本地开发：不加参数走默认 dev（H2 文件库）
-java -jar target/coffer-backend-0.0.1-SNAPSHOT.jar
-# 健康检查
-curl http://localhost:8080/actuator/health   # → {"status":"UP"}
-```
-
-### 前端（Vite dev，端口 5173）
-
-```bash
-cd frontend
-npm install     # 首次
-npm run dev     # http://localhost:5173 （/api 已代理到 8080）
-```
-
-## 桌面后端（R30）
-
-独立 `desktop` Profile 使用本地文件库与单进程 H2，对话记忆保存在数据库；无需 MySQL、Redis 或 MinIO 服务。默认数据目录为 `%LOCALAPPDATA%\Coffer`，与程序安装目录分离。首次空目录初始化生成本机密钥和文件库 UUID；后续启动校验数据库/文件库/密钥绑定，任何必需项缺失均拒绝创建替代空库。
+桌面程序与其后端：
 
 ```powershell
-mvn -f backend/pom.xml -Pdesktop package
-# 首次明确初始化；之后不再带 -Initialize
-./scripts/start-desktop.ps1 -JavaPath '<Java17+目录>/bin/java.exe' -Initialize
-./scripts/start-desktop.ps1 -JavaPath '<Java17+目录>/bin/java.exe'
+.\scripts\start-desktop-test.bat
+# 只核对资源和版本，不启动程序：
+.\scripts\start-desktop-test.bat -CheckOnly
 ```
 
-可通过 `-UserDataDir` 指定另一绝对路径。桌面产物位于 `backend/target/desktop/`，与服务端产物分开。当前入口是桌面后端；Electron/JRE 安装包归 R34，整套加密备份与恢复归 R35。主密钥须与数据库、library 及标识文件一起保存。详见 [R30 配置、运行与验收](docs/plans/R30-桌面生产Profile与数据目录验收.md)。
+仅桌面后端：
 
-## 端口一览
+```powershell
+.\scripts\start-desktop-backend-test.bat -Port 8082
+```
 
-| 端口 | 服务 |
-|---|---|
-| 5173 | 前端 Vite dev |
-| 8080 | 后端 API / 受限健康端点（生产关闭 API 调试文档） |
-| 9000 / 9001 | MinIO API / 控制台 |
-| 6379 | Redis |
+桌面测试入口使用独立测试数据目录；Web 启动入口会使用本机配置的服务与数据库。详细位置和参数见[源码测试](docs/使用与部署.md#source-test)。
 
-## 文档索引
+## 目录导航
 
-- [项目总览](docs/项目总览.md)
-- [需求与范围清单](docs/需求与范围清单.md)
-- [架构图与模块关系](docs/架构图与模块关系.md)
-- [已知问题与技术债务](docs/已知问题与技术债务.md)
-- [最终落地执行计划](docs/plans/AgentFS最终落地执行计划.md)
-- [R26 隐私、错误、运行状态与密钥轮换](docs/plans/R26-隐私错误与运行状态验收.md)
-- [R30 桌面生产 Profile 与数据目录](docs/plans/R30-桌面生产Profile与数据目录验收.md)
-- [R31 本地安全导入](docs/plans/R31-本地安全导入验收.md)
-- [R32 本地治理、撤销与恢复](docs/plans/R32-本地治理撤销与恢复验收.md)
-- [R33 工作副本编辑与冲突](docs/plans/R33-工作副本编辑与冲突验收.md)
-- [R34 Electron 启动器与安装包](docs/plans/R34-Electron启动器与安装包验收.md)
-- [R35 桌面备份、恢复与升级](docs/plans/R35-桌面备份恢复与升级验收.md)
-- [Windows 桌面版安装与使用](desktop/README.md)
-- [需求追踪矩阵](docs/plans/需求追踪矩阵.md)
-- [M0 存量数据保护记录](docs/plans/M0-存量数据盘点与保护记录.md)
-- [最终产品合同 ADR-001](docs/decisions/ADR-001-最终产品合同与存储架构.md)
-- [选题报告范围变更说明](docs/product/选题报告范围变更说明.md)
-- [API 契约](docs/api/api-contract.md)
-- [代码 Wiki（当前实现快照）](docs/architecture/Code-Wiki.md)
-- [历史方案与交接材料归档](docs/archive/legacy/README.md)
-- `backend/src/main/resources/db/migration/mysql/` —— prod MySQL Flyway 迁移脚本（含 FULLTEXT 索引）
-- `backend/src/main/resources/db/migration/h2/` —— dev/test H2 Flyway 迁移脚本
+- `backend/`：Spring Boot 后端、测试与 Flyway 迁移。
+- `frontend/`：Vue 页面、API 客户端与浏览器测试。
+- `desktop/`：Electron 启动器、原生桥、安装资源及打包测试。
+- `deploy/`：Web/NAS 镜像、Compose 和维护工具。
+- `scripts/`：启动、停止、构建、备份及验收入口。
+- `assets/`：品牌原始资源。
+- `docs/`：五份主题说明，无额外分类子目录。
+
+`data/`、`backend/data/`、`logs/`、`.coffer-runtime/` 保留现有运行位置。`node_modules/`、`target/`、`dist/`、`.build/`、`.test-tmp/` 等服从依赖、构建和测试工具约定。
+
+## 项目外资料
+
+本机学术原件、历史验收原文、UX 证据和整理前快照集中在[资料目录](../Coffer资料/)。它们不属于公开工程文档，也不自动进入 Git。
+
+修改说明时直接更新对应主题；新增阶段测试结果写入验收索引，新问题写入进度文件。

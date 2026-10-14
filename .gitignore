@@ -35,9 +35,10 @@ backend/data/
 # Office temporary lock files
 ~$*.docx
 
-# Original academic reports stay local; the GitHub repository is public.
-docs/product/*.docx
-docs/archive/legacy/*.docx
+# Academic originals live in the sibling Coffer资料 directory, outside this public repository.
+# Prevent accidentally adding a new academic report to the flattened docs directory.
+/docs/*.docx
+/docs/**/*.docx
 
 # Locally generated launcher secrets; never commit these.
 *-local.cmd
