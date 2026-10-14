@@ -2,7 +2,7 @@
 import { Search } from '@element-plus/icons-vue'
 import { ref } from 'vue'
 
-import { searchFiles } from '@/api/files'
+import { searchFiles, fileDownloadUrl } from '@/api/files'
 import type { FileListResponse } from '@/api/types'
 import FileDetailDrawer from '@/components/FileDetailDrawer.vue'
 import FileTile from '@/components/FileTile.vue'
@@ -146,6 +146,7 @@ function uploadTimeOf(f: FileListResponse) {
               </div>
             </div>
             <div class="row-side">
+              <a class="row-download" :href="fileDownloadUrl(f.id)" :download="f.fileName" :aria-label="`下载 ${f.fileName}`" @click.stop @keydown.stop>下载</a>
               <span class="row-state" :class="`is-${String(f.status).toLowerCase()}`">
                 {{ STATUS_LABEL[f.status ?? ''] ?? '—' }}
               </span>
@@ -367,6 +368,8 @@ function uploadTimeOf(f: FileListResponse) {
   align-items: center;
   gap: 14px;
 }
+.row-download { color: var(--accent); font-size: 12px; text-decoration: none; white-space: nowrap; }
+.row-download:hover { text-decoration: underline; }
 .row-state {
   font-size: 12px;
   color: var(--text-3);

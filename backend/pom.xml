@@ -319,6 +319,7 @@
                         <configuration>
                             <excludes>
                                 <exclude>**/service/MinioStorageService.java</exclude>
+                                <exclude>**/service/MinioAccountObjectPurger.java</exclude>
                                 <exclude>**/config/MinioConfig.java</exclude>
                                 <exclude>**/config/BucketInitializer.java</exclude>
                                 <exclude>**/config/MinioStorageHealthIndicator.java</exclude>

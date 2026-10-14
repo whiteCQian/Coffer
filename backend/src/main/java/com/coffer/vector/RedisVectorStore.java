@@ -160,6 +160,17 @@ public class RedisVectorStore {
         return generation == null || generation.isBlank() ? null : generation;
     }
 
+    /** Atomically isolate incompatible model/dimension indexes, preserving owner scope. */
+    public String prepareEmbeddingIndex(String version) {
+        if (version == null || !version.matches("[0-9a-f]{64}")) throw new IllegalArgumentException("向量版本无效");
+        var script = new org.springframework.data.redis.core.script.DefaultRedisScript<String>(
+                "if redis.call('GET',KEYS[1]) ~= ARGV[1] or not redis.call('GET',KEYS[2]) then "
+                        + "redis.call('SET',KEYS[1],ARGV[1]); redis.call('SET',KEYS[2],ARGV[2]); end; "
+                        + "return redis.call('GET',KEYS[2])", String.class);
+        return redisTemplate.execute(script, List.of(ownerPrefix() + "embedding-version", ownerPrefix() + "active-generation"),
+                version, "embedding-" + version);
+    }
+
     public void setActiveGeneration(String generation) {
         generationPrefix(generation);
         if (generation == null) throw new IllegalArgumentException("generation 不能为空");

@@ -4,9 +4,12 @@ import com.coffer.auth.domain.AppUser;
 
 import java.time.LocalDateTime;
 
-public record AuthUserResponse(Long id, String username, String role, boolean enabled, LocalDateTime createdAt) {
+public record AuthUserResponse(Long id, String username, String role, boolean enabled, LocalDateTime createdAt, String deletionStatus) {
+    public AuthUserResponse(Long id, String username, String role, boolean enabled, LocalDateTime createdAt) {
+        this(id, username, role, enabled, createdAt, null);
+    }
     public static AuthUserResponse from(AppUser user) {
         return new AuthUserResponse(user.getId(), user.getUsername(), user.getRole().name(),
-                user.isEnabled(), user.getCreatedAt());
+                user.isEnabled(), user.getCreatedAt(), user.getDeletionStatus());
     }
 }

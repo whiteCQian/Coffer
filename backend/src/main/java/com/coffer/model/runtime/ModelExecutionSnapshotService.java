@@ -31,7 +31,12 @@ public class ModelExecutionSnapshotService {
     private Material material() {
         authorization.requireOwner();
         GovernanceRunMode mode = modes.requireActiveMode();
-        return new Material(mode, Arrays.stream(ModelRuntimeCapability.values()).map(c -> configuration.resolve(mode, c)).toList());
+        return materialFor(mode);
+    }
+    private Material materialFor(GovernanceRunMode mode) {
+        return new Material(mode, Arrays.stream(ModelRuntimeCapability.values())
+                .filter(c -> c != ModelRuntimeCapability.EMBEDDING || configuration.embeddingAvailable(mode))
+                .map(c -> configuration.resolve(mode, c)).toList());
     }
     public TargetPreview preview() { return view(material()); }
     /** A queued task must not keep sending to a destination after the owner changes model settings. */
@@ -39,9 +44,7 @@ public class ModelExecutionSnapshotService {
         var status = modes.status();
         if (snapshot == null || status.getActiveMode() != snapshot.mode()
                 || !status.isCurrentModeValidated()) throw new ModelConsentRequiredException();
-        Material current = new Material(status.getActiveMode(),
-                Arrays.stream(ModelRuntimeCapability.values())
-                        .map(capability -> configuration.resolve(status.getActiveMode(), capability)).toList());
+        Material current = materialFor(status.getActiveMode());
         if (!version(current).equals(snapshot.version())) throw new ModelConsentRequiredException();
     }
     private TargetPreview view(Material material) {

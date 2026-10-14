@@ -41,11 +41,13 @@ public class VectorReindexService {
     @Value("${coffer.vector-store.reindex.page-size:100}") private int pageSize;
     @Autowired @Qualifier("vectorIndexExecutor") private Executor vectorExecutor;
     @Autowired private com.coffer.model.runtime.ModelExecutionSnapshotService snapshots;
+    @Autowired private com.coffer.model.runtime.AdminEmbeddingService adminEmbedding;
 
     @Transactional
     @com.coffer.auth.service.OwnerOnly
     public VectorReindexJob start() {
-        if (!embeddingProperties.isEnabled()) {
+        var snapshot = com.coffer.model.runtime.ModelExecutionContext.current();
+        if (adminEmbedding != null ? snapshot == null || !adminEmbedding.isAvailable(snapshot.mode()) : !embeddingProperties.isEnabled()) {
             throw new IllegalStateException("Embedding 未启用，无法执行向量重建");
         }
         var running = jobs.findByStatus(VectorReindexStatus.RUNNING);
@@ -105,6 +107,10 @@ public class VectorReindexService {
         var indexedFiles = new java.util.ArrayList<FileMetadata>();
         int page = 0;
         try {
+            if (adminEmbedding != null) {
+                snapshots.requireCurrent(com.coffer.model.runtime.ModelExecutionContext.require());
+                store.prepareEmbeddingIndex(adminEmbedding.indexVersion());
+            }
             while (true) {
                 var batch = files.findByStatus(FileStatus.COMPLETED,
                         PageRequest.of(page++, pageSize, Sort.by(Sort.Direction.ASC, "id"))).getContent();
@@ -125,6 +131,7 @@ public class VectorReindexService {
                 }
             }
             if (job.getSuccessCount() > 0 && isValidGeneration(generation)) {
+                if (adminEmbedding != null) snapshots.requireCurrent(com.coffer.model.runtime.ModelExecutionContext.require());
                 store.setActiveGeneration(generation);
                 indexedFiles.forEach(file -> {
                     file.setVectorIndexGeneration(generation);
@@ -176,7 +183,7 @@ public class VectorReindexService {
     private boolean isValidGeneration(String generation) {
         if (!store.hasGeneration(generation)) return false;
         Long actual = store.dimension(generation);
-        return actual != null && embeddingProperties.getDimensions() != null
-                && actual == embeddingProperties.getDimensions().longValue();
+        Integer dimensions = adminEmbedding == null ? embeddingProperties.getDimensions() : adminEmbedding.dimensions();
+        return actual != null && dimensions != null && actual == dimensions.longValue();
     }
 }

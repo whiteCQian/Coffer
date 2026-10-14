@@ -26,7 +26,7 @@ const files = () => [
 const modeStatus = { activeMode: 'API', currentModeValidated: true, validatedModes: { API: true, LOCAL: false }, validatedAt: { API: '2026-10-10T10:00:00', LOCAL: null }, validationSuccess: true, capabilities: { chat: 'OK', vision: 'OK', embedding: 'DISABLED' } }
 await page.route('http://127.0.0.1:5177/api/**', async route => {
   const url = new URL(route.request().url()), path = url.pathname.slice(4), method = route.request().method()
-  requests.push({ path, method })
+  requests.push({ path, method, version: route.request().headers()['x-coffer-model-version'] })
   let data = []
   if (path === '/auth/csrf') data = 'fixture-csrf'
   else if (path === '/auth/status') data = { setupRequired: false, setupAvailable: false, desktopPersonal: false, passwordMinLength: 8, strongPasswordRequired: false, storageQuotaEnabled: true }
@@ -62,6 +62,7 @@ await page.route('http://127.0.0.1:5177/api/**', async route => {
     const file = files().find(file => file.id === Number(path.split('/').pop()))
     data = { ...file, revision: 1, previewUrl: null, confirmedTags: file.tags.filter(t => t.confirmationStatus === 'CONFIRMED'), pendingTags: file.tags.filter(t => t.confirmationStatus === 'PENDING_CONFIRMATION') }
   } else if (path === '/governance/operations' || path === '/governance/operations/items') data = { content: [], totalElements: 0, totalPages: 0 }
+  else if (path === '/admin/embedding') data = { mode: 'API', baseUrl: '', modelName: '', dimensions: 1024, configured: false, enabled: false, validatedAt: null }
   else if (path === '/admin/users') data = [user]
   else if (path === '/admin/operations') data = { pendingTasks: 0, failedTasks: 0 }
   await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ code: 0, msg: 'success', data }) })
@@ -134,8 +135,9 @@ try {
     await page.locator('.web-nav').getByRole('button', { name: '工作台', exact: true }).click()
     await page.locator('.chat-input-field').fill('找一下采购合同')
     await page.locator('.chat-send').click()
-    await page.getByRole('button', { name: '同意并提交', exact: true }).click()
     await page.locator('.citation-card').waitFor()
+    assert.equal(await page.getByRole('button', { name: '同意并提交', exact: true }).count(), 0)
+    assert.equal(requests.find(request => request.path === '/chat/send').version, 'fixture-model')
     await page.locator('.el-message-box__wrapper').waitFor({ state: 'hidden' })
     await page.locator('.el-message').first().waitFor({ state: 'hidden' })
     await page.screenshot({ path: artifacts + 'after-home-ai.png', animations: 'disabled' })

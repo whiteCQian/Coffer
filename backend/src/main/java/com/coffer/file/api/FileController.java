@@ -127,7 +127,7 @@ public class FileController {
     public ResponseEntity<org.springframework.core.io.InputStreamResource> getFileContent(@PathVariable Long id,
             @RequestParam(required = false) Long revision,
             @RequestParam(defaultValue = "false") boolean download,
-            @RequestHeader(value = "Range", required = false) String rangeHeader) {
+            @RequestHeader(value = "Range", required = false) String rangeHeader) throws java.io.IOException {
         FileMetadata metadata;
         try {
             metadata = fileService.requireFileForContent(id);
@@ -179,10 +179,22 @@ public class FileController {
 
         try {
             // Open only after the owner and revision checks. The resource converter closes the stream.
-            InputStream stream = requested == null
-                    ? storage.readIfUnchanged(metadata.getStoragePath(), object)
-                    : storage.readRangeIfUnchanged(metadata.getStoragePath(), object,
+            InputStream stream;
+            if (contentType.equals(MediaType.TEXT_PLAIN) && !download) {
+                var prepared = com.coffer.file.api.support.TextPreviewEncoding.prepare(
+                        storage.readIfUnchanged(metadata.getStoragePath(), object));
+                headers.setContentType(new MediaType("text", "plain", prepared.charset()));
+                if (requested == null) stream = prepared.stream();
+                else {
+                    prepared.stream().close();
+                    stream = storage.readRangeIfUnchanged(metadata.getStoragePath(), object,
                             requested.start(), requested.length());
+                }
+            } else {
+                stream = requested == null ? storage.readIfUnchanged(metadata.getStoragePath(), object)
+                        : storage.readRangeIfUnchanged(metadata.getStoragePath(), object,
+                                requested.start(), requested.length());
+            }
             headers.setContentLength(requested == null ? size : requested.length());
             if (requested != null) {
                 headers.set("Content-Range", "bytes " + requested.start() + "-" + requested.end() + "/" + size);

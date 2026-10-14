@@ -9,6 +9,18 @@ declare module 'axios' {
 
 import type { Result } from './types'
 
+// A failed consent-target GET also rejects its parent POST interceptor.
+// Notify once for that same error object, rather than showing two identical toasts.
+const notifiedErrors = new WeakSet<object>()
+function notifyRequestError(error: unknown, message: string, quiet = false) {
+  if (quiet) return
+  if (error && typeof error === 'object') {
+    if (notifiedErrors.has(error)) return
+    notifiedErrors.add(error)
+  }
+  ElMessage.error(message)
+}
+
 /**
  * axios 实例：统一 baseURL（dev 经 Vite 代理 /api → 后端 8080）与
  * Result<T> 拦截。HTTP 错误及旧接口的 body.code!==0 均统一弹错并 reject，
@@ -27,9 +39,11 @@ http.interceptors.request.use(async (config) => {
   const boundary = currentBoundary()
   config.identityEpoch = boundary.epoch
   config.signal = boundary.signal
-  const { needsModelConsent, confirmModelTarget } = await import('./modelConsent')
+  const { needsModelConsent, confirmModelTarget, currentChatTargetVersion } = await import('./modelConsent')
   if (needsModelConsent(config.method, config.url) && !config.headers.has('X-Coffer-Model-Version')) {
-    config.headers.set('X-Coffer-Model-Version', await confirmModelTarget(config.url === '/model-execution/inbox'))
+    config.headers.set('X-Coffer-Model-Version', config.url === '/chat/send'
+      ? await currentChatTargetVersion()
+      : await confirmModelTarget(config.url === '/model-execution/inbox'))
     config.headers.set('X-Coffer-Allow-Sensitive', 'true')
   }
   if (boundary.epoch !== currentBoundary().epoch) throw new axios.CanceledError('账号已变化')
@@ -41,8 +55,9 @@ http.interceptors.response.use(
     if (response.config.identityEpoch !== currentBoundary().epoch) return Promise.reject(new axios.CanceledError('账号已变化'))
     const body = response.data as Result<unknown>
     if (body && typeof body.code === 'number' && body.code !== 0) {
-      if (!response.config.quietError) ElMessage.error(body.msg || '请求失败')
-      return Promise.reject(new Error(body.msg || '请求失败'))
+      const error = new Error(body.msg || '请求失败')
+      notifyRequestError(error, error.message, response.config.quietError)
+      return Promise.reject(error)
     }
     return response
   },
@@ -60,7 +75,7 @@ http.interceptors.response.use(
     }
     const msg =
       error.response?.data?.msg || error.message || '网络异常，请稍后重试'
-    if (!error.config?.quietError) ElMessage.error(msg)
+    notifyRequestError(error, msg, error.config?.quietError)
     return Promise.reject(error)
   },
 )

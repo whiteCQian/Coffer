@@ -398,12 +398,13 @@ onUnmounted(() => { listRequest++; clearInterval(pollTimer); window.removeEventL
         <div v-if="selectedCount" class="selection-toolbar"><strong>已选择 {{ selectedCount }} 个文件</strong><button class="desk-button" @click="createPreview">生成整理预览</button><button class="desk-button" @click="reanalyzeSelected">重新分析</button><button class="desk-text-button" @click="clearSelection">取消选择</button></div>
         <div class="file-scroll">
           <table v-if="items.length && viewMode === 'list'" class="file-table">
-            <thead><tr><th class="check-column"><input type="checkbox" :checked="allPageSelected" :indeterminate="selectedCount > 0 && !allPageSelected" aria-label="选择本页全部文件" @change="togglePageSelection" /></th><th>名称</th><th class="tags-column">标签</th><th class="date-column">导入时间</th><th class="size-column">大小</th><th class="state-column">状态</th></tr></thead>
+            <thead><tr><th class="check-column"><input type="checkbox" :checked="allPageSelected" :indeterminate="selectedCount > 0 && !allPageSelected" aria-label="选择本页全部文件" @change="togglePageSelection" /></th><th>名称</th><th class="tags-column">标签</th><th class="date-column">导入时间</th><th class="size-column">大小</th><th class="state-column">状态</th><th class="download-column">操作</th></tr></thead>
             <tbody><tr v-for="file in items" :key="file.id" :class="{ inspected: drawerId === file.id, selected: selectedIds.has(file.id) }" tabindex="0" @click="inspect(file.id)" @keydown.enter.prevent="inspect(file.id)" @keydown.space.prevent="toggleSelection(file.id)" @contextmenu="openContext($event, file.id)">
               <td class="check-column"><input type="checkbox" :checked="selectedIds.has(file.id)" :aria-label="`选择 ${file.fileName}`" @click.stop @keydown.stop @change="toggleSelection(file.id)" /></td>
               <td><div class="desk-file-name"><FileTile :file-type="file.fileType" size="sm" /><div><span :title="file.fileName">{{ file.fileName }}</span><small>{{ descOf(file) }}</small></div></div></td>
               <td class="tags-column"><div class="desk-row-tags"><span v-for="tag in file.tags.filter(t => t.status !== 'REJECTED').slice(0, 2)" :key="tag.id" class="desk-tag" :class="{ pending: tag.status === 'PENDING_CONFIRMATION' }">{{ tag.name }}</span><span v-if="!file.tags.length" class="muted">—</span></div></td>
               <td class="date-column">{{ shortTime(file.uploadTime) }}</td><td class="size-column">{{ formatBytes(file.fileSize) }}</td><td class="state-column"><span class="desk-state" :class="stateMini(file).cls">{{ stateMini(file).label }}</span></td>
+              <td class="download-column"><a class="file-download" :href="fileApi.fileDownloadUrl(file.id)" :download="file.fileName" :aria-label="`下载 ${file.fileName}`" @click.stop @keydown.stop>下载</a></td>
             </tr></tbody>
           </table>
           <div v-else-if="items.length" class="desk-file-grid"><article v-for="file in items" :key="file.id" class="desk-file-card" :class="{ inspected: drawerId === file.id, selected: selectedIds.has(file.id) }" tabindex="0" @click="inspect(file.id)" @keydown.enter.prevent="inspect(file.id)" @contextmenu="openContext($event, file.id)"><div class="desk-card-top"><input type="checkbox" :checked="selectedIds.has(file.id)" :aria-label="`选择 ${file.fileName}`" @click.stop @keydown.stop @change="toggleSelection(file.id)" /><span class="desk-state" :class="stateMini(file).cls">{{ stateMini(file).label }}</span></div><div class="desk-card-preview"><img v-if="imagePreview(file)" :src="`/api/files/${file.id}/content`" :alt="file.fileName" loading="lazy" @error="markImageUnavailable(file.id)" /><FileTile v-else :file-type="file.fileType" size="lg" /></div><h3 :title="file.fileName">{{ file.fileName }}</h3><p>{{ descOf(file) }}</p><div class="desk-row-tags"><span v-for="tag in file.tags.filter(t => t.status !== 'REJECTED').slice(0, 2)" :key="tag.id" class="desk-tag" :class="{ pending: tag.status === 'PENDING_CONFIRMATION' }">{{ tag.name }}</span></div><footer>{{ shortTime(file.uploadTime) }}<span>{{ formatBytes(file.fileSize) }}</span></footer></article></div>
@@ -416,7 +417,7 @@ onUnmounted(() => { listRequest++; clearInterval(pollTimer); window.removeEventL
       <aside v-if="aiMounted" v-show="aiOpen" class="workbench-ai"><div class="ai-panel-heading"><span>AI 文件助手</span><button class="desk-icon-button" aria-label="收起 AI 助手" @click="aiOpen = false">×</button></div><ChatDock /></aside>
     </div>
     <footer class="workbench-status"><span class="status-indicator"></span><span>{{ workspace.unavailable ? '任务状态暂时不可用' : !workspace.overview ? '正在读取任务状态…' : workspace.overview.processingCount ? `正在解析 ${workspace.overview.processingCount} 个文件` : '当前没有正在解析的文件' }}</span><RouterLink v-if="workspace.overview?.pendingConfirmCount" :to="pendingDestination">{{ workspace.overview.pendingConfirmCount }} 个文件待确认标签</RouterLink><RouterLink v-if="workspace.overview?.failedCount" :to="taskDestination" class="status-error">{{ workspace.overview.failedCount }} 个任务失败</RouterLink><RouterLink :to="taskDestination" class="status-tasks">查看任务 <el-icon><ArrowRight /></el-icon></RouterLink></footer>
-    <div v-if="contextMenu" class="file-context-menu" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @click.stop><button @click="inspect(contextMenu.id)">查看文件详情</button><button @click="selectedIds = new Set([contextMenu.id]); contextMenu = null; createPreview()">生成整理预览</button><button @click="toggleSelection(contextMenu.id); contextMenu = null">{{ selectedIds.has(contextMenu.id) ? '取消选择' : '选择文件' }}</button></div>
+    <div v-if="contextMenu" class="file-context-menu" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @click.stop><button @click="inspect(contextMenu.id)">查看文件详情</button><a :href="fileApi.fileDownloadUrl(contextMenu.id)" :download="items.find(file => file.id === contextMenu?.id)?.fileName" @click="dismissContext">下载到本地</a><button @click="selectedIds = new Set([contextMenu.id]); contextMenu = null; createPreview()">生成整理预览</button><button @click="toggleSelection(contextMenu.id); contextMenu = null">{{ selectedIds.has(contextMenu.id) ? '取消选择' : '选择文件' }}</button></div>
   </div>
 </template>
 
@@ -473,6 +474,9 @@ button.desk-tag { cursor: pointer; }
 .tags-column { width: 120px; }
 .date-column { width: 90px; font-variant-numeric: tabular-nums; }
 .size-column { width: 68px; font-variant-numeric: tabular-nums; }
+.download-column { width: 52px; }
+.file-download { color: var(--accent); text-decoration: none; font-size: 12px; }
+.file-download:hover { text-decoration: underline; }
 .state-column { width: 76px; }
 .desk-file-name { display: flex; align-items: center; gap: 10px; }
 .desk-file-name > div { min-width: 0; }
@@ -509,6 +513,8 @@ button.desk-tag { cursor: pointer; }
 .workbench-status .status-error { color: var(--danger); }
 .status-tasks { margin-left: auto; display: flex; align-items: center; gap: 4px; }
 .file-context-menu { position: fixed; z-index: 110; min-width: 180px; padding: 5px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--panel); box-shadow: 0 6px 20px #0001; }
+.file-context-menu a { display: block; padding: 8px 12px; color: var(--text-1); font-size: 12px; text-decoration: none; border-radius: 4px; }
+.file-context-menu a:hover { background: var(--hover-bg); }
 .file-context-menu button { display: block; width: 100%; border: 0; background: transparent; color: var(--text-1); text-align: left; padding: 8px 10px; font-size: 12px; border-radius: 5px; cursor: pointer; }
 .file-context-menu button:hover { background: var(--hover-bg); }
 @media (max-width: 1350px) { .date-column { display: none; } .tags-column { width: 104px; } }

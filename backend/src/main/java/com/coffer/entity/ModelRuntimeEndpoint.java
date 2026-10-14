@@ -51,6 +51,9 @@ public class ModelRuntimeEndpoint extends com.coffer.auth.domain.TenantOwnedEnti
     @Column(name = "encrypted_api_key", columnDefinition = "TEXT")
     private String encryptedApiKey;
 
+    @Column(name = "use_chat_credentials", nullable = false)
+    private boolean useChatCredentials;
+
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 }

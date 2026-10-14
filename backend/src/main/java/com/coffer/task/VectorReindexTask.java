@@ -21,11 +21,13 @@ public class VectorReindexTask {
     private final EmbeddingProperties embeddingProperties;
     private final FileMetadataRepository fileMetadataRepository;
     private final VectorIndexCoordinator coordinator;
+    @org.springframework.beans.factory.annotation.Autowired private com.coffer.model.runtime.AdminEmbeddingService adminEmbedding;
+    @org.springframework.beans.factory.annotation.Autowired private com.coffer.model.runtime.ModelRuntimeModeService modes;
 
     @com.coffer.auth.service.OwnerScheduled
     @Scheduled(fixedDelayString = "${coffer.vector-store.reindex.fixed-delay-ms:300000}")
     public void reindexPendingFiles() {
-        if (!embeddingProperties.isEnabled()) {
+        if (adminEmbedding != null ? !adminEmbedding.isAvailable(modes.status().getActiveMode()) : !embeddingProperties.isEnabled()) {
             return;
         }
         var pending = fileMetadataRepository.findByStatusAndVectorIndexedAtIsNull(

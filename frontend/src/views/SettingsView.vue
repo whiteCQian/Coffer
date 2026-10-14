@@ -8,6 +8,8 @@ import { desktopBridge } from '@/api/desktop'
 import { useAuthStore } from '@/stores/auth'
 import ModelPrivacyPanel from '@/components/ModelPrivacyPanel.vue'
 import PrivacyPanel from '@/components/PrivacyPanel.vue'
+import { getEmbeddingStatus, type EmbeddingStatus } from '@/api/embedding'
+import http from '@/api/http'
 import {
   deleteRuntimeEndpoint,
   getRuntimeEndpointConfigs,
@@ -18,7 +20,6 @@ import {
   validateRuntimeMode,
   type RuntimeCapability,
   type RuntimeEndpointConfig,
-  type RuntimeEndpointRequest,
   type RuntimeMode,
   type RuntimeModeStatus,
 } from '@/api/modelRuntime'
@@ -30,7 +31,7 @@ type EndpointCard = RuntimeEndpointConfig & {
 }
 
 const modes: RuntimeMode[] = ['API', 'LOCAL']
-const capabilities: RuntimeCapability[] = ['CHAT', 'VISION', 'EMBEDDING']
+const capabilities: RuntimeCapability[] = ['CHAT', 'VISION']
 const capabilityMeta: Record<RuntimeCapability, { title: string; description: string; icon: string }> = {
   CHAT: { title: 'Chat', description: '对话、摘要和标签生成', icon: '对' },
   VISION: { title: 'Vision', description: '图片与视觉内容理解', icon: '视' },
@@ -38,6 +39,7 @@ const capabilityMeta: Record<RuntimeCapability, { title: string; description: st
 }
 
 const loading = ref(true)
+const loadError = ref('')
 const auth = useAuthStore()
 const settingsTab = ref('models')
 const settingsTabs = [{ id: 'models', label: '模型连接' }, { id: 'account', label: '账号与安全' }, { id: 'privacy', label: '数据与隐私' }, { id: 'about', label: '关于' }]
@@ -50,21 +52,12 @@ const activeCards = computed(() => cards.filter((card) => card.mode === selected
 const selectedModeValidated = computed(() => Boolean(modeStatus.value?.validatedModes?.[selectedMode.value]))
 const activeMode = computed(() => modeStatus.value?.activeMode ?? 'API')
 const chatCard = computed(() => activeCards.value.find((card) => card.capability === 'CHAT'))
-const embeddingCard = computed(() => activeCards.value.find((card) => card.capability === 'EMBEDDING'))
+const embeddingStatus = ref<EmbeddingStatus | null>(null)
+const reindexing = ref(false)
 const visionCard = computed(() => activeCards.value.find((card) => card.capability === 'VISION'))
-const chatRagSaving = ref(false)
-const ragTesting = ref(false)
-const shareChatRagEndpoint = ref(false)
-const showRagAdvanced = ref(false)
 
 function cardFor(capability: RuntimeCapability) {
   return activeCards.value.find((card) => card.capability === capability)
-}
-
-function syncChatRagSharing() {
-  const chat = chatCard.value
-  const embedding = embeddingCard.value
-  shareChatRagEndpoint.value = Boolean(chat && embedding && chat.baseUrl === embedding.baseUrl)
 }
 
 function modeLabel(mode: RuntimeMode) {
@@ -87,11 +80,11 @@ function applyConfigs(configs: RuntimeEndpointConfig[]) {
     saving: false,
     testing: false,
   })))
-  syncChatRagSharing()
 }
 
 async function load() {
   loading.value = true
+  loadError.value = ''
   try {
     const [statusResponse, configResponse] = await Promise.all([
       getRuntimeModeStatus(),
@@ -100,6 +93,9 @@ async function load() {
     modeStatus.value = statusResponse.data.data
     selectedMode.value = statusResponse.data.data.activeMode
     applyConfigs(configResponse.data.data)
+    await loadEmbeddingStatus()
+  } catch {
+    loadError.value = '模型连接配置加载失败，请重新加载。'
   } finally {
     loading.value = false
   }
@@ -133,6 +129,10 @@ async function enableSelectedMode() {
 }
 
 async function testCard(card: EndpointCard) {
+  if (card.mode === 'API' && !(card.apiKey.trim() || card.maskedApiKey)) {
+    ElMessage.warning(`${capabilityLabel(card.capability)} 尚未配置 Key，请填写该服务对应的 API Key 后再测试。`)
+    return
+  }
   card.testing = true
   try {
     const { data } = await testRuntimeEndpoint({
@@ -146,60 +146,6 @@ async function testCard(card: EndpointCard) {
     else ElMessage.error(data.data.message)
   } finally {
     card.testing = false
-  }
-}
-
-async function testRag() {
-  const chat = chatCard.value
-  const embedding = embeddingCard.value
-  if (!chat || !embedding) return
-  ragTesting.value = true
-  try {
-    const { data } = await testRuntimeEndpoint({
-      mode: embedding.mode,
-      capability: 'EMBEDDING',
-      baseUrl: shareChatRagEndpoint.value ? chat.baseUrl : embedding.baseUrl,
-      modelName: embedding.modelName,
-      apiKey: (shareChatRagEndpoint.value ? chat.apiKey : embedding.apiKey).trim() || undefined,
-    })
-    if (data.data.success) ElMessage.success('RAG 连接成功')
-    else ElMessage.error(data.data.message)
-  } finally {
-    ragTesting.value = false
-  }
-}
-
-async function persistCard(card: EndpointCard, overrides: Partial<RuntimeEndpointRequest> = {}) {
-  const { data } = await saveRuntimeEndpoint({
-    mode: card.mode,
-    capability: card.capability,
-    baseUrl: overrides.baseUrl ?? card.baseUrl.trim(),
-    modelName: overrides.modelName ?? card.modelName.trim(),
-    apiKey: overrides.apiKey ?? (card.apiKey.trim() || undefined),
-  })
-  Object.assign(card, data.data, { apiKey: '' })
-}
-
-async function saveChatRag() {
-  const chat = chatCard.value
-  const embedding = embeddingCard.value
-  if (!chat || !embedding) return
-  if (!chat.baseUrl.trim() || !chat.modelName.trim() || !embedding.modelName.trim()) {
-    ElMessage.warning('请填写 Chat Base URL、Chat 模型和 Embedding 模型名称')
-    return
-  }
-  chatRagSaving.value = true
-  try {
-    const chatApiKey = chat.apiKey.trim() || undefined
-    await persistCard(chat, { apiKey: chatApiKey })
-    await persistCard(embedding, {
-      baseUrl: shareChatRagEndpoint.value ? chat.baseUrl.trim() : embedding.baseUrl.trim(),
-      apiKey: shareChatRagEndpoint.value ? chatApiKey : (embedding.apiKey.trim() || undefined),
-    })
-    ElMessage.success('Chat / RAG 配置已保存，运行模式需要重新校验')
-    await refreshModeStatus()
-  } finally {
-    chatRagSaving.value = false
   }
 }
 
@@ -227,7 +173,9 @@ async function saveCard(card: EndpointCard) {
 
 async function removeCard(card: EndpointCard) {
   try {
-    const warning = card.mode === 'API' && card.credentialProvider
+    const warning = card.mode === 'API' && card.capability === 'EMBEDDING'
+      ? '删除后将恢复 Embedding 的默认端点和默认密钥来源。Vision 配置会保留。'
+      : card.mode === 'API' && card.credentialProvider
       ? '删除后会同时删除该提供商共享的 API Key，相关能力将无法调用。'
       : '删除后将恢复环境变量或默认值。'
     await ElMessageBox.confirm(warning, `删除${capabilityLabel(card.capability)}配置`, { type: 'warning' })
@@ -246,7 +194,20 @@ async function refreshModeStatus() {
 
 function selectMode(mode: RuntimeMode) {
   selectedMode.value = mode
-  syncChatRagSharing()
+  void loadEmbeddingStatus()
+}
+
+async function loadEmbeddingStatus() {
+  const mode = selectedMode.value
+  try { const { data } = await getEmbeddingStatus(mode); if (selectedMode.value === mode) embeddingStatus.value = data.data }
+  catch { if (selectedMode.value === mode) embeddingStatus.value = null }
+}
+async function reindexVectors() {
+  reindexing.value = true
+  try {
+    const { data } = await http.post<{ code: number; data: { jobId: string } }>('/vector/reindex')
+    ElMessage.success(`个人向量重建任务已提交：${data.data.jobId}`)
+  } finally { reindexing.value = false }
 }
 
 onMounted(load)
@@ -257,7 +218,7 @@ onMounted(load)
     <header class="pg-head">
       <div>
         <h1 class="pg-title">{{ auth.isPersonal ? '模型配置' : '设置' }}</h1>
-        <p class="pg-sub">{{ auth.isPersonal ? '统一配置 Chat / RAG 服务，Vision 保持独立端点；保存后可按能力测试连通性。' : '管理模型连接、账号安全与数据隐私。' }}</p>
+        <p class="pg-sub">{{ auth.isPersonal ? '自选回答模型与 Vision 服务。语义向量服务由管理员统一配置。' : '管理模型连接、账号安全与数据隐私。' }}</p>
       </div>
       <span v-if="loading" class="loading-text">读取中...</span>
     </header>
@@ -292,7 +253,9 @@ onMounted(load)
             <span v-for="capability in capabilities" :key="capability" class="capability-state" :class="modeStatus?.capabilities?.[capability.toLowerCase()] === 'OK' ? 'is-ok' : ''">
               {{ capabilityLabel(capability) }}
               <b v-if="modeStatus?.capabilities?.[capability.toLowerCase()] === 'OK'">通过</b>
-              <b v-else>—</b>
+              <b v-else-if="modeStatus?.capabilities?.[capability.toLowerCase()] === 'DISABLED'">未启用</b>
+              <b v-else-if="modeStatus?.capabilities?.[capability.toLowerCase()]">未通过</b>
+              <b v-else>待测试</b>
             </span>
           </div>
           <div class="runtime-actions">
@@ -300,6 +263,10 @@ onMounted(load)
             <button class="action-button primary" :disabled="modeLoading || !selectedModeValidated || activeMode === selectedMode" @click="enableSelectedMode">{{ activeMode === selectedMode ? '正在使用' : '启用该模式' }}</button>
           </div>
         </div>
+        <p class="panel-note">
+          新任务当前使用{{ modeLabel(activeMode) }}{{ modeStatus?.currentModeValidated ? '（已校验）' : '（待校验）' }}。
+          保存 Chat 和 Vision 配置后，请点击“测试当前模式”；切换模式还需点击“启用该模式”。单独测试 Chat 成功不会启用整个模式。
+        </p>
       </section>
 
       <section v-show="auth.isPersonal || settingsTab === 'models'" class="config-section">
@@ -308,40 +275,36 @@ onMounted(load)
           <p class="section-note">配置来源为 <span class="source-chip">环境变量 / 默认值</span> 时，页面展示的是当前回退值。</p>
         </div>
 
+        <div v-if="loadError" class="pg-panel settings-load-error" role="alert">
+          <p>{{ loadError }}</p>
+          <button class="action-button secondary" :disabled="loading" @click="load">重新加载</button>
+        </div>
+
         <div class="endpoint-grid">
-          <article v-if="chatCard && embeddingCard" class="pg-panel endpoint-card chat-rag-card">
+          <article v-if="chatCard" class="pg-panel endpoint-card chat-rag-card">
             <div class="endpoint-head">
               <div class="capability-icon">问</div>
-              <div class="endpoint-title"><h3>Chat / RAG</h3><p>对话、摘要、标签生成与语义检索</p></div>
+              <div class="endpoint-title"><h3>RAG 回答 / Chat 模型</h3><p>由你选择检索后回答、对话、摘要和标签生成使用的模型</p></div>
               <span class="source-chip" :class="{ 'is-custom': chatCard.source === 'CUSTOM' }">{{ chatCard.source === 'CUSTOM' ? '自定义' : '默认' }}</span>
             </div>
             <div class="field-grid">
               <label class="field"><span>Chat Base URL</span><input v-model="chatCard.baseUrl" type="url" placeholder="https://api.example.com/v1" /></label>
-              <label class="field"><span>Chat 模型名称</span><input v-model="chatCard.modelName" type="text" placeholder="chat-model" /></label>
+              <label class="field"><span>回答 / Chat 模型名称</span><input v-model="chatCard.modelName" type="text" list="chat-model-suggestions" placeholder="例如 deepseek-flash，可自定义" /></label>
               <label class="field field-wide"><span>API Key <em v-if="chatCard.maskedApiKey">已保存 {{ chatCard.maskedApiKey }}</em></span><input v-model="chatCard.apiKey" type="password" autocomplete="new-password" :placeholder="chatCard.maskedApiKey ? '留空则沿用已保存密钥' : selectedMode === 'API' ? '输入 API Key' : '可选：本地服务密钥'" /></label>
+            </div>
+            <datalist id="chat-model-suggestions"><option value="deepseek-flash" /><option value="deepseek-v4-pro" /></datalist>
+            <p class="endpoint-note">RAG 的回答模型目前与 Chat 共用这份配置，可填写 DeepSeek 或其他兼容服务支持的模型。保存回答模型不需要填写或测试 Embedding。</p>
+            <div class="endpoint-actions">
+              <button class="action-button secondary" :disabled="chatCard.testing" @click="testCard(chatCard)">{{ chatCard.testing ? '测试中...' : '测试回答模型' }}</button>
+              <button class="action-button primary" :disabled="chatCard.saving" @click="saveCard(chatCard)">{{ chatCard.saving ? '保存中...' : '保存回答模型' }}</button>
+              <button class="action-button danger" :disabled="chatCard.saving" @click="removeCard(chatCard)">删除 Chat 配置</button>
             </div>
 
             <div class="rag-section">
-              <div class="subsection-head">
-                <div><strong>RAG 语义检索</strong><span class="optional-chip">可选</span><p>Embedding 负责查找相似文件，模型名称与 Chat 分开。</p></div>
-                <div class="rag-heading-actions"><span class="source-chip" :class="{ 'is-custom': embeddingCard.source === 'CUSTOM' }">{{ embeddingCard.source === 'CUSTOM' ? '自定义' : '默认' }}</span><button class="link-button" type="button" @click="showRagAdvanced = !showRagAdvanced">{{ showRagAdvanced ? '收起高级配置' : '展开高级配置' }}</button></div>
-              </div>
-              <label class="shared-switch"><input v-model="shareChatRagEndpoint" type="checkbox" /><span>与 Chat 共用 Base URL 和 API Key</span></label>
-              <div v-if="showRagAdvanced" class="field-grid rag-fields">
-                <label class="field"><span>Embedding 模型名称</span><input v-model="embeddingCard.modelName" type="text" placeholder="embedding-model" /></label>
-                <label v-if="!shareChatRagEndpoint" class="field"><span>Embedding Base URL</span><input v-model="embeddingCard.baseUrl" type="url" placeholder="https://api.example.com/v1" /></label>
-                <label v-if="!shareChatRagEndpoint" class="field field-wide"><span>Embedding API Key <em v-if="embeddingCard.maskedApiKey">已保存 {{ embeddingCard.maskedApiKey }}</em></span><input v-model="embeddingCard.apiKey" type="password" autocomplete="new-password" :placeholder="embeddingCard.maskedApiKey ? '留空则沿用已保存密钥' : selectedMode === 'API' ? '输入 API Key' : '可选：本地服务密钥'" /></label>
-              </div>
-              <p v-if="!embeddingCard.embeddingEnabled" class="endpoint-note">RAG 当前未启用。保存服务配置后，还需在部署配置中启用 Embedding；未启用时系统继续使用关键词搜索。</p>
-              <p v-else class="endpoint-note">RAG 已启用。首次更换 Embedding 模型后，请执行向量重建，避免旧向量与新模型不匹配。</p>
-            </div>
-
-            <div class="endpoint-actions">
-              <button class="action-button secondary" :disabled="chatCard.testing" @click="testCard(chatCard)">{{ chatCard.testing ? '测试中...' : '测试 Chat' }}</button>
-              <button class="action-button secondary" :disabled="ragTesting" @click="testRag">{{ ragTesting ? '测试中...' : '测试 RAG' }}</button>
-              <button class="action-button primary" :disabled="chatRagSaving" @click="saveChatRag">{{ chatRagSaving ? '保存中...' : '保存 Chat / RAG' }}</button>
-              <button class="action-button danger" :disabled="chatRagSaving" @click="removeCard(chatCard)">删除 Chat 配置</button>
-              <button class="action-button danger" :disabled="chatRagSaving" @click="removeCard(embeddingCard)">删除 RAG 配置</button>
+              <strong>语义向量检索 · 管理员统一配置</strong>
+              <p class="endpoint-note">{{ embeddingStatus?.message || '向量服务状态暂时不可用，请稍后重新加载。' }}</p>
+              <p v-if="embeddingStatus?.configured" class="endpoint-note">向量模型：{{ embeddingStatus.modelName }} · {{ embeddingStatus.dimensions }} 维。无需填写或测试个人向量 Key。</p>
+              <button v-if="embeddingStatus?.available" class="action-button secondary" :disabled="reindexing || !modeStatus?.currentModeValidated || selectedMode !== activeMode" @click="reindexVectors">{{ reindexing ? '提交中...' : '重建我的向量索引' }}</button>
             </div>
           </article>
 

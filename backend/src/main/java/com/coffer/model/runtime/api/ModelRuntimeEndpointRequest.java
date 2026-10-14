@@ -13,4 +13,5 @@ public class ModelRuntimeEndpointRequest {
     private String baseUrl;
     private String modelName;
     private String apiKey;
+    private Boolean useChatCredentials;
 }

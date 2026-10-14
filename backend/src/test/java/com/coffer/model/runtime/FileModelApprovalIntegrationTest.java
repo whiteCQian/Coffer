@@ -29,6 +29,8 @@ class FileModelApprovalIntegrationTest extends com.coffer.auth.OwnerTestSupport 
     @Autowired FileModelApprovalRepository approvals;
     @Autowired ModelContentGate gate;
     @Autowired AppUserRepository users;
+    @Autowired com.coffer.tool.FileSearchTool searchTool;
+    @Autowired com.coffer.service.ChatCitationCollector citations;
     @MockitoBean MinioStorageService storage;
     @MockitoBean ModelExecutionSnapshotService snapshots;
 
@@ -69,6 +71,41 @@ class FileModelApprovalIntegrationTest extends com.coffer.auth.OwnerTestSupport 
         TenantContext.runAs(other.getId(), () -> ModelExecutionContext.with(snapshot(other.getId(), "v1"), () ->
                 assertThatThrownBy(() -> gate.requireAllowed(file, null, false, ModelRuntimeCapability.VISION))
                         .isInstanceOf(com.coffer.auth.service.ResourceNotFoundException.class)));
+    }
+
+    @Test void ownChatFileIsAvailableWithoutApprovalAndForeignOwnerCannotAccessIt() {
+        Long owner = users.saveAndFlush(new AppUser("chat-owner-" + UUID.randomUUID(), "x", AuthRole.USER)).getId();
+        TenantContext.set(owner);
+        var file = files.saveAndFlush(FileMetadata.builder().fileName("任务书-测试.pdf")
+                .fileType("pdf").fileSize(8L).storagePath(ownerPath("files/task.pdf"))
+                .contentSha256(SHA).revision(1L).build());
+        when(storage.stat(file.getStoragePath())).thenReturn(new FileStoragePort.StoredObject(
+                file.getStoragePath(), 8L, SHA, "etag"));
+        long before = approvals.count();
+        var chat = new ResolvedModelRuntimeEndpoint(GovernanceRunMode.API, ModelRuntimeCapability.CHAT,
+                "https://chat.example/v1", "chat-model", null, "test", true, null);
+        var target = new ModelExecutionContext.Snapshot("chat", owner, "v1", GovernanceRunMode.API,
+                Map.of(ModelRuntimeCapability.CHAT, chat));
+        ModelExecutionContext.with(target, () -> {
+            gate.requireFileAllowed(file, ModelRuntimeCapability.CHAT);
+            gate.requireAllowed(file, "身份证号 123 password: synthetic", true, ModelRuntimeCapability.CHAT);
+            citations.begin();
+            try {
+                assertThat(searchTool.getRecentUploads()).contains("任务书-测试.pdf")
+                        .doesNotContain("授权", "设置页");
+                assertThat(citations.finish()).extracting(com.coffer.dto.ChatCitation::getFileId)
+                        .contains(file.getId());
+            } finally { citations.clear(); }
+        });
+        assertThat(approvals.count()).isEqualTo(before);
+        clearInvocations(storage);
+        AppUser other = users.saveAndFlush(new AppUser("other-chat-" + UUID.randomUUID(), "x", AuthRole.USER));
+        TenantContext.runAs(other.getId(), () -> {
+            assertThat(files.findById(file.getId())).isEmpty();
+            assertThatThrownBy(() -> gate.requireFileAllowed(file, ModelRuntimeCapability.CHAT))
+                    .isInstanceOf(com.coffer.auth.service.ResourceNotFoundException.class);
+        });
+        verifyNoInteractions(storage);
     }
 
     private ModelExecutionContext.Snapshot snapshot(Long owner, String version) {

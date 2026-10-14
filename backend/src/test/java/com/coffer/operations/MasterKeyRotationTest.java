@@ -71,4 +71,12 @@ class MasterKeyRotationTest {
         assertThatThrownBy(service::rotate).isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
         assertThat(db.jdbc.queryForObject("SELECT COUNT(*) FROM secret_rotation_event", Long.class)).isZero();
     }
+    @Test void sharedAdminEmbeddingKeyIsIncludedInMasterKeyRotation() {
+        db.jdbc.update("UPDATE admin_embedding_setting SET encrypted_api_key=? WHERE id=1", old.encrypt(SECRET));
+        assertThat(service.status().remaining()).isEqualTo(1);
+        assertThat(service.rotate().rewritten()).isEqualTo(1);
+        String ciphertext=db.jdbc.queryForObject("SELECT encrypted_api_key FROM admin_embedding_setting WHERE id=1",String.class);
+        assertThat(crypto("new-master-key", "").decrypt(ciphertext)).isEqualTo(SECRET);
+        assertThat(service.status().remaining()).isZero();
+    }
 }

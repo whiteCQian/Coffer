@@ -37,6 +37,13 @@ export function getFileDetail(id: number, revision?: number) {
   return http.get<Result<FileDetailResponse>>(`/files/${id}`, { params: { revision } })
 }
 
+/** Same-origin authenticated streaming download, handled by the browser's download manager. */
+export function fileDownloadUrl(id: number, revision?: number) {
+  const params = new URLSearchParams({ download: 'true' })
+  if (revision !== undefined && revision !== null) params.set('revision', String(revision))
+  return `/api/files/${encodeURIComponent(String(id))}/content?${params}`
+}
+
 /** 分类计数：count>0 的分类按数量倒序，供「全部文件」顶部 tab 徽标 */
 export function listCategories() {
   return http.get<Result<CategoryCountResponse[]>>('/files/categories')

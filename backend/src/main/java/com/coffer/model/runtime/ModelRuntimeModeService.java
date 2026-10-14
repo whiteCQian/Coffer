@@ -52,7 +52,7 @@ public class ModelRuntimeModeService {
         GovernanceRunMode target = requireMode(mode);
         ModelRuntimeSetting setting = requireSetting();
         if (!isValidated(setting, target)) {
-            throw new IllegalArgumentException("目标运行模式尚未通过模型连通性校验，请先验证 " + target.name() + " 模式");
+            throw ModelModeNotReadyException.targetNotValidated(target);
         }
         setting.setActiveMode(target);
         setting.setUpdatedAt(LocalDateTime.now());
@@ -66,7 +66,7 @@ public class ModelRuntimeModeService {
         ModelRuntimeSetting setting = requireSetting();
         GovernanceRunMode mode = setting.getActiveMode() == null ? GovernanceRunMode.API : setting.getActiveMode();
         if (!isValidated(setting, mode)) {
-            throw new IllegalArgumentException("当前运行模式尚未通过模型连通性校验，请先验证 " + mode.name() + " 模式");
+            throw ModelModeNotReadyException.currentNotValidated(mode);
         }
         return mode;
     }
@@ -76,7 +76,7 @@ public class ModelRuntimeModeService {
     public GovernanceRunMode resolveForTask(GovernanceRunMode requestedMode) {
         GovernanceRunMode active = requireActiveMode();
         if (requestedMode != null && requestedMode != active) {
-            throw new IllegalArgumentException("请求运行模式与当前账号运行模式不一致: " + active.name());
+            throw ModelModeNotReadyException.mismatch(active);
         }
         return active;
     }

@@ -113,7 +113,63 @@ class GovernancePreviewServiceTest {
                 new ByteArrayInputStream(SOURCE_BYTES));
         lenient().when(minioStorageService.exists(anyString())).thenReturn(false);
         lenient().when(archiveObjectNameService.generateArchivePath(any(), anyString(), any()))
-                .thenReturn("contracts/2026/09/20/preview.txt");
+                .thenAnswer(call -> "contracts/2026/09/20/" + com.coffer.util.ArchiveFileName.numbered(call.getArgument(1), 0));
+    }
+
+    @Test
+    void suggestedNameReplacesOnlyTheRandomSuffixWithoutRenamingTheSourceBeforeConfirmation() {
+        var originalName = "server-smoke-d0834cf3-0d6a-410b-9c9b-8b7ca7a6b44d.txt";
+        var metadata = metadata(1L, originalName, "files/source.txt");
+        when(fileMetadataRepository.findById(1L)).thenReturn(Optional.of(metadata));
+        when(documentParseService.extractTextWithFallback(anyString(), any()))
+                .thenReturn(ParseResult.builder().status(ParseStatus.SUCCESS).content("合同正文").build());
+        when(tagGenerationTool.generateTagAndCategory("合同正文"))
+                .thenReturn(new TagAndCategoryResult(CategoryType.CONTRACT, List.of("设备", "采购")));
+        var response = service.create(request(List.of(1L), "semantic-title-text"));
+        assertThat(response.items().get(0).suggestedFileName()).isEqualTo("server-smoke-0001.txt");
+        assertThat(response.items().get(0).sourceFileName()).isEqualTo(originalName);
+        assertThat(metadata.getFileName()).isEqualTo(originalName);
+        verify(archiveObjectNameService).generateArchivePath(any(), org.mockito.ArgumentMatchers.eq("server-smoke.txt"), any());
+        verify(fileMetadataRepository, never()).save(any());
+    }
+
+    @Test
+    void suggestedImageNameKeepsItsOriginalBusinessNumberAndExtension() {
+        var metadata = metadata(2L, "IMG_123456789.png", "files/source.png");
+        metadata.setFileType("png");
+        when(fileMetadataRepository.findById(2L)).thenReturn(Optional.of(metadata));
+        when(documentParseService.parseStructured(any(), any()))
+                .thenReturn(new com.coffer.file.domain.parse.ParsedDocument(2L, 0L, "png", "test-parser", ParseStatus.SUCCESS, null, List.of()));
+        when(visionModelService.describeImage(anyString(), anyString(), anyString()))
+                .thenReturn(new VisionResult(CategoryType.IMAGE, List.of("海边", "日落"), "海边日落的照片"));
+        var response = service.create(request(List.of(2L), "semantic-title-image"));
+        assertThat(response.items().get(0).suggestedFileName()).isEqualTo("IMG_123456789-0001.png");
+        assertThat(response.items().get(0).status()).isEqualTo(GovernancePreviewItemStatus.READY);
+        verify(tagGenerationTool, never()).generateTagAndCategory(anyString());
+        verify(fileMetadataRepository, never()).save(any());
+    }
+
+    @Test
+    void editingOnlySummaryKeepsTheReservedCounterAndReanalysisDoesNotStackIt() {
+        var metadata = metadata(1L, "采购合同-0001.txt", "users/7/archive/contracts/2026/10/13/采购合同-0001.txt");
+        metadata.setArchived(true);
+        when(fileMetadataRepository.findById(1L)).thenReturn(Optional.of(metadata));
+        when(documentParseService.extractTextWithFallback(anyString(), any()))
+                .thenReturn(ParseResult.builder().status(ParseStatus.SUCCESS).content("合同正文").build());
+        when(tagGenerationTool.generateTagAndCategory("合同正文"))
+                .thenReturn(new TagAndCategoryResult(CategoryType.CONTRACT, List.of("采购", "合同")));
+        var response = service.create(request(List.of(1L), "counter-no-stacking"));
+        verify(archiveObjectNameService).generateArchivePath(any(), org.mockito.ArgumentMatchers.eq("采购合同.txt"), any());
+        assertThat(response.items().get(0).suggestedFileName()).isEqualTo("采购合同-0001.txt");
+        var item = savedItems.get(0); item.setId(5L);
+        when(batchRepository.findByPreviewId(response.previewId())).thenReturn(Optional.of(savedBatch));
+        when(itemRepository.findById(5L)).thenReturn(Optional.of(item));
+        var update = new UpdateGovernancePreviewItemRequest();
+        update.setSuggestedFileName("采购合同.txt"); update.setSuggestedCategory(CategoryType.CONTRACT);
+        update.setSuggestedSummary("修改摘要"); update.setSuggestedTags(List.of("采购", "合同"));
+        var changed = service.updateItem(response.previewId(), 5L, update);
+        assertThat(changed.items().get(0).suggestedFileName()).isEqualTo("采购合同-0001.txt");
+        verify(archiveObjectNameService, org.mockito.Mockito.times(1)).generateArchivePath(any(), anyString(), any());
     }
 
     @Test
@@ -132,7 +188,7 @@ class GovernancePreviewServiceTest {
         assertThat(response.items().get(0).status()).isEqualTo(GovernancePreviewItemStatus.READY);
         assertThat(response.items().get(0).suggestedCategory()).isEqualTo("CONTRACT");
         assertThat(response.items().get(0).suggestedTags()).containsExactly("合同", "采购");
-        assertThat(response.items().get(0).suggestedPath()).isEqualTo("contracts/2026/09/20/preview.txt");
+        assertThat(response.items().get(0).suggestedPath()).isEqualTo("contracts/2026/09/20/note-0001.txt");
         assertThat(metadata.getCategory()).isEqualTo(CategoryType.REPORT);
         assertThat(metadata.getSummary()).isEqualTo("旧摘要");
         assertThat(metadata.getStoragePath()).isEqualTo("files/note.txt");
@@ -277,7 +333,7 @@ class GovernancePreviewServiceTest {
                         "采购合同-已修订.txt", CategoryType.CONTRACT, "修订后的合同摘要", List.of("采购", "合同")));
 
         assertThat(updated.items().get(0).status()).isEqualTo(GovernancePreviewItemStatus.EDITED);
-        assertThat(updated.items().get(0).suggestedFileName()).isEqualTo("采购合同-已修订.txt");
+        assertThat(updated.items().get(0).suggestedFileName()).isEqualTo("采购合同-已修订-0001.txt");
         assertThat(updated.items().get(0).suggestedTags()).containsExactly("采购", "合同");
         assertThat(metadata.getCategory()).isEqualTo(CategoryType.REPORT);
         verify(fileMetadataRepository, never()).save(any(FileMetadata.class));

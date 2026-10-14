@@ -1,4 +1,7 @@
 #!/bin/bash
+# The official entrypoint sources non-executable init scripts. Keep strict
+# shell options local so nounset does not break its optional variables.
+(
 set -euo pipefail
 # Executed as the official mysql service user after entrypoint ownership setup.
 chmod 0700 /var/lib/mysql
@@ -13,4 +16,5 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON coffer.* TO 'coffer_app'@'%';
 CREATE USER 'coffer_migrate'@'%' IDENTIFIED BY '$migrate' REQUIRE SSL;
 GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES, DROP ON coffer.* TO 'coffer_migrate'@'%';
 SQL
+)
 unset COFFER_DB_APP_PASSWORD COFFER_DB_MIGRATE_PASSWORD app migrate

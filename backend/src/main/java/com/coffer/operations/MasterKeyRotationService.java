@@ -21,6 +21,7 @@ public class MasterKeyRotationService {
     }
     private record Source(String table, List<String> keys, String encrypted) { }
     private static final List<Source> SOURCES = List.of(
+            new Source("admin_embedding_setting", List.of("id"), "encrypted_api_key"),
             new Source("user_model_credential", List.of("owner_id", "provider"), "encrypted_api_key"),
             new Source("model_credential", List.of("provider"), "encrypted_api_key"),
             new Source("model_runtime_endpoint", List.of("id"), "encrypted_api_key"),

@@ -67,14 +67,14 @@ public class FileSearchTool {
     }
     private String describeResults(List<String> result, boolean consentRequired, String emptyText) {
         String visible = result.isEmpty() ? emptyText : String.join("\n", result);
-        return consentRequired ? visible + "\n部分文件尚未授权当前聊天模型。请在文件详情中查看目标并授权后重试。" : visible;
+        return consentRequired ? visible + "\n当前聊天模型配置尚未就绪或已变化，请到设置页测试并启用当前模式后重试。" : visible;
     }
     private void require(Long owner) {
         if (!authorization.requireOwner().equals(owner)) throw new AccessDeniedException("无权执行此操作");
     }
     private String format(FileMetadata file, Long owner, double score, String type) {
-        // A search hit can enter a remote chat prompt. Classify its actual local
-        // parse result instead of treating an empty placeholder as a safe source.
+        // Own files are available to chat by default; validate target and stored bytes
+        // before exposing metadata to the configured model.
         java.util.Objects.requireNonNull(contentGate, "模型内容授权组件不可用").requireFileAllowed(file,
                 com.coffer.model.runtime.ModelRuntimeCapability.CHAT);
         // Revalidate after the tag queries, immediately before exposing the result.

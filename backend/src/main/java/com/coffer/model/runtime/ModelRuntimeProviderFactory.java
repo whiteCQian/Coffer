@@ -28,6 +28,7 @@ public class ModelRuntimeProviderFactory {
 
     private final ModelRuntimeEndpointConfigurationService configurationService;
     private final EmbeddingProperties embeddingProperties;
+    @org.springframework.beans.factory.annotation.Autowired private AdminEmbeddingService adminEmbedding;
 
     @Value("${coffer.models.deepseek.temperature:0.1}")
     private double deepSeekTemperature;
@@ -55,13 +56,12 @@ public class ModelRuntimeProviderFactory {
     }
 
     public EmbeddingProvider embedding(GovernanceRunMode mode) {
-        if (!embeddingProperties.isEnabled()) {
-            throw new IllegalStateException("Embedding 能力未启用");
-        }
-        ResolvedModelRuntimeEndpoint endpoint = endpoint(mode, ModelRuntimeCapability.EMBEDDING);
-        OpenAiEmbeddingModel delegate = buildEmbedding(endpoint);
+        ModelExecutionContext.require();
+        var execution = adminEmbedding.execution(endpoint(mode, ModelRuntimeCapability.EMBEDDING), mode);
+        ResolvedModelRuntimeEndpoint endpoint = execution.endpoint();
+        OpenAiEmbeddingModel delegate = buildEmbedding(endpoint, execution.dimensions());
         return new OpenAiCompatibleEmbeddingProvider(delegate,
-                providerId(endpoint, ModelProvider.QWEN_VL), endpoint.modelName());
+                "ADMIN_EMBEDDING", endpoint.modelName());
     }
 
     /** Performs real connectivity checks used by the C15 mode validation gate. */
@@ -69,13 +69,9 @@ public class ModelRuntimeProviderFactory {
         Map<String, String> capabilities = new LinkedHashMap<>();
         validateChat(mode, capabilities);
         validateVision(mode, capabilities);
-        if (embeddingProperties.isEnabled()) {
-            validateEmbedding(mode, capabilities);
-        } else {
-            capabilities.put("embedding", "DISABLED");
-        }
+        capabilities.put("embedding", configurationService.embeddingAvailable(mode) ? "MANAGED" : "DISABLED");
         boolean success = capabilities.values().stream()
-                .allMatch(value -> "OK".equals(value) || "DISABLED".equals(value));
+                .allMatch(value -> "OK".equals(value) || "DISABLED".equals(value) || "MANAGED".equals(value));
         return new ModelRuntimeValidationResult(success, capabilities,
                 success ? "模型能力校验通过" : "至少一项模型能力校验失败");
     }
@@ -140,14 +136,14 @@ public class ModelRuntimeProviderFactory {
         return snapshot.endpoints().get(capability);
     }
 
-    private OpenAiEmbeddingModel buildEmbedding(ResolvedModelRuntimeEndpoint endpoint) {
+    private OpenAiEmbeddingModel buildEmbedding(ResolvedModelRuntimeEndpoint endpoint, Integer dimensions) {
         return OpenAiEmbeddingModel.builder()
                 .logRequests(false).logResponses(false).maxRetries(0)
                 .httpClientBuilder(SafeModelHttpClient.builder())
                 .baseUrl(requireText(endpoint.baseUrl(), "Embedding Base URL"))
                 .apiKey(apiKey(endpoint.apiKey()))
                 .modelName(requireText(endpoint.modelName(), "Embedding 模型名称"))
-                .dimensions(embeddingProperties.getDimensions())
+                .dimensions(dimensions)
                 .timeout(Duration.ofSeconds(embeddingProperties.getTimeoutSeconds()))
                 .build();
     }

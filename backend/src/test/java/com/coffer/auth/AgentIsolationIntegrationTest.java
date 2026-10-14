@@ -58,6 +58,8 @@ class AgentIsolationIntegrationTest {
             com.coffer.file.application.FileService.class, com.coffer.file.application.assembler.FileResponseAssembler.class,
             com.coffer.exception.GlobalExceptionHandler.class})
     static class Config {
+        @Bean com.coffer.model.runtime.AdminEmbeddingService adminEmbedding() { return mock(com.coffer.model.runtime.AdminEmbeddingService.class); }
+        @Bean com.coffer.model.runtime.ModelExecutionSnapshotService modelSnapshots() { return mock(com.coffer.model.runtime.ModelExecutionSnapshotService.class); }
         @Bean StringRedisTemplate stringRedisTemplate() { return mock(StringRedisTemplate.class); }
         @Bean ChatProvider model() { return mock(ChatProvider.class); }
         @Bean EmbeddingProvider embedding() { return mock(EmbeddingProvider.class); }
@@ -91,6 +93,8 @@ class AgentIsolationIntegrationTest {
     @Autowired RedisVectorStore vectorProxy;
     @Autowired HybridSearchProperties properties;
     @Autowired HybridSearchService hybrid;
+    @Autowired com.coffer.model.runtime.AdminEmbeddingService adminEmbeddingProxy;
+    com.coffer.model.runtime.AdminEmbeddingService adminEmbedding;
     @Autowired FileSearchTool search;
     @Autowired FileParsingTool parse;
     @Autowired DocumentParseService parser;
@@ -118,8 +122,9 @@ class AgentIsolationIntegrationTest {
         fa = file(a, "A_PRIVATE"); fb = file(b, "B_SECRET");
         storage = AopTestUtils.getUltimateTargetObject(storageProxy);
         vectors = AopTestUtils.getUltimateTargetObject(vectorProxy);
+        adminEmbedding = AopTestUtils.getUltimateTargetObject(adminEmbeddingProxy);
         DocumentParseService parserMock = AopTestUtils.getUltimateTargetObject(parser);
-        reset(redis, model, storage, vectors, embedding, parserMock);
+        reset(redis, model, storage, vectors, embedding, parserMock, adminEmbedding);
         properties.setEnabled(false);
         redisValues = new ConcurrentHashMap<>();
         ValueOperations<String, String> values = mock(ValueOperations.class);
@@ -196,28 +201,43 @@ class AgentIsolationIntegrationTest {
 
     @Test void vectorOutageAndTimeoutFallBackWithoutLosingOwner() {
         properties.setEnabled(true);
+        when(adminEmbedding.isAvailable(any())).thenReturn(true);
+        when(adminEmbedding.indexVersion()).thenReturn("a".repeat(64));
+        when(vectors.prepareEmbeddingIndex(anyString())).thenReturn("test-generation");
+        when(vectors.searchSimilar(any(),anyInt(),anyString())).thenAnswer(i -> vectors.searchSimilar(i.getArgument(0),i.getArgument(1)));
         when(vectors.searchSimilar(any(), anyInt())).thenThrow(new IllegalStateException("unavailable"));
-        TenantContext.runAs(a.getId(), () -> assertThat(search.searchFiles("shared")).contains("A_PRIVATE").doesNotContain("B_SECRET"));
+        vectorAs(a, () -> assertThat(search.searchFiles("shared")).contains("A_PRIVATE").doesNotContain("B_SECRET"));
         properties.setVectorTimeoutMs(20);
         when(embedding.embed(anyString())).thenAnswer(i -> {
             Thread.sleep(150);
             return Response.from(Embedding.from(new float[]{1, 0}));
         });
-        TenantContext.runAs(b.getId(), () -> assertThat(search.searchFiles("shared")).contains("B_SECRET").doesNotContain("A_PRIVATE"));
+        vectorAs(b, () -> assertThat(search.searchFiles("shared")).contains("B_SECRET").doesNotContain("A_PRIVATE"));
         properties.setVectorTimeoutMs(1500);
     }
 
     @Test void vectorPoisonForeignMissingOldRevisionAndPendingHitsAreDiscarded() {
         properties.setEnabled(true);
+        when(adminEmbedding.isAvailable(any())).thenReturn(true);
+        when(adminEmbedding.indexVersion()).thenReturn("a".repeat(64));
+        when(vectors.prepareEmbeddingIndex(anyString())).thenReturn("test-generation");
+        when(vectors.searchSimilar(any(),anyInt(),anyString())).thenAnswer(i -> vectors.searchSimilar(i.getArgument(0),i.getArgument(1)));
         when(vectors.searchSimilar(any(), anyInt())).thenReturn(List.of(
                 new VectorSearchResult(fb.getId() + ":0:0", 1), new VectorSearchResult(fa.getId() + ":9:0", .9),
                 new VectorSearchResult("9999999:0:0", .8)));
-        TenantContext.runAs(a.getId(), () -> {
+        vectorAs(a, () -> {
             assertThat(hybrid.search("nothing-matches")).isEmpty();
             when(vectors.searchSimilar(any(), anyInt())).thenReturn(List.of(new VectorSearchResult(fa.getId() + ":0:0", 1)));
             assertThat(hybrid.search("nothing-matches")).extracting(FileMetadata::getId).containsExactly(fa.getId());
             fa.setStatus(FileStatus.PENDING); files.saveAndFlush(fa);
             assertThat(hybrid.search("nothing-matches")).isEmpty();
+        });
+    }
+
+    void vectorAs(AppUser user, Runnable action) {
+        TenantContext.runAs(user.getId(), () -> {
+            var snapshot = new com.coffer.model.runtime.ModelExecutionContext.Snapshot("vector-fixture",user.getId(),"fixture",com.coffer.governance.domain.GovernanceRunMode.API,Map.of());
+            com.coffer.model.runtime.ModelExecutionContext.with(snapshot, () -> { action.run(); return null; });
         });
     }
 
@@ -337,7 +357,7 @@ class AgentIsolationIntegrationTest {
         return new jakarta.servlet.http.Cookie("COFFER_SESSION", Base64.getEncoder().encodeToString(session.getId().getBytes(StandardCharsets.UTF_8)));
     }
     @Test void citationHttpReadsRequireCurrentOwnerAndExactRevision() throws Exception {
-        String path = "/api/files/" + fa.getId() + "/content?revision=0";
+        String path = "/api/files/" + fa.getId() + "/content?revision=0&download=true";
         mvc.perform(get(path)).andExpect(status().isUnauthorized());
         mvc.perform(get(path).cookie(cookie(admin))).andExpect(status().isForbidden());
         String foreign = mvc.perform(get(path).cookie(cookie(b))).andExpect(status().isNotFound()).andReturn().getResponse().getContentAsString();

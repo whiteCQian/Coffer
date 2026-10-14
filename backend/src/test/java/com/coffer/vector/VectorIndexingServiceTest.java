@@ -40,6 +40,7 @@ class VectorIndexingServiceTest {
         properties.setModelName("text-embedding-v3");
 
         embeddingProvider = mock(EmbeddingProvider.class);
+        when(embeddingProvider.modelName()).thenReturn("runtime-embedding-model");
         ObjectProvider<EmbeddingProvider> provider = mock(ObjectProvider.class);
         when(provider.getIfAvailable()).thenReturn(embeddingProvider);
         redisVectorStore = mock(RedisVectorStore.class);
@@ -75,6 +76,9 @@ class VectorIndexingServiceTest {
                 .extracting(VectorRecord::fileId)
                 .containsOnly(42L);
         assertThat(records.getAllValues())
+                .extracting(VectorRecord::embeddingModel)
+                .containsOnly("runtime-embedding-model");
+        assertThat(records.getAllValues())
                 .extracting(VectorRecord::chunkIndex)
                 .containsExactly(0, 1);
         assertThat(records.getAllValues().get(0).content()).hasSize(800);
@@ -95,6 +99,7 @@ class VectorIndexingServiceTest {
         assertThat(indexed).isFalse();
         assertThat(metadata.getVectorIndexedAt()).isNull();
         verify(retryableModelService).executeWithRetry(anyString(), any());
+        verify(redisVectorStore).save(any(VectorRecord.class));
     }
 
     private FileMetadata metadata(long id) {

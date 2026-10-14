@@ -113,9 +113,15 @@ function operationItemStatusLabel(status?: string | null) {
   return labels[status ?? ''] ?? status ?? '未知'
 }
 
+function businessName(item: GovernancePreviewItemResponse) {
+  const name = item.suggestedFileName || item.sourceFileName
+  if (name && item.suggestedPath?.endsWith('/' + name)) return name.replace(/-[0-9A-Z]{4}(\.[^./]+)?$/, '$1')
+  return name
+}
+
 function draftOf(item: GovernancePreviewItemResponse): Draft {
   return drafts[item.id] ?? {
-    fileName: item.suggestedFileName || item.sourceFileName,
+    fileName: businessName(item),
     category: (item.suggestedCategory || 'OTHER') as Category,
     summary: item.suggestedSummary || '',
     tags: (item.suggestedTags ?? []).join('，'),
@@ -194,7 +200,7 @@ function buildItemUpdate(item: GovernancePreviewItemResponse): UpdateGovernanceP
 function hasDraftChanges(item: GovernancePreviewItemResponse, update: UpdateGovernancePreviewItemRequest) {
   const currentTags = item.suggestedTags ?? []
   const nextTags = update.suggestedTags ?? []
-  return update.suggestedFileName !== (item.suggestedFileName || item.sourceFileName)
+  return update.suggestedFileName !== businessName(item)
     || update.suggestedCategory !== (item.suggestedCategory || 'OTHER')
     || update.suggestedSummary !== (item.suggestedSummary || '')
     || currentTags.length !== nextTags.length
@@ -514,6 +520,7 @@ onMounted(load)
                 <label>
                   <span>建议文件名</span>
                   <input v-model="drafts[item.id].fileName" :disabled="!isEditable(item)" />
+                  <small v-if="item.suggestedFileName">最终名称：{{ item.suggestedFileName }}。防重编号由系统按同名文件顺序分配，最多4个字符。</small>
                 </label>
                 <label>
                   <span>建议分类（决定归档目录）</span>

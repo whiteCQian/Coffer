@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { computed, nextTick, ref, watch } from 'vue'
 
 import * as fileApi from '@/api/files'
@@ -55,7 +55,6 @@ const loading = ref(false)
 /** 当前打开文件拉取的真实详情（切换/关闭时置空，未加载完成为 null） */
 const detail = ref<FileDetailResponse | null>(null)
 const reanalyzing = ref(false)
-const approvingChat = ref(false)
 
 function fromDetail(d: FileDetailResponse): DrawerFile {
   const tags: DrawerFile['tags'] = [
@@ -168,32 +167,6 @@ async function reanalyze() {
   }
 }
 
-async function approveForChat() {
-  const id = props.modelValue
-  if (!id || approvingChat.value) return
-  approvingChat.value = true
-  try {
-    const { data } = await fileApi.assessFileModel(id, 'CHAT')
-    const target = data.data
-    if (target.mode === 'LOCAL') {
-      ElMessage.info(`当前聊天模型在本地运行：${target.endpointUrl}（${target.modelName}），无需远端授权`)
-      return
-    }
-    const risk = target.risk === 'SENSITIVE' ? '本地规则发现敏感信息'
-      : target.risk === 'UNKNOWN' ? '本地无法判断正文是否敏感' : '未命中本地敏感规则'
-    try {
-      await ElMessageBox.confirm(
-        `文件：${file.value?.fileName ?? id}\n版本：${target.revision}\n风险：${risk}\n` +
-          `聊天目标：${target.endpointUrl}（${target.modelName}）\n\n仅授权此文件版本向该端点发送内容。`,
-        '确认文件模型授权',
-        { confirmButtonText: '授权此文件', cancelButtonText: '取消', type: 'warning', customClass: 'model-consent-dialog' },
-      )
-    } catch { return }
-    await fileApi.approveFileModel(id, 'CHAT', target)
-    ElMessage.success('已授权当前文件版本用于聊天搜索')
-  } finally { approvingChat.value = false }
-}
-
 /* —— 标签确认 / 拒绝 —— */
 const editingTag = ref<number | null>(null)
 const correction = ref('')
@@ -243,6 +216,9 @@ const previewLink = computed(() => {
   const page = props.source?.sourceKind === 'PAGE' ? props.source.sourceStart : undefined
   return page && file.value?.fileType?.toLowerCase() === 'pdf' ? `${url}#page=${page}` : url
 })
+const downloadLink = computed(() => file.value
+  ? fileApi.fileDownloadUrl(file.value.id, detail.value?.revision ?? props.revision)
+  : undefined)
 
 const confirmedTags = computed(() => file.value?.tags.filter((t) => t.status === 'CONFIRMED') ?? [])
 const pendingTags = computed(
@@ -298,6 +274,7 @@ watch(
           <button class="head-x" title="关闭" @click="close">✕</button>
         </div>
         <div class="drawer-actions">
+          <a v-if="downloadLink" class="act-btn is-download" :href="downloadLink" :download="file.fileName">下载到本地</a>
           <button
             v-if="file.status === 'COMPLETED' || file.status === 'FAILED'"
             class="act-btn is-reanalyze"
@@ -305,9 +282,6 @@ watch(
             @click="reanalyze"
           >
             {{ reanalyzing ? '分析中…' : '重新分析' }}
-          </button>
-          <button class="act-btn" :disabled="approvingChat" @click="approveForChat">
-            {{ approvingChat ? '授权中…' : '授权聊天搜索' }}
           </button>
           <button class="act-btn" @click="openAction('rename')">重命名</button>
           <button class="act-btn is-danger" @click="openAction('delete')">删除</button>
@@ -584,6 +558,7 @@ watch(
 
 .drawer-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 14px;
 }
@@ -599,6 +574,13 @@ watch(
 }
 .act-btn:hover {
   background: var(--hover-bg);
+}
+.act-btn.is-download {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .act-btn.is-danger {
   margin-left: auto;

@@ -39,6 +39,7 @@ public class VectorIndexingService {
     private com.coffer.model.runtime.ModelExecutionSnapshotService snapshots;
     @org.springframework.beans.factory.annotation.Autowired
     private com.coffer.model.runtime.ModelContentGate contentGate;
+    @org.springframework.beans.factory.annotation.Autowired private com.coffer.model.runtime.AdminEmbeddingService adminEmbedding;
 
     /**
      * Indexes an already parsed document. All chunks must reach Redis before the
@@ -49,10 +50,14 @@ public class VectorIndexingService {
     }
 
     public boolean indexParsedText(FileMetadata metadata, String text, String generation) {
-        if (!embeddingProperties.isEnabled()) {
-            return false;
-        }
+        var snapshot = com.coffer.model.runtime.ModelExecutionContext.current();
+        if (adminEmbedding != null ? snapshot == null || !adminEmbedding.isAvailable(snapshot.mode()) : !embeddingProperties.isEnabled()) return false;
         try {
+            String targetGeneration = generation;
+            if (adminEmbedding != null) {
+                String active = redisVectorStore.prepareEmbeddingIndex(adminEmbedding.indexVersion());
+                if (targetGeneration == null) targetGeneration = active;
+            }
             EmbeddingProvider model = embeddingProvider.getIfAvailable();
             if (model == null) {
                 throw new IllegalStateException("Embedding 已启用，但 Embedding Provider 未初始化");
@@ -73,17 +78,18 @@ public class VectorIndexingService {
                         throw new EmbeddingRetryException("Embedding 调用失败", e);
                     }
                 });
+                if (adminEmbedding != null) snapshots.requireCurrent(snapshot);
                 String documentId = metadata.getId() + ":" + metadata.getRevision() + ":" + index;
                 VectorRecord record = new VectorRecord(documentId, metadata.getId(), index, chunk,
-                        embeddingProperties.getModelName(), vector, null);
-                if (generation == null) redisVectorStore.save(record);
-                else redisVectorStore.save(record, generation);
+                        model.modelName(), vector, null);
+                if (targetGeneration == null) redisVectorStore.save(record);
+                else redisVectorStore.save(record, targetGeneration);
                 documentIds.add(documentId);
             }
-            if (generation == null) redisVectorStore.finishFileIndex(metadata.getId(), documentIds);
-            else redisVectorStore.finishFileIndex(metadata.getId(), documentIds, generation);
+            if (targetGeneration == null) redisVectorStore.finishFileIndex(metadata.getId(), documentIds);
+            else redisVectorStore.finishFileIndex(metadata.getId(), documentIds, targetGeneration);
             metadata.setVectorIndexedAt(LocalDateTime.now());
-            metadata.setVectorIndexGeneration(generation == null ? redisVectorStore.activeGeneration() : generation);
+            metadata.setVectorIndexGeneration(targetGeneration == null ? redisVectorStore.activeGeneration() : targetGeneration);
             log.info("文件向量索引完成 fileId={}, chunks={}", metadata.getId(), chunks.size());
             return true;
         } catch (Exception e) {

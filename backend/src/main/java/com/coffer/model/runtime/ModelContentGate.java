@@ -16,7 +16,7 @@ import java.time.LocalDateTime;
 import java.util.Objects;
 import java.util.UUID;
 
-/** Fail-closed, per-file authorization checked immediately before remote file content submission. */
+/** Chat defaults to the owner's files, with target, ownership and content identity checks retained. */
 @Service @RequiredArgsConstructor @com.coffer.auth.service.OwnerOnly
 public class ModelContentGate {
     private final SensitiveContentClassifier classifier;
@@ -36,17 +36,21 @@ public class ModelContentGate {
         requireRiskAllowed(file, classifier.classify(file, text, locallyParsed), capability);
     }
 
-    /** Search metadata is about a file too: classify its locally parsed source before exposing it to chat. */
+    /** Chat lookup needs no separate file approval or pre-parsing merely to return a file name. */
     public void requireFileAllowed(FileMetadata file, ModelRuntimeCapability capability) {
-        requireRiskAllowed(file, classifySource(file), capability);
+        requireOwnedFile(file);
+        requireRiskAllowed(file, capability == ModelRuntimeCapability.CHAT
+                ? SensitiveContentClassifier.Risk.UNKNOWN : classifySource(file), capability);
     }
 
     private void requireRiskAllowed(FileMetadata file, SensitiveContentClassifier.Risk risk,
                                     ModelRuntimeCapability capability) {
+        requireOwnedFile(file);
         var target = ModelExecutionContext.require();
         snapshots.requireCurrent(target);
         if (!target.endpoints().containsKey(capability)) throw new ModelConsentRequiredException();
         verifyObject(file);
+        if (capability == ModelRuntimeCapability.CHAT) return;
         if (target.mode() == GovernanceRunMode.LOCAL) return;
         if (risk == SensitiveContentClassifier.Risk.CLEAR) return;
         if (file.getContentSha256() == null || file.getId() == null || file.getRevision() == null)
@@ -94,6 +98,7 @@ public class ModelContentGate {
     }
 
     private FileStoragePort.StoredObject verifyObject(FileMetadata file) {
+        requireOwnedFile(file);
         var current = com.coffer.file.application.VerifiedFileSource.statBounded(storage, file.getStoragePath());
         if (current.sha256() == null || !current.sha256().matches("[0-9a-f]{64}")
                 || !Objects.equals(file.getFileSize(), current.size()))
@@ -106,6 +111,11 @@ public class ModelContentGate {
         } else if (!file.getContentSha256().equals(current.sha256()))
             throw new com.coffer.file.storage.StorageConflictException("文件正文已发生变化");
         return current;
+    }
+
+    private void requireOwnedFile(FileMetadata file) {
+        if (file == null || !Objects.equals(file.getOwnerId(), com.coffer.auth.service.TenantContext.requireOwnerId()))
+            throw new ResourceNotFoundException();
     }
 
     private SensitiveContentClassifier.Risk classifySource(FileMetadata file) {

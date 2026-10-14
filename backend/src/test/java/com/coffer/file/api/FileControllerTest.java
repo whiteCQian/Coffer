@@ -379,6 +379,55 @@ class FileControllerTest extends com.coffer.auth.OwnerModelSubmissionTestSupport
                 .andExpect(jsonPath("$.msg").value("资源不存在或已不可用"));
     }
 
+    @ParameterizedTest
+    @CsvSource({"UTF-8,UTF-8", "GBK,GB18030", "GB18030,GB18030", "UTF-16,UTF-16BE", "UTF-16LE,UTF-16LE"})
+    void textPreviewDeclaresEncodingAndDownloadPreservesOriginalBytes(String sourceEncoding, String expectedEncoding) throws Exception {
+        String text = "中文文件预览：任务书。\n第二行内容\n";
+        byte[] encoded = (sourceEncoding.equals("UTF-16LE") ? "\uFEFF" + text : text)
+                .getBytes(java.nio.charset.Charset.forName(sourceEncoding));
+        byte[] bytes = encoded;
+        String path = ownerPath("files/preview.txt");
+        var object = new FileStoragePort.StoredObject(path, bytes.length, "a".repeat(64), "etag");
+        when(fileService.requireFileForContent(13L)).thenReturn(FileMetadata.builder()
+                .fileName("中文预览.txt").fileType("txt").storagePath(path)
+                .fileSize((long) bytes.length).contentSha256("a".repeat(64)).build());
+        when(storage.stat(path)).thenReturn(object);
+        when(storage.readIfUnchanged(path, object)).thenAnswer(call -> new ByteArrayInputStream(bytes));
+        var preview = mockMvc.perform(get("/api/files/13/content"))
+                .andExpect(status().isOk()).andExpect(content().bytes(bytes))
+                .andExpect(header().string("Content-Type", "text/plain;charset=" + expectedEncoding))
+                .andExpect(header().string("Content-Length", Integer.toString(bytes.length)))
+                .andExpect(header().string("Content-Disposition", org.hamcrest.Matchers.startsWith("inline;")))
+                .andReturn().getResponse();
+        assertThat(preview.getContentAsString().replace("\uFEFF", "")).isEqualTo(text);
+        mockMvc.perform(get("/api/files/13/content").param("download", "true"))
+                .andExpect(status().isOk()).andExpect(content().bytes(bytes))
+                .andExpect(header().string("Content-Disposition", org.hamcrest.Matchers.startsWith("attachment;")));
+        when(storage.readRangeIfUnchanged(path, object, 2L, 4L))
+                .thenReturn(new ByteArrayInputStream(java.util.Arrays.copyOfRange(bytes, 2, 6)));
+        mockMvc.perform(get("/api/files/13/content").header("Range", "bytes=2-5"))
+                .andExpect(status().isPartialContent())
+                .andExpect(header().string("Content-Type", "text/plain;charset=" + expectedEncoding))
+                .andExpect(header().string("Content-Range", "bytes 2-5/" + bytes.length))
+                .andExpect(content().bytes(java.util.Arrays.copyOfRange(bytes, 2, 6)));
+    }
+
+    @Test
+    void downloadRetainsChineseFileNameAndOriginalBytes() throws Exception {
+        String path = stubContentFile(12L, 6L);
+        when(fileService.requireFileForContent(12L)).thenReturn(FileMetadata.builder()
+                .fileName("采购合同-0001.pdf").fileType("pdf").storagePath(path)
+                .fileSize(6L).contentSha256("a".repeat(64)).build());
+        when(storage.readIfUnchanged(eq(path), any()))
+                .thenReturn(new ByteArrayInputStream("ABCDEF".getBytes(StandardCharsets.UTF_8)));
+        var response = mockMvc.perform(get("/api/files/12/content").param("download", "true"))
+                .andExpect(status().isOk()).andExpect(content().bytes("ABCDEF".getBytes(StandardCharsets.UTF_8)))
+                .andReturn().getResponse();
+        var disposition = org.springframework.http.ContentDisposition.parse(response.getHeader("Content-Disposition"));
+        assertThat(disposition.getType()).isEqualTo("attachment");
+        assertThat(disposition.getFilename()).isEqualTo("采购合同-0001.pdf");
+    }
+
     @Test
     void contentStreamsCurrentObjectSizeWithSafeHeadersAndDownloadMode() throws Exception {
         String path = stubContentFile(6L, 6L);

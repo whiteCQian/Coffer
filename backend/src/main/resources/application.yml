@@ -175,7 +175,7 @@ coffer:
         api-key: ${COFFER_LOCAL_EMBEDDING_API_KEY:}
   # 模型密钥不放在配置文件中，由 /api/settings/models 管理并加密存入数据库。
   models:
-    allowed-api-hosts: ${COFFER_ALLOWED_MODEL_API_HOSTS:api.deepseek.com,dashscope.aliyuncs.com}
+    allowed-api-hosts: ${COFFER_ALLOWED_MODEL_API_HOSTS:api.deepseek.com,dashscope.aliyuncs.com,maas.qianwenaiapi.com}
     deepseek:
       base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com/v1}
       model-name: ${DEEPSEEK_MODEL:deepseek-chat}
@@ -199,7 +199,7 @@ coffer:
   # 模型调用日志（ModelCallLogger 切面通过 @Value 读取，false 时直接放行不记录）
   model-log:
     enabled: ${COFFER_MODEL_LOG_ENABLED:false}
-  # Embedding 默认关闭。启用后复用 QWEN_VL 的加密密钥，避免在配置文件中保存明文密钥。
+  # 连接超时与旧版本兼容默认值；实际向量连接与启用状态由管理员在管理控制台统一保存。
   embedding:
     enabled: ${COFFER_EMBEDDING_ENABLED:false}
     base-url: ${EMBEDDING_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}

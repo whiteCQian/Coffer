@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
 
 class FileSearchToolConsentTest {
-    @Test void unapprovedHitIsOmittedAndTheUserGetsAnAuthorizationHint() {
+    @Test void invalidModelTargetOmitsTheHitAndGivesASettingsHint() {
         var files = mock(FileMetadataRepository.class);
         var search = mock(HybridSearchService.class);
         var access = mock(PrivateFileAccess.class);
@@ -43,7 +43,7 @@ class FileSearchToolConsentTest {
 
         String result = tool.searchFiles(7L, "query");
 
-        assertThat(result).contains("public.txt", "尚未授权").doesNotContain("private.txt");
+        assertThat(result).contains("public.txt", "设置页", "当前聊天模型配置").doesNotContain("private.txt", "文件详情中", "尚未授权");
         verify(citations, never()).capture(eq(blocked), anyDouble(), anyString(), any());
         verify(citations).capture(eq(allowed), eq(0.7), eq("LEXICAL"), isNull());
     }

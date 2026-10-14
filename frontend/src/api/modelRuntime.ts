@@ -24,6 +24,7 @@ export interface RuntimeEndpointConfig {
   credentialProvider: 'DEEPSEEK' | 'QWEN_VL' | null
   source: 'DEFAULT' | 'CUSTOM' | 'REQUEST'
   embeddingEnabled: boolean
+  useChatCredentials: boolean
 }
 
 export interface RuntimeEndpointRequest {
@@ -32,6 +33,7 @@ export interface RuntimeEndpointRequest {
   baseUrl?: string
   modelName?: string
   apiKey?: string
+  useChatCredentials?: boolean
 }
 
 export interface RuntimeEndpointTestResponse {

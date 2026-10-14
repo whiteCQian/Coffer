@@ -86,6 +86,7 @@ public class AccountService {
     public void disableUser(AuthPrincipal actor, Long targetId) {
         requireAdmin(actor);
         AppUser target = requireUser(targetId);
+        requireNotDeleting(target);
         if (target.getRole() != AuthRole.USER) {
             throw new AuthFailureException(HttpStatus.BAD_REQUEST, "不能停用管理员账号");
         }
@@ -103,6 +104,7 @@ public class AccountService {
     public void enableUser(AuthPrincipal actor, Long targetId) {
         requireAdmin(actor);
         AppUser target = requireUser(targetId);
+        requireNotDeleting(target);
         if (target.getRole() != AuthRole.USER) {
             throw new AuthFailureException(HttpStatus.BAD_REQUEST, "不能通过此操作启用管理员账号");
         }
@@ -118,6 +120,7 @@ public class AccountService {
         requireAdmin(actor);
         validatePassword(newPassword);
         AppUser target = requireUser(targetId);
+        requireNotDeleting(target);
         if (target.getRole() != AuthRole.USER) {
             throw new AuthFailureException(HttpStatus.BAD_REQUEST, "不能通过此操作重置管理员凭据");
         }
@@ -184,6 +187,11 @@ public class AccountService {
     private AppUser requireUser(Long id) {
         return users.findById(id)
                 .orElseThrow(() -> new AuthFailureException(HttpStatus.NOT_FOUND, "账号不存在"));
+    }
+
+    private void requireNotDeleting(AppUser target) {
+        if (target.getDeletionStatus() != null)
+            throw new AuthFailureException(HttpStatus.CONFLICT, "账号正在删除，不能重新启用或修改凭据");
     }
 
     private void revokeSessions(String username) {

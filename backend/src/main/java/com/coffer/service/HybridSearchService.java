@@ -34,6 +34,8 @@ public class HybridSearchService {
     private Executor vectorExecutor;
     @Autowired(required = false)
     private VectorIndexCoordinator coordinator;
+    @Autowired private com.coffer.model.runtime.AdminEmbeddingService adminEmbedding;
+    @Autowired private com.coffer.model.runtime.ModelExecutionSnapshotService modelSnapshots;
 
     public List<FileMetadata> search(String keyword) {
         return searchWithEvidence(keyword).stream()
@@ -95,16 +97,25 @@ public class HybridSearchService {
 
     private List<VectorSearchResult> vectorHits(Long owner, String keyword) {
         if (!authorization.requireOwner().equals(owner)) throw new org.springframework.security.access.AccessDeniedException("无权执行此操作");
-        if (!properties.isEnabled()) return List.of();
+        if (adminEmbedding != null) {
+            var snapshot = com.coffer.model.runtime.ModelExecutionContext.current();
+            if (snapshot == null || !adminEmbedding.isAvailable(snapshot.mode())) return List.of();
+        } else if (!properties.isEnabled()) return List.of();
         boolean locked = false;
         if (coordinator != null) {
             locked = coordinator.tryRead(properties.getVectorTimeoutMs());
             if (!locked) return List.of();
         }
         try {
+            String generation = adminEmbedding == null ? null : redisVectorStore.prepareEmbeddingIndex(adminEmbedding.indexVersion());
             EmbeddingProvider model = embeddingProvider.getIfAvailable();
             if (model == null) return List.of();
-            return redisVectorStore.searchSimilar(model.embed(keyword).content().vector(), properties.getTopK());
+            float[] vector = model.embed(keyword).content().vector();
+            if (adminEmbedding != null) {
+                modelSnapshots.requireCurrent(com.coffer.model.runtime.ModelExecutionContext.require());
+                return redisVectorStore.searchSimilar(vector, properties.getTopK(), generation);
+            }
+            return redisVectorStore.searchSimilar(vector, properties.getTopK());
         } catch (Exception e) {
             log.warn("向量路失败，降级词法路，异常类型={}", e.getClass().getSimpleName());
             return List.of();

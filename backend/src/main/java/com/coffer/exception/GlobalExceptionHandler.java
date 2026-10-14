@@ -31,6 +31,15 @@ import java.net.SocketTimeoutException;
 @Slf4j
 @ControllerAdvice
 public class GlobalExceptionHandler {
+    @ExceptionHandler(com.coffer.model.runtime.ModelEndpointValidationException.class)
+    public ResponseEntity<Result<?>> handleModelEndpointValidation(com.coffer.model.runtime.ModelEndpointValidationException exception) {
+        return build(400, exception.getMessage());
+    }
+    @ExceptionHandler(com.coffer.model.runtime.ModelModeNotReadyException.class)
+    public ResponseEntity<Result<?>> handleModelModeNotReady(com.coffer.model.runtime.ModelModeNotReadyException exception) {
+        log.warn("模型模式未就绪");
+        return build(400, exception.getMessage());
+    }
     @ExceptionHandler(com.coffer.web.WebLimitException.class)
     public ResponseEntity<Result<?>> handleWebLimit(com.coffer.web.WebLimitException exception) {
         var result = ResponseEntity.status(exception.status());

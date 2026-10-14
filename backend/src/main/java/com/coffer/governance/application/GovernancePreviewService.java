@@ -196,10 +196,13 @@ public class GovernancePreviewService {
                 .orElseThrow(() -> new com.coffer.auth.service.ResourceNotFoundException());
         CategoryType category = request.getSuggestedCategory() == null
                 ? CategoryType.OTHER : request.getSuggestedCategory();
-        String suggestedPath = archiveObjectNameService.generateArchivePath(
-                category, fileName, metadata.getUploadTime());
+        String currentBase = com.coffer.util.ArchiveFileName.editableName(item.getSuggestedFileName(), item.getSuggestedPath());
+        boolean sameName = fileName.equals(item.getSuggestedFileName()) || fileName.equals(currentBase);
+        String suggestedPath = sameName && category.name().equals(item.getSuggestedCategory())
+                ? item.getSuggestedPath()
+                : archiveObjectNameService.generateArchivePath(category, sameName ? currentBase : fileName, metadata.getUploadTime());
 
-        item.setSuggestedFileName(fileName);
+        item.setSuggestedFileName(com.coffer.util.ArchiveFileName.fromPath(suggestedPath));
         item.setSuggestedCategory(category.name());
         item.setSuggestedPath(suggestedPath);
         item.setSuggestedSummary(limitSummary(request.getSuggestedSummary()));
@@ -561,13 +564,14 @@ public class GovernancePreviewService {
             AnalysisResult result = isImage(metadata.getFileType())
                     ? analyzeImage(metadata)
                     : analyzeText(metadata);
-            String suggestedFileName = metadata.getFileName();
+            String businessName = com.coffer.util.ArchiveFileName.sourceName(metadata.getFileName(),
+                    metadata.getStoragePath(), metadata.isArchived());
             CategoryType suggestedCategory = result.category() == null
                     ? CategoryType.OTHER : result.category();
-            item.setSuggestedFileName(suggestedFileName);
             item.setSuggestedCategory(suggestedCategory.name());
             item.setSuggestedPath(archiveObjectNameService.generateArchivePath(
-                    suggestedCategory, suggestedFileName, metadata.getUploadTime()));
+                    suggestedCategory, businessName, metadata.getUploadTime()));
+            item.setSuggestedFileName(com.coffer.util.ArchiveFileName.fromPath(item.getSuggestedPath()));
             item.setSuggestedSummary(limitSummary(result.summary()));
             item.setSuggestedTags(writeTags(result.tags()));
 

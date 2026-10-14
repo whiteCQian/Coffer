@@ -65,6 +65,12 @@ class ModelPrivacyIntegrationTest {
                     exchange.sendResponseHeaders(fail ? 500 : 200, bytes.length);
                     exchange.getResponseBody().write(bytes); exchange.close();
                 });
+                server.createContext("/v1/embeddings", exchange -> {
+                    requests.add(exchange.getRequestHeaders().getFirst("Authorization") + " " + new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                    byte[] body = "{\"object\":\"list\",\"data\":[{\"object\":\"embedding\",\"index\":0,\"embedding\":[0.2,0.8]}],\"model\":\"synthetic-vector\",\"usage\":{\"prompt_tokens\":1,\"total_tokens\":1}}".getBytes(StandardCharsets.UTF_8);
+                    exchange.getResponseHeaders().add("Content-Type", "application/json"); exchange.sendResponseHeaders(200, body.length);
+                    exchange.getResponseBody().write(body); exchange.close();
+                });
                 server.start();
             } catch (Exception e) { throw new IllegalStateException(e); }
         }
@@ -78,6 +84,9 @@ class ModelPrivacyIntegrationTest {
     @Import({HibernateTenantConfig.class, CurrentTenantResolver.class, OwnerAuthorization.class, OwnerAuthorizationAspect.class,
             SecurityConfig.class, AppUserDetailsService.class, ModelRuntimeModeService.class,
             ModelRuntimeEndpointConfigurationService.class, ModelRuntimeProviderFactory.class, SecretCryptoService.class,
+            AdminEmbeddingService.class, AdminAuthorization.class, ModelRuntimeConnectivityTester.class,
+            AdminEmbeddingController.class, EmbeddingStatusController.class, ModelRuntimeEndpointController.class,
+            RequestRateLimiter.class, ClientAddressResolver.class,
             ModelCredentialService.class, ModelExecutionSnapshotService.class, ModelSubmissionAspect.class,
             ModelExecutionSnapshotController.class, UserSecretRotationService.class, TaskRegistrationService.class,
             ModelDiagnosticsService.class, com.coffer.controller.ModelDiagnosticsController.class,
@@ -111,7 +120,12 @@ class ModelPrivacyIntegrationTest {
     @Autowired ModelDiagnosticsService diagnostics;
     @Autowired com.coffer.task.DiagnosticRetentionTask retention;
     AppUser a, b, admin;
+    @Autowired AdminEmbeddingService globalEmbedding;
+    @Autowired AdminEmbeddingSettingRepository globalSettings;
+    @Autowired ModelRuntimeProviderFactory factory;
+    @Autowired SecretCryptoService secretCrypto;
     @BeforeEach void setup() {
+        globalSettings.deleteAll(); globalSettings.saveAndFlush(new AdminEmbeddingSetting());
         TenantContext.clear(); SecurityContextHolder.clearContext();
         first.requests.clear(); second.requests.clear(); first.fail=false; second.fail=false;
         first.redirect=null; second.redirect=null;
@@ -124,7 +138,7 @@ class ModelPrivacyIntegrationTest {
     }
     @AfterEach void clear() { TenantContext.clear(); SecurityContextHolder.clearContext(); }
     void configure(Endpoint endpoint, String key) {
-        for (var capability : ModelRuntimeCapability.values()) {
+        for (var capability : List.of(ModelRuntimeCapability.CHAT, ModelRuntimeCapability.VISION)) {
             var request = new ModelRuntimeEndpointRequest();
             request.setMode(GovernanceRunMode.LOCAL); request.setCapability(capability);
             request.setBaseUrl(endpoint.url()); request.setModelName("test-model"); request.setApiKey(key);
@@ -239,5 +253,46 @@ class ModelPrivacyIntegrationTest {
                 .header("X-Coffer-Model-Version", version).header("X-Coffer-Allow-Sensitive", "true")).andExpect(status().isOk());
         mvc.perform(get("/api/model-execution/target").cookie(cookie(admin))).andExpect(status().isForbidden());
         assertThat(first.requests).hasSize(1);
+    }
+    @Test void embeddingManagementIsAdminOnlyAndLegacyUserWritesAreRejected() throws Exception {
+        var csrf = new jakarta.servlet.http.Cookie("XSRF-TOKEN", "token");
+        mvc.perform(get("/api/admin/embedding").cookie(cookie(a))).andExpect(status().isForbidden());
+        mvc.perform(put("/api/admin/embedding").cookie(cookie(a),csrf).header("X-XSRF-TOKEN","token")
+                .contentType("application/json").content("{}")).andExpect(status().isForbidden());
+        mvc.perform(get("/api/admin/embedding").cookie(cookie(admin))).andExpect(status().isOk());
+        mvc.perform(get("/api/settings/embedding").cookie(cookie(a))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.maskedApiKey").doesNotExist());
+        mvc.perform(put("/api/settings/runtime/config/API/EMBEDDING").cookie(cookie(a),csrf).header("X-XSRF-TOKEN","token")
+                .contentType("application/json").content("{}")).andExpect(status().isForbidden());
+        mvc.perform(delete("/api/settings/runtime/config/API/EMBEDDING").cookie(cookie(a),csrf).header("X-XSRF-TOKEN","token"))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/api/settings/runtime/config/test").cookie(cookie(a),csrf).header("X-XSRF-TOKEN","token")
+                .contentType("application/json").content("{\"mode\":\"API\",\"capability\":\"EMBEDDING\"}")).andExpect(status().isForbidden());
+        assertThat(first.requests).isEmpty(); assertThat(second.requests).isEmpty();
+    }
+    @Test void twoOwnersUseAdminVectorKeyWithoutCopyingItIntoTheirSnapshots() {
+        var adminAuth = new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                AuthPrincipal.from(admin), null, AuthPrincipal.from(admin).getAuthorities());
+        SecurityContextHolder.getContext().setAuthentication(adminAuth); TenantContext.clear();
+        var request = new AdminEmbeddingRequest(); request.setMode(GovernanceRunMode.LOCAL); request.setBaseUrl(first.url());
+        request.setModelName("synthetic-vector"); request.setDimensions(2); request.setApiKey("SYNTHETIC_ADMIN_VECTOR_KEY");
+        globalEmbedding.save(request); assertThat(globalEmbedding.validate().success()).isTrue(); globalEmbedding.enable(true);
+        SecurityContextHolder.clearContext();
+        first.requests.clear();
+        for (var owner : List.of(a,b)) TenantContext.runAs(owner.getId(), () -> {
+            var snapshot = snapshots.capture(snapshots.preview().configurationVersion(),true,"VECTOR_REBUILD");
+            assertThat(snapshot.endpoints().get(ModelRuntimeCapability.EMBEDDING).apiKey()).isEmpty();
+            assertThat(secretCrypto.decrypt(snapshotRows.findById(snapshot.id()).orElseThrow().getEncryptedConfiguration()))
+                    .doesNotContain("SYNTHETIC_ADMIN_VECTOR_KEY");
+            ModelExecutionContext.with(snapshot, () -> assertThat(factory.embedding(GovernanceRunMode.LOCAL).embed("synthetic test query").content().vector()).hasSize(2));
+        });
+        assertThat(first.requests).hasSize(2).allMatch(r -> r.startsWith("Bearer SYNTHETIC_ADMIN_VECTOR_KEY "));
+        assertThat(second.requests).isEmpty();
+        var old = TenantContext.supplyAs(a.getId(), () -> snapshots.capture(snapshots.preview().configurationVersion(),true,"CHAT"));
+        SecurityContextHolder.getContext().setAuthentication(adminAuth); TenantContext.clear();
+        request.setBaseUrl(second.url()); globalEmbedding.save(request);
+        SecurityContextHolder.clearContext();
+        TenantContext.runAs(a.getId(), () -> assertThatThrownBy(() -> snapshots.requireCurrent(old)).isInstanceOf(ModelConsentRequiredException.class));
+        assertThat(first.requests).hasSize(2); assertThat(second.requests).isEmpty();
     }
 }

@@ -2,11 +2,13 @@
 import AccountPanel from '@/components/AccountPanel.vue'
 import RuntimeAdminPanel from '@/components/RuntimeAdminPanel.vue'
 import DesktopBackupPanel from '@/components/DesktopBackupPanel.vue'
+import AdminEmbeddingPanel from '@/components/AdminEmbeddingPanel.vue'
 </script>
 <template>
   <div class="admin-page">
     <h1>管理控制台</h1>
-    <p>管理账号与查看运行数量。用户文件、对话和模型凭据仅向各自账号开放。</p>
+    <p>管理账号、统一向量服务与运行状态。用户文件、对话及 Chat / Vision 凭据仅向各自账号开放。</p>
+    <AdminEmbeddingPanel />
     <AccountPanel />
     <DesktopBackupPanel />
     <RuntimeAdminPanel />

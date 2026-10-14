@@ -7,6 +7,7 @@ export interface AuthUser {
   role: 'ADMIN' | 'USER'
   enabled: boolean
   createdAt: string
+  deletionStatus?: 'QUEUED' | 'RUNNING' | 'FAILED' | null
 }
 
 export interface AuthStatus {
@@ -45,3 +46,6 @@ export const enableUser = (id: number) => http.patch(`/admin/users/${id}/enable`
 export const resetUserPassword = (id: number, newPassword: string) =>
   http.post(`/admin/users/${id}/reset-password`, { newPassword })
 export const getAccountAudit = () => http.get<Result<AccountAudit[]>>('/admin/audit')
+export const deleteUser = (id: number, confirmation: string) =>
+  http.delete<Result<{ targetUserId: number; status: string }>>(`/admin/users/${id}`, { data: { confirmation, deleteData: true } })
+export const retryAccountDeletion = (id: number) => http.post(`/admin/users/${id}/retry-deletion`)

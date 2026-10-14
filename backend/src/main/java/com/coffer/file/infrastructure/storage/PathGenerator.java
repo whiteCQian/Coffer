@@ -57,8 +57,8 @@ public class PathGenerator {
     /**
      * 生成归档目标路径（分类目录归档）。
      *
-     * <p>默认使用序号 {@code 000} 生成归档路径。实际归档路径由归档对象名分配器传入同日同名序号，
-     * 格式为 {@code /{slug}/{yyyy}/{MM}/{dd}/{seq}-{sanitizedFilename}}。
+     * <p>默认使用后缀 {@code 0001} 生成归档路径。实际序号由归档对象名分配器传入，
+     * 格式为 {@code /{slug}/{yyyy}/{MM}/{dd}/{basename}-{counter}.{extension}}。
      *
      * @param category         文件分类，为空时按 OTHER 处理（归档到 uncategorized）
      * @param originalFilename 原始文件名（用于提取扩展名）
@@ -72,7 +72,7 @@ public class PathGenerator {
     /**
      * 生成带同日同名序号的归档目标路径。
      *
-     * @param sequenceNumber 同一天同名文件的三位十六进制序号，范围 0-4095
+     * @param sequenceNumber 同一天同名文件的零基序号，输出为四位36进制后缀（0001-ZZZZ）
      */
     public String generateArchivePath(CategoryType category,
                                       String originalFilename,
@@ -80,11 +80,8 @@ public class PathGenerator {
                                       int sequenceNumber) {
         CategoryType resolved = category == null ? CategoryType.OTHER : category;
         LocalDateTime time = uploadTime == null ? LocalDateTime.now() : uploadTime;
-        if (sequenceNumber < 0 || sequenceNumber > 0xFFF) {
-            throw new IllegalArgumentException("archive object sequence must be between 0 and 4095");
-        }
-        String fileName = String.format(Locale.ROOT, "%03X-%s", sequenceNumber,
-                sanitizeArchiveFilename(originalFilename));
+        String fileName = com.coffer.util.ArchiveFileName.numbered(
+                sanitizeArchiveFilename(com.coffer.util.ArchiveFileName.base(originalFilename)), sequenceNumber);
         if (desktop != null) desktop.ensureOwnerWorkspace();
         String path = String.format("users/%d/" + (desktop == null ? "" : "managed/") + "archive/%s/%04d/%02d/%02d/%s",
                 TenantContext.requireOwnerId(), resolved.getSlug(), time.getYear(), time.getMonthValue(), time.getDayOfMonth(), fileName);
@@ -92,7 +89,7 @@ public class PathGenerator {
         return path;
     }
 
-    private String sanitizeArchiveFilename(String originalFilename) {
+    public String sanitizeArchiveFilename(String originalFilename) {
         String sanitized = sanitizeFilename(originalFilename);
         int extensionSeparator = sanitized.lastIndexOf('.');
         if (extensionSeparator > 0 && extensionSeparator < sanitized.length() - 1) {

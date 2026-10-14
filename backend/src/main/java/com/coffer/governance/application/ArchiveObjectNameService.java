@@ -16,7 +16,7 @@ import java.time.LocalDateTime;
 import java.util.Locale;
 
 /**
- * 为归档对象分配“同一天、同名文件”的三位十六进制序号。
+ * 为归档对象分配同一账号、分类、日期和业务文件名下顺序递增的四位防重后缀。
  */
 @com.coffer.auth.service.OwnerOnly
 @Service
@@ -24,7 +24,7 @@ import java.util.Locale;
 public class ArchiveObjectNameService {
 
     private static final long ALLOCATOR_LOCK_ID = 1L;
-    private static final int MAX_SEQUENCE_NUMBER = 0xFFF;
+    private static final int MAX_SEQUENCE_NUMBER = com.coffer.util.ArchiveFileName.MAX_SEQUENCE_NUMBER;
 
     private final ArchiveObjectNameAllocatorLockRepository allocatorLockRepository;
     private final ArchiveObjectNameReservationRepository reservationRepository;
@@ -69,7 +69,8 @@ public class ArchiveObjectNameService {
         if (originalFilename == null || originalFilename.isBlank()) {
             return "unnamed-file";
         }
-        return Normalizer.normalize(originalFilename.trim(), Normalizer.Form.NFC)
+        String businessName = pathGenerator.sanitizeArchiveFilename(com.coffer.util.ArchiveFileName.base(originalFilename));
+        return Normalizer.normalize(businessName.trim(), Normalizer.Form.NFC)
                 .toLowerCase(Locale.ROOT);
     }
 }

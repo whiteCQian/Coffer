@@ -76,4 +76,22 @@ class ModelRuntimeModeServiceTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("尚未通过");
     }
+
+    @Test
+    void savedApiSettingsDoNotSilentlyActivateOrValidateTheMode() {
+        setting.setActiveMode(GovernanceRunMode.LOCAL);
+        assertThatThrownBy(service::requireActiveMode)
+                .isInstanceOf(ModelModeNotReadyException.class)
+                .hasMessageContainingAll("本地模式（LOCAL）", "Chat", "Vision", "测试当前模式", "启用该模式");
+        assertThat(setting.getActiveMode()).isEqualTo(GovernanceRunMode.LOCAL);
+        assertThat(setting.getApiValidatedAt()).isNull();
+    }
+
+    @Test
+    void validatedActiveModeStillRejectsRequestsForAnotherMode() {
+        setting.setApiValidatedAt(LocalDateTime.now());
+        assertThatThrownBy(() -> service.resolveForTask(GovernanceRunMode.LOCAL))
+                .isInstanceOf(ModelModeNotReadyException.class)
+                .hasMessageContainingAll("API 模式", "不一致", "启用");
+    }
 }

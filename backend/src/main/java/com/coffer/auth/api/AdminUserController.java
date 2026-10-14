@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.DeleteMapping;
 
 import java.time.Duration;
 import java.util.List;
@@ -34,6 +35,8 @@ public class AdminUserController {
     private final AccountService accounts;
     private final RequestRateLimiter rateLimiter;
     private final ClientAddressResolver clientAddressResolver;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.coffer.auth.service.AccountDeletionService deletions;
 
     @GetMapping("/users")
     public Result<List<AuthUserResponse>> users() {
@@ -76,5 +79,15 @@ public class AdminUserController {
         List<AccountAuditResponse> rows = accounts.listRecentAudit().stream()
                 .map(AccountAuditResponse::from).toList();
         return Result.success(rows);
+    }
+
+    @DeleteMapping("/users/{id}")
+    public Result<com.coffer.auth.service.AccountDeletionService.View> delete(@PathVariable long id,
+            @RequestBody com.coffer.auth.service.AccountDeletionService.Request request) {
+        return Result.success(deletions.request(id, request));
+    }
+    @PostMapping("/users/{id}/retry-deletion")
+    public Result<com.coffer.auth.service.AccountDeletionService.View> retryDeletion(@PathVariable long id) {
+        return Result.success(deletions.retry(id));
     }
 }

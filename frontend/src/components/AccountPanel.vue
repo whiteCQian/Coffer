@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import {
@@ -10,6 +10,8 @@ import {
   getAccountAudit,
   listUsers,
   resetUserPassword,
+  deleteUser,
+  retryAccountDeletion,
   type AccountAudit,
   type AuthUser,
 } from '@/api/auth'
@@ -23,15 +25,31 @@ const initialPassword = ref('')
 const busy = ref(false)
 const users = ref<AuthUser[]>([])
 const audit = ref<AccountAudit[]>([])
+const deletingId = ref<number | null>(null)
+const pendingDeletes = new Set<number>()
+let deletionPoll: ReturnType<typeof setInterval> | undefined
+let refreshing = false
 
 onMounted(() => {
   if (auth.isAdmin) void loadAdminData()
+  deletionPoll = setInterval(() => {
+    if (auth.isAdmin && (pendingDeletes.size || users.value.some(user => user.deletionStatus))) void loadAdminData()
+  }, 3000)
 })
+onUnmounted(() => { if (deletionPoll) clearInterval(deletionPoll) })
 
 async function loadAdminData() {
+  if (refreshing) return
+  refreshing = true
+  try {
   const [userResponse, auditResponse] = await Promise.all([listUsers(), getAccountAudit()])
   users.value = userResponse.data.data
+  for (const id of pendingDeletes) {
+    const user = users.value.find(user => user.id === id)
+    if (!user || user.deletionStatus) pendingDeletes.delete(id)
+  }
   audit.value = auditResponse.data.data
+  } finally { refreshing = false }
 }
 
 async function updatePassword() {
@@ -98,6 +116,32 @@ async function enable(user: AuthUser) {
   ElMessage.success('账号已启用')
 }
 
+async function removeUser(user: AuthUser) {
+  let confirmation: string
+  try {
+    const { value } = await ElMessageBox.prompt(`将永久删除 ${user.username} 的账号、文件、对话、个人模型配置及相关任务。此操作无法撤销。请输入完整账号名确认。`, '删除账号及数据', {
+      inputValidator: (value: string) => value === user.username || '账号名不一致，请重新输入',
+      confirmButtonText: '永久删除', cancelButtonText: '取消', type: 'warning',
+    })
+    confirmation = value
+  } catch { return }
+  deletingId.value = user.id
+  try {
+    await deleteUser(user.id, confirmation)
+    pendingDeletes.add(user.id)
+    await loadAdminData()
+    ElMessage.success('账号已停止访问，正在清理关联数据')
+  } finally { deletingId.value = null }
+}
+async function retryDeletion(user: AuthUser) {
+  deletingId.value = user.id
+  try { await retryAccountDeletion(user.id); pendingDeletes.add(user.id); await loadAdminData(); ElMessage.success('已重新提交账号清理') }
+  finally { deletingId.value = null }
+}
+function deletionLabel(status: AuthUser['deletionStatus']) {
+  return status === 'FAILED' ? '清理未完成，可重试' : status ? '删除中，正在清理数据' : ''
+}
+
 function formatDate(value: string) {
   return new Date(value).toLocaleString('zh-CN', { hour12: false })
 }
@@ -117,7 +161,7 @@ function formatDate(value: string) {
     <template v-if="auth.isAdmin">
       <div class="divider"></div>
       <h3>用户账号</h3>
-      <p class="note">管理员只管理账号状态与凭据。用户文件、标签、对话和任务按账号隔离。</p>
+      <p class="note">用户文件、标签、对话和任务按账号隔离。删除账号会同时清理关联数据，不能撤销。</p>
       <form class="form-grid create-grid" @submit.prevent="addUser">
         <label class="field"><span>新账号</span><input v-model="username" type="text" autocomplete="off" minlength="3" maxlength="64" required /></label>
         <label class="field"><span>初始密码（{{ auth.passwordHint }}）</span><input v-model="initialPassword" type="password" autocomplete="new-password" :minlength="auth.status.passwordMinLength ?? 8" maxlength="16" required /></label>
@@ -125,11 +169,16 @@ function formatDate(value: string) {
       </form>
       <div class="user-list">
         <article v-for="user in users" :key="user.id" class="user-row">
-          <div><strong>{{ user.username }}</strong><span>{{ user.role === 'ADMIN' ? '管理员' : '用户' }} · {{ user.enabled ? '启用' : '已停用' }}</span></div>
-          <div v-if="user.role === 'USER'" class="row-actions">
-            <button v-if="user.enabled" class="action-button" @click="resetPassword(user)">重置密码</button>
-            <button v-if="user.enabled" class="action-button danger" @click="disable(user)">停用</button>
-            <button v-else class="action-button" @click="enable(user)">启用</button>
+          <div><strong>{{ user.username }}</strong><span>{{ user.role === 'ADMIN' ? '管理员' : '用户' }} · {{ deletionLabel(user.deletionStatus) || (user.enabled ? '启用' : '已停用') }}</span></div>
+          <div class="row-actions">
+            <template v-if="user.role === 'USER' && !user.deletionStatus">
+              <button v-if="user.enabled" class="action-button" @click="resetPassword(user)">重置密码</button>
+              <button v-if="user.enabled" class="action-button danger" @click="disable(user)">停用</button>
+              <button v-else class="action-button" @click="enable(user)">启用</button>
+            </template>
+            <button v-if="user.deletionStatus === 'FAILED'" class="action-button danger" :disabled="deletingId === user.id" @click="retryDeletion(user)">重试删除</button>
+            <button v-else-if="user.id !== auth.user?.id && !user.deletionStatus" class="action-button danger" :disabled="deletingId === user.id" @click="removeUser(user)">删除账号</button>
+            <span v-if="user.id === auth.user?.id" class="note">当前账号</span>
           </div>
         </article>
       </div>

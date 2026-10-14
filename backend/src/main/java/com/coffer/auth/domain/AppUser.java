@@ -39,6 +39,9 @@ public class AppUser {
     @Column(name = "enabled", nullable = false)
     private boolean enabled;
 
+    @Column(name = "deletion_status", length = 16)
+    private String deletionStatus;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

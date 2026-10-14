@@ -21,7 +21,7 @@ class PathGeneratorTest {
         String path = pathGenerator.generateArchivePath(
                 CategoryType.CONTRACT, "销售合同.PDF", LocalDateTime.of(2025, 8, 29, 10, 30));
 
-        assertThat(path).isEqualTo("users/7/archive/contracts/2025/08/29/000-销售合同.pdf");
+        assertThat(path).isEqualTo("users/7/archive/contracts/2025/08/29/销售合同-0001.pdf");
     }
 
     @Test
@@ -37,7 +37,7 @@ class PathGeneratorTest {
                 CategoryType.REPORT, "无扩展名", LocalDateTime.of(2025, 6, 15, 12, 0));
 
         String fileName = path.substring("users/7/archive/reports/2025/06/15/".length());
-        assertThat(fileName).isEqualTo("000-无扩展名");
+        assertThat(fileName).isEqualTo("无扩展名-0001");
         assertThat(fileName).doesNotContain(".");
     }
 
@@ -56,14 +56,14 @@ class PathGeneratorTest {
                 CategoryType.IMAGE, "图?片.p n g", LocalDateTime.of(2025, 5, 5, 5, 5));
 
         String fileName = path.substring("users/7/archive/images/2025/05/05/".length());
-        assertThat(fileName).isEqualTo("000-图_片.p_n_g");
+        assertThat(fileName).isEqualTo("图_片-0001.p_n_g");
     }
 
     @Test
-    void sequenceUsesThreeUppercaseHexDigits() {
+    void sequenceUsesFourUppercaseBase36Characters() {
         String path = pathGenerator.generateArchivePath(
                 CategoryType.CONTRACT, "采购合同.TXT", LocalDateTime.of(2026, 9, 21, 10, 30), 0xAF);
 
-        assertThat(path).isEqualTo("users/7/archive/contracts/2026/09/21/0AF-采购合同.txt");
+        assertThat(path).isEqualTo("users/7/archive/contracts/2026/09/21/采购合同-004W.txt");
     }
 }

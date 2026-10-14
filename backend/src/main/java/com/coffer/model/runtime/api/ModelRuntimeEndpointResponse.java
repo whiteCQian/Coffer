@@ -5,7 +5,7 @@ import com.coffer.model.runtime.ModelRuntimeCapability;
 import lombok.Builder;
 import lombok.Value;
 
-/** Safe view of one effective runtime endpoint; API keys are always masked. */
+/** Safe editable endpoint settings; shared Chat connections are resolved at execution. */
 @Value
 @Builder
 public class ModelRuntimeEndpointResponse {
@@ -19,4 +19,5 @@ public class ModelRuntimeEndpointResponse {
     String credentialProvider;
     String source;
     boolean embeddingEnabled;
+    boolean useChatCredentials;
 }
