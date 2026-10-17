@@ -309,6 +309,12 @@ public class FileController {
     }
 
     /** Upload through the configured storage port with a client-stable retry key. */
+    @PostMapping("/save")
+    public Result<FileUploadResponse> saveFile(@Valid @ModelAttribute FileUploadRequest request,
+                                               @RequestHeader("Idempotency-Key") String idempotencyKey) {
+        return Result.success(fileUploadApplicationService.upload(request, idempotencyKey));
+    }
+
     @PostMapping("/upload")
     @com.coffer.model.runtime.ModelSubmission("UPLOAD")
     public Result<FileUploadResponse> uploadFile(@Valid @ModelAttribute FileUploadRequest request,

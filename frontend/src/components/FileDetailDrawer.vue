@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ElMessage } from 'element-plus'
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch, onUnmounted } from 'vue'
+import ArchiveConfirmationCard from '@/components/ArchiveConfirmationCard.vue'
+import { taskStateLabel } from '@/utils/status'
 
 import * as fileApi from '@/api/files'
 import * as governanceApi from '@/api/governance'
@@ -9,6 +11,7 @@ import type { ChatCitation, FileDetailResponse, FileStatus } from '@/api/types'
 import FileTile from '@/components/FileTile.vue'
 import WorkCopyPanel from '@/components/WorkCopyPanel.vue'
 import { desktopBridge } from '@/api/desktop'
+import { useOpenFile } from '@/composables/useOpenFile'
 import { formatBytes, shortTime, toDisplayTime } from '@/utils/format'
 
 /**
@@ -27,6 +30,7 @@ type DrawerFile = {
   uploadTime: string
   summary: string | null
   status: FileStatus
+  taskState?: string
   archived: boolean
   tags: { id: number; name: string; status: 'CONFIRMED' | 'PENDING_CONFIRMATION' | 'REJECTED' }[]
   previewUrl?: string
@@ -55,6 +59,15 @@ const loading = ref(false)
 /** 当前打开文件拉取的真实详情（切换/关闭时置空，未加载完成为 null） */
 const detail = ref<FileDetailResponse | null>(null)
 const reanalyzing = ref(false)
+const { openFile, isOpening } = useOpenFile()
+const editorPanel = ref<InstanceType<typeof WorkCopyPanel>>()
+const editorExpanded = ref(false), editing = ref(false)
+async function editFile() {
+  if (editing.value) return
+  editing.value = true; editorExpanded.value = true
+  try { await nextTick(); await editorPanel.value?.startEditing() }
+  finally { editing.value = false }
+}
 
 function fromDetail(d: FileDetailResponse): DrawerFile {
   const tags: DrawerFile['tags'] = [
@@ -78,6 +91,7 @@ function fromDetail(d: FileDetailResponse): DrawerFile {
     summary: d.summary,
     status: d.status ?? 'PENDING',
     archived: d.archived,
+    taskState: d.taskState,
     tags,
     previewUrl: d.previewUrl || undefined,
   }
@@ -247,6 +261,10 @@ watch(
   },
   { immediate: true },
 )
+const refreshTimer = setInterval(() => {
+  if (props.modelValue && !props.revision) void loadDetail(props.modelValue)
+}, 3000)
+onUnmounted(() => clearInterval(refreshTimer))
 </script>
 
 <template>
@@ -274,6 +292,8 @@ watch(
           <button class="head-x" title="关闭" @click="close">✕</button>
         </div>
         <div class="drawer-actions">
+          <button class="act-btn is-download" :disabled="isOpening(file.id)" @click="openFile(file.id, detail?.revision ?? props.revision, file.fileType)">{{ isOpening(file.id) ? '正在打开…' : '打开文件' }}</button>
+          <button v-if="desktopBridge && props.revision === undefined" class="act-btn" :disabled="editing" @click="editFile">{{ editing ? '正在准备…' : '编辑文件' }}</button>
           <a v-if="downloadLink" class="act-btn is-download" :href="downloadLink" :download="file.fileName">下载到本地</a>
           <button
             v-if="file.status === 'COMPLETED' || file.status === 'FAILED'"
@@ -299,7 +319,7 @@ watch(
           <template v-else>
             <FileTile :file-type="file.fileType" size="lg" />
             <p class="preview-note">
-              {{ desktopBridge ? '文档可通过下方的工作副本，在外部应用中查看或编辑。' : '该类型暂不支持内嵌预览' }}<template v-if="previewLink && !desktopBridge">
+              {{ desktopBridge ? '点击“打开文件”查看；需要修改时选择“编辑文件”。查看副本的改动不会写回文件库。' : '该类型暂不支持内嵌预览' }}<template v-if="previewLink && !desktopBridge">
                 ，可
                 <a class="preview-link" :href="previewLink" target="_blank" rel="noreferrer">打开文件预览</a>
               </template>
@@ -321,8 +341,9 @@ watch(
           </p>
         </section>
 
+        <ArchiveConfirmationCard v-if="detail && !file.archived && props.revision === undefined" :file="detail" @changed="loadDetail(file.id); emit('changed', file.id)" @later="close()" />
         <!-- 标签 -->
-        <section class="block">
+        <section v-if="file.archived" class="block">
           <div class="block-title-row">
             <h3 class="block-title">标签</h3>
             <span class="block-count">
@@ -386,7 +407,7 @@ watch(
               <dt>状态</dt>
               <dd class="meta-value">
                 <span class="state-chip" :class="`is-${file.status.toLowerCase()}`">
-                  {{ file.status === 'COMPLETED' ? 'AI 已完成解析' : file.status === 'PROCESSING' ? 'AI 处理中' : file.status === 'FAILED' ? '解析失败' : '排队中' }}
+                  {{ taskStateLabel(file) }}
                 </span>
               </dd>
             </div>
@@ -405,7 +426,10 @@ watch(
           </dl>
         </section>
 
-        <WorkCopyPanel :key="file.id" :file-id="file.id" @saved="emit('changed', file.id); loadDetail(file.id)" />
+        <details v-if="desktopBridge && props.revision === undefined" :open="editorExpanded" class="file-editor-details" @toggle="editorExpanded = ($event.target as HTMLDetailsElement).open">
+          <summary>编辑与版本保存</summary>
+          <WorkCopyPanel :key="file.id" ref="editorPanel" :file-id="file.id" @saved="emit('changed', file.id); loadDetail(file.id)" />
+        </details>
       </div>
     </aside>
 
@@ -415,7 +439,7 @@ watch(
       <p class="drawer-loading-text">{{ loading ? '正在加载文件详情…' : '无法加载该文件（可能已被删除）' }}</p>
     </aside>
     <aside v-else-if="props.inline" class="drawer-panel inspector-empty">
-      <span class="empty-file-icon">▤</span><h2>文件详情</h2><p>选择一个文件，查看预览、AI 摘要和标签。</p><small>也可以双击文件查看详情</small>
+      <span class="empty-file-icon">▤</span><h2>文件详情</h2><p>选择一个文件，查看预览、AI 摘要和标签。</p><small>双击文件可直接打开</small>
     </aside>
 
     <!-- 动作模态：仅在有文件上下文时展示 -->

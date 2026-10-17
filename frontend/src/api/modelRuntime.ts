@@ -47,7 +47,8 @@ export function getRuntimeModeStatus() {
 }
 
 export function validateRuntimeMode(mode: RuntimeMode) {
-  return http.post<Result<RuntimeModeStatus>>('/settings/runtime/validate', { mode })
+  // Chat and Vision probes run sequentially and each has its own bounded deadline.
+  return http.post<Result<RuntimeModeStatus>>('/settings/runtime/validate', { mode }, { timeout: 210000 })
 }
 
 export function switchRuntimeMode(mode: RuntimeMode) {
@@ -70,5 +71,5 @@ export function deleteRuntimeEndpoint(mode: RuntimeMode, capability: RuntimeCapa
 }
 
 export function testRuntimeEndpoint(request: RuntimeEndpointRequest) {
-  return http.post<Result<RuntimeEndpointTestResponse>>('/settings/runtime/config/test', request)
+  return http.post<Result<RuntimeEndpointTestResponse>>('/settings/runtime/config/test', request, { timeout: 90000 })
 }

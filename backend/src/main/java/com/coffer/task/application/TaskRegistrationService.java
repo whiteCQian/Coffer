@@ -66,7 +66,8 @@ public class TaskRegistrationService {
     }
 
     private GovernanceRunMode captureMode() {
-        return runtimeModeService == null ? GovernanceRunMode.API : runtimeModeService.requireActiveMode();
+        return runtimeModeService == null || com.coffer.model.runtime.ModelExecutionContext.current() == null
+                ? GovernanceRunMode.API : runtimeModeService.requireActiveMode();
     }
 
     public String findSnapshotId(String taskId) {

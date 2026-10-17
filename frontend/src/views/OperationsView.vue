@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Download, Refresh, Search, View } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 import * as governanceApi from '@/api/governance'
 import * as fileOperations from '@/api/fileOperations'
@@ -362,11 +362,49 @@ async function rollbackItem(item: ArchiveOperationItemResponse) {
   } finally { rollbackLoading.value = false }
 }
 
-onMounted(() => { load(); loadFileOperations() })
+const recent = ref<ArchiveOperationItemResponse[]>([]), recentName = ref(''), attention = ref(false), recentPage = ref(0), recentPages = ref(1), recentError = ref(''), recentLoading = ref(false), recentBusy = ref(false)
+async function loadRecent(reset=false) {
+  if (recentLoading.value) return
+  if (reset) recentPage.value=0
+  recentLoading.value=true
+  try {
+    const {data}=await governanceApi.recentOperations({name:recentName.value.trim() || undefined,attention:attention.value,page:recentPage.value,size:20})
+    recent.value=data.data.content;recentPages.value=data.data.totalPages;recentError.value=''
+  } catch {recentError.value='最近操作暂时无法读取，请重试；文件库仍可访问。'}
+  finally {recentLoading.value=false}
+}
+async function recentAction(item:ArchiveOperationItemResponse, undo=false) {
+  if (recentBusy.value) return
+  if (undo) {
+    try {await ElMessageBox.confirm('撤销会恢复归档前的名称、分类和标签；不会恢复已移除的外部来源文件。', '撤销整理', {type:'warning'})} catch {return}
+  }
+  recentBusy.value=true
+  try {
+    if (undo) await governanceApi.rollbackArchiveOperationItem(item.batchId,item.id)
+    else await governanceApi.retryArchiveOperation(item.batchId)
+    await loadRecent()
+  } finally {recentBusy.value=false}
+}
+function openTechnical() {void load();void loadFileOperations()}
+onMounted(() => { void loadRecent() })
+const recentTimer=setInterval(() => {void loadRecent()},5000)
+onUnmounted(() => clearInterval(recentTimer))
 </script>
 
 <template>
-  <div class="pg operations-page">
+  <div class="pg operations-page" role="region" aria-label="操作记录内容" tabindex="0">
+    <header class="pg-head"><div><h1 class="pg-title">最近操作</h1><p class="pg-sub">按文件查看归档结果，处理异常或撤销整理。</p></div><button class="ghost-btn" :disabled="recentLoading" @click="loadRecent()">刷新</button></header>
+    <section class="pg-panel recent-panel">
+      <form class="recent-filter" @submit.prevent="loadRecent(true)"><input v-model="recentName" class="field-input" placeholder="按文件名查找最近操作" aria-label="操作文件名" /><label><input v-model="attention" type="checkbox" @change="loadRecent(true)" />只看需要处理</label><button class="primary-btn">查找</button></form>
+      <p v-if="recentError" role="alert">{{ recentError }}</p>
+      <p v-if="!recent.length && !recentLoading">{{ recentName || attention ? '没有匹配的操作记录' : '添加并归档文件后，操作记录会出现在这里。' }}</p>
+      <article v-for="item in recent" :key="item.id" class="recent-row">
+        <div><strong>{{ item.targetFileName || item.sourceFileName }}</strong><p>{{ toDisplayTime(item.createdAt) }} · 归档 · {{ itemStatusLabel(item.executionStatus) }}<template v-if="item.rollbackStatus !== 'NOT_REQUESTED'"> · 撤销：{{ rollbackLabel(item.rollbackStatus) }}</template></p><p v-if="itemFailure(item)">文件已保存，归档未完成：{{ itemFailure(item) }}</p></div>
+        <div class="head-actions"><RouterLink :to="{path:'/files',query:{file:String(item.fileId)}}">查看文件</RouterLink><button v-if="item.executionStatus === 'FAILED'" class="ghost-btn" :disabled="recentBusy" @click="recentAction(item)">重试归档</button><button v-if="canRollbackItem(item)" class="ghost-btn" :disabled="recentBusy" @click="recentAction(item,true)">撤销整理</button><details><summary>技术详情</summary><p>批次 {{ item.batchId }} · 执行 {{ item.attempts }} 次</p><p>{{ item.sourcePath }} → {{ item.targetPath }}</p></details></div>
+      </article>
+      <div class="pager"><button class="pager-btn" :disabled="recentPage===0 || recentLoading" @click="recentPage--;loadRecent()">上一页</button><span>第 {{ recentPage+1 }} / {{ Math.max(1,recentPages) }} 页</span><button class="pager-btn" :disabled="recentPage+1>=recentPages || recentLoading" @click="recentPage++;loadRecent()">下一页</button></div>
+    </section>
+    <details class="technical-ledger" @toggle="($event.target as HTMLDetailsElement).open && openTechnical()"><summary>技术详情／导出与维护</summary>
     <header class="pg-head">
       <div>
         <h1 class="pg-title">操作台账</h1>
@@ -623,14 +661,30 @@ onMounted(() => { load(); loadFileOperations() })
         </div>
       </section>
     </div>
+    </details>
   </div>
 </template>
 
 <style scoped>
+.operations-page > * { margin-bottom:18px; }
+.recent-panel { flex:none; } .recent-filter {display:flex;gap:12px;flex-wrap:wrap;align-items:center;}
+.recent-filter>.field-input {flex:1;min-width:180px;} .recent-row {padding:16px 0;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;overflow-wrap:anywhere;}
+.recent-row strong {font-size:14px;} .recent-row p {font-size:12px;color:var(--text-2);margin:5px 0;}
+.technical-ledger>summary,.recent-row summary {cursor:pointer;color:var(--accent);} .technical-ledger>.pg-head {margin:20px 0;} .technical-ledger .pg-panel {margin-bottom:16px;}
+
 .operations-page {
-  overflow: auto;
+  height: 100%;
+  max-height: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  display: block;
+  min-height: 0;
   padding-right: 4px;
+  scrollbar-gutter: stable;
 }
+.technical-ledger { min-width: 0; }
+.operations-page .pg-head { flex-wrap: wrap; gap: 12px; }
 .head-actions,
 .filter-actions {
   display: flex;
@@ -728,14 +782,15 @@ button:disabled {
 .ledger-layout {
   display: grid;
   grid-template-columns: minmax(300px, 0.85fr) minmax(0, 1.5fr);
+  align-items: start;
   gap: var(--gap);
-  min-height: 0;
-  flex: 1;
+  min-width: 0;
 }
 .batch-panel,
 .detail-panel {
+  min-width: 0;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 .panel-heading,
 .detail-head,
@@ -750,6 +805,7 @@ button:disabled {
 }
 .panel-title {
   margin: 0;
+  overflow-wrap: anywhere;
   color: var(--text-1);
   font-family: var(--font-display);
   font-size: 16px;
@@ -760,14 +816,14 @@ button:disabled {
 .batch-list,
 .detail-list {
   min-height: 0;
-  overflow-y: auto;
+  overflow: visible;
   display: flex;
   flex-direction: column;
   gap: 8px;
   margin-top: 14px;
 }
 .batch-list {
-  flex: 1;
+  flex: none;
 }
 .batch-row {
   width: 100%;
@@ -793,6 +849,8 @@ button:disabled {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.batch-row-head code { min-width: 0; flex: 1; }
+.panel-heading > div, .detail-head > div, .detail-item-head > div { min-width: 0; }
 .status-pill,
 .item-status {
   flex: none;
@@ -836,6 +894,7 @@ button:disabled {
 }
 .batch-row-meta {
   margin-top: 8px;
+  flex-wrap: wrap;
 }
 .batch-counts {
   margin-top: 7px;
@@ -863,6 +922,7 @@ button:disabled {
 .detail-head {
   align-items: flex-start;
   flex: none;
+  flex-wrap: wrap;
 }
 .eyebrow {
   margin: 0 0 5px;
@@ -894,7 +954,7 @@ button:disabled {
   color: var(--warn);
 }
 .detail-list {
-  flex: 1;
+  flex: none;
 }
 .detail-item {
   padding: 13px;
@@ -934,6 +994,7 @@ button:disabled {
   color: var(--text-3);
   font-size: 10.5px;
 }
+.path-grid code { white-space: normal; overflow-wrap: anywhere; }
 .detail-item-meta {
   justify-content: flex-start;
   flex-wrap: wrap;
@@ -976,10 +1037,6 @@ button:disabled {
   .ledger-layout {
     grid-template-columns: 1fr;
     overflow: visible;
-  }
-  .batch-panel,
-  .detail-panel {
-    min-height: 380px;
   }
 }
 @media (max-width: 620px) {

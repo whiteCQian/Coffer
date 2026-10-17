@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { taskStateLabel } from '@/utils/status'
 import { Search, UploadFilled, Grid, List, Refresh, ChatDotRound, Fold, Expand, FolderOpened, ArrowRight } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
@@ -18,6 +19,7 @@ import { useAuthStore } from '@/stores/auth'
 import { desktopBridge } from '@/api/desktop'
 import ChatDock from '@/layout/ChatDock.vue'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { useOpenFile } from '@/composables/useOpenFile'
 import { formatBytes, shortTime, toDisplayTime } from '@/utils/format'
 
 /**
@@ -26,6 +28,23 @@ import { formatBytes, shortTime, toDisplayTime } from '@/utils/format'
  */
 const PAGE_SIZE = 12
 const auth = useAuthStore()
+const { openFile, isOpening } = useOpenFile()
+let inspectTimer: ReturnType<typeof setTimeout> | undefined
+function inspectClickedFile(id: number, event: MouseEvent) {
+  clearTimeout(inspectTimer)
+  if (event.detail > 1) return
+  // Let a double-click finish before the small-window inspector can cover its second click.
+  if (desktopBridge && windowWidth.value <= 960) inspectTimer = setTimeout(() => inspect(id), 500)
+  else inspect(id)
+}
+onUnmounted(() => clearTimeout(inspectTimer))
+function openListedFile(id: number, event?: MouseEvent) {
+  clearTimeout(inspectTimer)
+  if (event?.target instanceof Element && event.target.closest('input,button,a,label')) return
+  const file = items.value.find(item => item.id === id)
+  contextMenu.value = null
+  void openFile(id, undefined, file?.fileType)
+}
 const windowWidth=useWindowWidth(),contentElement=ref<HTMLElement>(),contentWidth=ref(0)
 const sidePanelMax=computed(()=>Math.max(280,Math.min(600,contentWidth.value-328)))
 const {width:sidePanelWidth,resize:resizeSidePanel,commit:saveSidePanel,reset:resetSidePanel}=usePaneWidth('coffer:side-panel-width',340,280,sidePanelMax)
@@ -67,7 +86,7 @@ function imagePreview(file: ListItem) {
 function markImageUnavailable(id: number) { unavailableImages.value = new Set(unavailableImages.value).add(id) }
 function openContext(event: MouseEvent, id: number) {
   event.preventDefault()
-  contextMenu.value = { id, x: Math.max(8, Math.min(event.clientX, window.innerWidth - 190)), y: Math.max(8, Math.min(event.clientY, window.innerHeight - 160)) }
+  contextMenu.value = { id, x: Math.max(8, Math.min(event.clientX, window.innerWidth - 190)), y: Math.max(8, Math.min(event.clientY, window.innerHeight - 210)) }
 }
 function dismissContext() { contextMenu.value = null }
 function onKey(event: KeyboardEvent) {
@@ -115,6 +134,8 @@ type ListItem = {
   /** 展示用 'YYYY-MM-DD HH:mm'（由后端 ISO 归一化） */
   uploadTime: string
   summary: string | null
+  taskState?: string
+  archived: boolean
   status: FileStatus | null
   tags: { id: number; name: string; status: string }[]
 }
@@ -128,6 +149,8 @@ function mapRow(it: FileListResponse): ListItem {
     uploadTime: toDisplayTime(it.uploadTime),
     summary: it.summary,
     status: it.status,
+    taskState: it.taskState,
+    archived: it.archived,
     tags: (it.tags ?? []).map((t) => ({
       id: t.tagId,
       name: t.tagName,
@@ -318,7 +341,8 @@ const taskDestination = computed(() => auth.isPersonal ? { path: '/', query: { v
 const pendingDestination = computed(() => auth.isPersonal ? { path: '/', query: { view: 'pending' } } : { path: '/', hash: '#web-task-progress' })
 
 function descOf(f: ListItem) {
-  if (f.status === 'FAILED') return '解析失败'
+  if (f.archived) return f.summary || '已归档，可以查找和取回'
+  if (f.status === 'FAILED') return '文件已保存；可先归档或重试 AI 分析'
   if (f.status === 'PROCESSING') return 'AI 解析中…'
   if (f.status === 'PENDING') return '排队等待解析'
   const hasTag = (f.tags ?? []).some((t) => t.status === 'CONFIRMED')
@@ -326,12 +350,34 @@ function descOf(f: ListItem) {
 }
 
 function stateMini(f: ListItem) {
-  if (f.status === 'COMPLETED' && f.tags.some(tag => tag.status === 'PENDING_CONFIRMATION')) return { label: '待确认', cls: 'is-wait' }
-  if (f.status === 'COMPLETED') return { label: '完成', cls: 'is-ok' }
-  if (f.status === 'PROCESSING') return { label: '处理中', cls: 'is-run' }
-  if (f.status === 'FAILED') return { label: '失败', cls: 'is-fail' }
-  return { label: '排队', cls: 'is-wait' }
+  return { label: taskStateLabel(f), cls: f.archived ? 'is-ok' : f.taskState === 'ARCHIVING' ? 'is-run' : f.status === 'FAILED' || f.taskState === 'ARCHIVE_FAILED' ? 'is-fail' : 'is-wait' }
 }
+const archiving = ref(false), archiveResult = ref(''), aiQuestion = ref('')
+const eligibleSelected = computed(() => items.value.filter(f => selectedIds.value.has(f.id) && !f.archived && !['PENDING','PROCESSING'].includes(f.status ?? '') && !['ARCHIVING','ARCHIVE_BLOCKED','ROLLING_BACK'].includes(f.taskState ?? '')))
+async function archiveSelected() {
+  if (archiving.value) return
+  const selected = eligibleSelected.value.slice(); if (!selected.length) return
+  archiving.value = true; archiveResult.value = `正在提交 ${selected.length} 个文件…`
+  let accepted = 0
+  for (const file of selected) {
+    try {
+      if (file.taskState === 'ARCHIVE_FAILED') {
+        const { data } = await governanceApi.searchArchiveOperationItems({ fileId:file.id, size:1 })
+        if (!data.data.content[0]) throw new Error('未找到归档任务')
+        await governanceApi.retryArchiveOperation(data.data.content[0].batchId)
+      } else {
+        const { data } = await fileApi.getFileDetail(file.id)
+        await governanceApi.confirmSavedFile(file.id, { revision:data.data.revision })
+      }
+      accepted++; selectedIds.value.delete(file.id)
+    } catch { /* Keep failed selections for a targeted retry. */ }
+  }
+  archiveResult.value = `已受理 ${accepted} 个，${selected.length - accepted} 个未受理；文件已保存，未受理项可重试。`
+  archiving.value = false; await reload()
+}
+function findWithAi() { aiQuestion.value = keyword.value; aiMounted.value = true; aiOpen.value = true }
+const listTimer = setInterval(() => { if (!loading.value && !archiving.value) void loadList() }, 5000)
+onUnmounted(() => clearInterval(listTimer))
 
 const uploadInput = ref<HTMLInputElement>()
 const nativeImport = ref<InstanceType<typeof DesktopImportPanel>>()
@@ -352,9 +398,13 @@ async function onUploadPicked(e: Event) {
     lastUpload.value = { signature, requestId: crypto.randomUUID() }
   }
   try {
-    await fileApi.uploadFile(fd, lastUpload.value.requestId)
+    try { await fileApi.uploadFile(fd, lastUpload.value.requestId) }
+    catch {
+      await ElMessageBox.confirm('AI 暂不可用或尚未授权。可以先安全保存文件，稍后整理；普通查找和取回仍可用。', '仅保存文件', { confirmButtonText:'仅保存', cancelButtonText:'返回' })
+      await fileApi.saveFileOnly(fd, lastUpload.value.requestId)
+    }
     lastUpload.value = null
-    ElMessage.success(`「${picked.name}」已上传，AI 开始解析…`)
+    ElMessage.success(`「${picked.name}」已保存，可在详情查看整理状态`)
     reload()
   } catch {
     /* 拦截器已弹错 */
@@ -379,7 +429,7 @@ onUnmounted(() => { listRequest++; clearInterval(pollTimer); window.removeEventL
       <input ref="uploadInput" type="file" hidden @change="onUploadPicked" />
     </header>
     <div class="workbench-toolbar">
-      <label class="desk-search"><el-icon><Search /></el-icon><input ref="searchInput" v-model="keyword" type="search" placeholder="搜索文件名、摘要或标签" aria-label="搜索文件名、摘要或标签" /><kbd>Ctrl K</kbd></label>
+      <label class="desk-search"><el-icon><Search /></el-icon><input ref="searchInput" v-model="keyword" type="search" placeholder="输入文件名、记得的内容，或描述要找的文件" aria-label="搜索文件名、摘要或标签" /><kbd>Ctrl K</kbd></label>
       <button class="desk-button ai-search-link" @click="aiMounted = true; aiOpen = true"><el-icon><ChatDotRound /></el-icon>用 AI 找文件</button>
       <select v-model="sortMode" class="desk-sort" aria-label="文件排序"><option v-for="option in SORT_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option></select>
       <div class="view-switch" aria-label="文件展示方式"><button :class="{ active: viewMode === 'list' }" title="列表视图" aria-label="列表视图" :aria-pressed="viewMode === 'list'" @click="viewMode = 'list'"><el-icon><List /></el-icon></button><button :class="{ active: viewMode === 'grid' }" title="网格视图" aria-label="网格视图" :aria-pressed="viewMode === 'grid'" @click="viewMode = 'grid'"><el-icon><Grid /></el-icon></button></div>
@@ -395,11 +445,11 @@ onUnmounted(() => { listRequest++; clearInterval(pollTimer); window.removeEventL
     </div>
     <div ref="contentElement" class="workbench-content" :style="auth.isPersonal?{'--workbench-side-width':`${sidePanelWidth}px`}:undefined">
       <section class="file-browser" aria-label="文件浏览区" :aria-busy="loading">
-        <div v-if="selectedCount" class="selection-toolbar"><strong>已选择 {{ selectedCount }} 个文件</strong><button class="desk-button" @click="createPreview">生成整理预览</button><button class="desk-button" @click="reanalyzeSelected">重新分析</button><button class="desk-text-button" @click="clearSelection">取消选择</button></div>
-        <div class="file-scroll">
+        <div v-if="selectedCount" class="selection-toolbar"><strong>已选择 {{ selectedCount }} 个文件</strong><button class="desk-button is-primary" :disabled="archiving || !eligibleSelected.length" @click="archiveSelected">{{ archiving ? '正在提交…' : `确认并归档这 ${eligibleSelected.length} 个文件` }}</button><details><summary>高级整理</summary><button class="desk-button" @click="createPreview">历史整理预览</button></details><button class="desk-button" @click="reanalyzeSelected">重新分析</button><button class="desk-text-button" @click="clearSelection">取消选择</button></div>
+        <p v-if="archiveResult" role="status">{{ archiveResult }}</p><div class="file-scroll">
           <table v-if="items.length && viewMode === 'list'" class="file-table">
             <thead><tr><th class="check-column"><input type="checkbox" :checked="allPageSelected" :indeterminate="selectedCount > 0 && !allPageSelected" aria-label="选择本页全部文件" @change="togglePageSelection" /></th><th>名称</th><th class="tags-column">标签</th><th class="date-column">导入时间</th><th class="size-column">大小</th><th class="state-column">状态</th><th class="download-column">操作</th></tr></thead>
-            <tbody><tr v-for="file in items" :key="file.id" :class="{ inspected: drawerId === file.id, selected: selectedIds.has(file.id) }" tabindex="0" @click="inspect(file.id)" @keydown.enter.prevent="inspect(file.id)" @keydown.space.prevent="toggleSelection(file.id)" @contextmenu="openContext($event, file.id)">
+            <tbody><tr v-for="file in items" :key="file.id" :class="{ inspected: drawerId === file.id, selected: selectedIds.has(file.id) }" tabindex="0" @click="inspectClickedFile(file.id, $event)" @dblclick="openListedFile(file.id, $event)" @keydown.enter.prevent="openListedFile(file.id)" @keydown.space.prevent="toggleSelection(file.id)" @contextmenu="openContext($event, file.id)">
               <td class="check-column"><input type="checkbox" :checked="selectedIds.has(file.id)" :aria-label="`选择 ${file.fileName}`" @click.stop @keydown.stop @change="toggleSelection(file.id)" /></td>
               <td><div class="desk-file-name"><FileTile :file-type="file.fileType" size="sm" /><div><span :title="file.fileName">{{ file.fileName }}</span><small>{{ descOf(file) }}</small></div></div></td>
               <td class="tags-column"><div class="desk-row-tags"><span v-for="tag in file.tags.filter(t => t.status !== 'REJECTED').slice(0, 2)" :key="tag.id" class="desk-tag" :class="{ pending: tag.status === 'PENDING_CONFIRMATION' }">{{ tag.name }}</span><span v-if="!file.tags.length" class="muted">—</span></div></td>
@@ -407,17 +457,17 @@ onUnmounted(() => { listRequest++; clearInterval(pollTimer); window.removeEventL
               <td class="download-column"><a class="file-download" :href="fileApi.fileDownloadUrl(file.id)" :download="file.fileName" :aria-label="`下载 ${file.fileName}`" @click.stop @keydown.stop>下载</a></td>
             </tr></tbody>
           </table>
-          <div v-else-if="items.length" class="desk-file-grid"><article v-for="file in items" :key="file.id" class="desk-file-card" :class="{ inspected: drawerId === file.id, selected: selectedIds.has(file.id) }" tabindex="0" @click="inspect(file.id)" @keydown.enter.prevent="inspect(file.id)" @contextmenu="openContext($event, file.id)"><div class="desk-card-top"><input type="checkbox" :checked="selectedIds.has(file.id)" :aria-label="`选择 ${file.fileName}`" @click.stop @keydown.stop @change="toggleSelection(file.id)" /><span class="desk-state" :class="stateMini(file).cls">{{ stateMini(file).label }}</span></div><div class="desk-card-preview"><img v-if="imagePreview(file)" :src="`/api/files/${file.id}/content`" :alt="file.fileName" loading="lazy" @error="markImageUnavailable(file.id)" /><FileTile v-else :file-type="file.fileType" size="lg" /></div><h3 :title="file.fileName">{{ file.fileName }}</h3><p>{{ descOf(file) }}</p><div class="desk-row-tags"><span v-for="tag in file.tags.filter(t => t.status !== 'REJECTED').slice(0, 2)" :key="tag.id" class="desk-tag" :class="{ pending: tag.status === 'PENDING_CONFIRMATION' }">{{ tag.name }}</span></div><footer>{{ shortTime(file.uploadTime) }}<span>{{ formatBytes(file.fileSize) }}</span></footer></article></div>
-          <div v-else class="desk-empty"><el-icon><FolderOpened /></el-icon><h2>{{ loading ? '正在读取文件库…' : loadFailed ? '文件库暂时无法加载' : keyword || activeTag ? '没有找到匹配的文件' : '你的文件库，从这里开始' }}</h2><p>{{ loadFailed ? (auth.isPersonal ? '请检查本地后台状态，再刷新重试。' : '请检查服务连接，再刷新重试。') : keyword || activeTag ? '试试其他关键词，或清除当前筛选条件。' : '导入文档、图片和资料，在这里浏览、查找与整理。' }}</p><button class="desk-button" @click="loadFailed ? reload() : keyword || activeTag ? resetFilters() : onUploadClick()">{{ loadFailed ? '重新加载' : keyword || activeTag ? '清除筛选' : '导入第一个文件' }}</button></div>
+          <div v-else-if="items.length" class="desk-file-grid"><article v-for="file in items" :key="file.id" class="desk-file-card" :class="{ inspected: drawerId === file.id, selected: selectedIds.has(file.id) }" tabindex="0" @click="inspectClickedFile(file.id, $event)" @dblclick="openListedFile(file.id, $event)" @keydown.enter.prevent="openListedFile(file.id)" @contextmenu="openContext($event, file.id)"><div class="desk-card-top"><input type="checkbox" :checked="selectedIds.has(file.id)" :aria-label="`选择 ${file.fileName}`" @click.stop @keydown.stop @change="toggleSelection(file.id)" /><span class="desk-state" :class="stateMini(file).cls">{{ stateMini(file).label }}</span></div><div class="desk-card-preview"><img v-if="imagePreview(file)" :src="`/api/files/${file.id}/content`" :alt="file.fileName" loading="lazy" @error="markImageUnavailable(file.id)" /><FileTile v-else :file-type="file.fileType" size="lg" /></div><h3 :title="file.fileName">{{ file.fileName }}</h3><p>{{ descOf(file) }}</p><div class="desk-row-tags"><span v-for="tag in file.tags.filter(t => t.status !== 'REJECTED').slice(0, 2)" :key="tag.id" class="desk-tag" :class="{ pending: tag.status === 'PENDING_CONFIRMATION' }">{{ tag.name }}</span></div><footer>{{ shortTime(file.uploadTime) }}<span>{{ formatBytes(file.fileSize) }}</span></footer></article></div>
+          <div v-else class="desk-empty"><el-icon><FolderOpened /></el-icon><h2>{{ loading ? '正在读取文件库…' : loadFailed ? '文件库暂时无法加载' : keyword || activeTag ? '没有找到匹配的文件' : '你的文件库，从这里开始' }}</h2><p>{{ loadFailed ? (auth.isPersonal ? '请检查本地后台状态，再刷新重试。' : '请检查服务连接，再刷新重试。') : keyword || activeTag ? '试试其他关键词，或清除当前筛选条件。' : '导入文档、图片和资料，在这里浏览、查找与整理。' }}</p><button v-if="keyword.trim() && !loading && !loadFailed" class="desk-button is-primary" @click="findWithAi">用 AI 查找“{{ keyword }}”</button><button class="desk-button" @click="loadFailed ? reload() : keyword || activeTag ? resetFilters() : onUploadClick()">{{ loadFailed ? '重新加载' : keyword || activeTag ? '清除筛选' : '导入第一个文件' }}</button></div>
         </div>
-        <footer class="browser-footer"><span>{{ selectedCount ? `已选择 ${selectedCount} 个文件` : '单击查看详情 · 右键查看更多操作' }}</span><el-pagination v-if="totalPages > 1" v-model:current-page="page" :page-size="PAGE_SIZE" :total="total" layout="prev, pager, next" :pager-count="5" small /></footer>
+        <footer class="browser-footer"><span>{{ selectedCount ? `已选择 ${selectedCount} 个文件` : '单击查看详情 · 双击打开文件 · 右键查看更多操作' }}</span><el-pagination v-if="totalPages > 1" v-model:current-page="page" :page-size="PAGE_SIZE" :total="total" layout="prev, pager, next" :pager-count="5" small /></footer>
       </section>
       <PaneResizeHandle v-if="canResizePanels && (showInspector || aiOpen)" label="调整主区域右边界" :size="sidePanelWidth" :min="280" :max="sidePanelMax" reverse @resize="resizeSidePanel" @commit="saveSidePanel" @reset="resetSidePanel"/>
       <FileDetailDrawer v-show="showInspector && !aiOpen" v-model="drawerId" inline @changed="reload" @reanalyzed="goToReanalysis" />
-      <aside v-if="aiMounted" v-show="aiOpen" class="workbench-ai"><div class="ai-panel-heading"><span>AI 文件助手</span><button class="desk-icon-button" aria-label="收起 AI 助手" @click="aiOpen = false">×</button></div><ChatDock /></aside>
+      <aside v-if="aiMounted" v-show="aiOpen" class="workbench-ai"><div class="ai-panel-heading"><span>AI 文件助手</span><button class="desk-icon-button" aria-label="收起 AI 助手" @click="aiOpen = false">×</button></div><ChatDock :question="aiQuestion" /></aside>
     </div>
     <footer class="workbench-status"><span class="status-indicator"></span><span>{{ workspace.unavailable ? '任务状态暂时不可用' : !workspace.overview ? '正在读取任务状态…' : workspace.overview.processingCount ? `正在解析 ${workspace.overview.processingCount} 个文件` : '当前没有正在解析的文件' }}</span><RouterLink v-if="workspace.overview?.pendingConfirmCount" :to="pendingDestination">{{ workspace.overview.pendingConfirmCount }} 个文件待确认标签</RouterLink><RouterLink v-if="workspace.overview?.failedCount" :to="taskDestination" class="status-error">{{ workspace.overview.failedCount }} 个任务失败</RouterLink><RouterLink :to="taskDestination" class="status-tasks">查看任务 <el-icon><ArrowRight /></el-icon></RouterLink></footer>
-    <div v-if="contextMenu" class="file-context-menu" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @click.stop><button @click="inspect(contextMenu.id)">查看文件详情</button><a :href="fileApi.fileDownloadUrl(contextMenu.id)" :download="items.find(file => file.id === contextMenu?.id)?.fileName" @click="dismissContext">下载到本地</a><button @click="selectedIds = new Set([contextMenu.id]); contextMenu = null; createPreview()">生成整理预览</button><button @click="toggleSelection(contextMenu.id); contextMenu = null">{{ selectedIds.has(contextMenu.id) ? '取消选择' : '选择文件' }}</button></div>
+    <div v-if="contextMenu" class="file-context-menu" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @click.stop><button :disabled="isOpening(contextMenu.id)" @click="openListedFile(contextMenu.id)">打开文件</button><button @click="inspect(contextMenu.id)">查看文件详情</button><a :href="fileApi.fileDownloadUrl(contextMenu.id)" :download="items.find(file => file.id === contextMenu?.id)?.fileName" @click="dismissContext">下载到本地</a><button @click="selectedIds = new Set([contextMenu.id]); contextMenu = null; createPreview()">生成整理预览</button><button @click="toggleSelection(contextMenu.id); contextMenu = null">{{ selectedIds.has(contextMenu.id) ? '取消选择' : '选择文件' }}</button></div>
   </div>
 </template>
 

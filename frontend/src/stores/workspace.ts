@@ -18,7 +18,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       const results = await Promise.allSettled([listTagCandidates(), getOverview()])
       if (current !== epoch) return
       const [tagResult, taskResult] = results
-      if (tagResult.status === 'fulfilled') tags.value = (tagResult.value.data.data ?? []).slice(0, 12)
+      if (tagResult.status === 'fulfilled') tags.value = tagResult.value.data.data ?? []
       if (taskResult.status === 'fulfilled') {
         overview.value = taskResult.value.data.data
         unavailable.value = false

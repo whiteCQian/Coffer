@@ -47,6 +47,21 @@ async function open(row: WorkCopyView) {
   if (!confirmed) return
   await run(() => desktopBridge ? desktopBridge.openWorkCopy(row.id).then(data => ({ data: { data } })) : api.open(row.id))
 }
+async function startEditing() {
+  if (!props.fileId || busy.value) return
+  busy.value = true
+  try {
+    const existing = visibleRows.value.find(row => ['READY', 'OPENED', 'KEPT', 'NEEDS_DECISION'].includes(row.status) && !row.busy)
+    const row = existing ?? (await api.create(props.fileId)).data.data
+    rows.value = [row, ...rows.value.filter(item => item.id !== row.id)]
+    if (!['READY', 'OPENED', 'KEPT', 'NEEDS_DECISION'].includes(row.status)) { ElMessage.error(errors[row.errorCode ?? ''] || '无法准备编辑副本，请查看下方状态'); return }
+    const result = desktopBridge ? await desktopBridge.openWorkCopy(row.id) : (await api.open(row.id)).data.data
+    rows.value = [result, ...rows.value.filter(item => item.id !== result.id)]
+    if (result.status === 'OPENED') ElMessage.info('在外部应用中保存并关闭文档后，回到这里“保存新版本”')
+    else ElMessage.error(errors[result.errorCode ?? ''] || '无法打开编辑副本，请查看下方状态')
+  } finally { busy.value = false }
+}
+defineExpose({ startEditing })
 async function saveAs(row: WorkCopyView) {
   const confirmed = await ElMessageBox.confirm('将磁盘副本登记为独立文件，原件保留。另存后请在文件列表确认并重新分析。', '另存副本', { confirmButtonText: '另存独立文件' }).then(() => true).catch(() => false)
   if (!confirmed) return

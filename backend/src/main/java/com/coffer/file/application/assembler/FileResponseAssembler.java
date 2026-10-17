@@ -16,6 +16,8 @@ import java.util.List;
  */
 @Component
 public class FileResponseAssembler {
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.coffer.file.application.FileTaskState taskState;
 
     public FileListResponse toListResponse(FileMetadata metadata, String tagStatus,
                                            List<FileTagInfo> tags) {
@@ -29,6 +31,7 @@ public class FileResponseAssembler {
                 .category(metadata.getCategory() == null ? null : metadata.getCategory().name())
                 .status(metadata.getStatus() == null ? null : metadata.getStatus().name())
                 .archived(metadata.isArchived())
+                .taskState(taskState == null ? null : taskState.state(metadata))
                 .tagStatus(tagStatus)
                 .tags(tags)
                 .build();
@@ -54,6 +57,7 @@ public class FileResponseAssembler {
                 .previewUrl(previewUrl)
                 .category(metadata.getCategory() == null ? null : metadata.getCategory().name())
                 .archived(metadata.isArchived())
+                .taskState(taskState == null ? null : taskState.state(metadata))
                 .build();
     }
 }

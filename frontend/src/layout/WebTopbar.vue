@@ -18,7 +18,7 @@ onUnmounted(() => window.removeEventListener('keydown', shortcut))
 <template>
   <header class="web-topbar">
     <button class="web-menu-toggle" :aria-expanded="props.menuOpen" aria-controls="web-navigation" :aria-label="props.menuOpen ? '关闭导航' : '打开导航'" @click="emit('toggle-menu')"><el-icon><Menu /></el-icon></button>
-    <div class="web-breadcrumb"><span>{{ auth.isAdmin ? '管理空间' : '我的工作空间' }}</span><el-icon><ArrowRight /></el-icon><strong>{{ route.path === '/' ? '工作台' : route.path === '/search' ? 'AI 搜索' : route.path === '/operations' ? '操作记录' : route.meta.title }}</strong></div>
+    <div class="web-breadcrumb"><span>{{ auth.isAdmin ? '管理空间' : '我的工作空间' }}</span><el-icon><ArrowRight /></el-icon><strong>{{ route.path === '/' ? '工作台' : route.path === '/search' ? 'AI 搜索' : route.path === '/operations' ? '最近操作' : route.meta.title }}</strong></div>
     <form v-if="!auth.isAdmin" class="web-global-search" role="search" @submit.prevent="search"><el-icon><Search /></el-icon><input ref="input" v-model="query" type="search" placeholder="搜索我的文件" aria-label="搜索我的文件" /><kbd>Ctrl K</kbd></form>
     <span class="web-space-badge">{{ auth.isAdmin ? '管理员' : 'Web 文件空间' }}</span>
   </header>

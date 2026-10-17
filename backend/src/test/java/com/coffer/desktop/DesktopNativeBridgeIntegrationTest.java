@@ -63,6 +63,54 @@ class DesktopNativeBridgeIntegrationTest {
         var snapshot=new com.coffer.model.runtime.ModelExecutionContext.Snapshot(java.util.UUID.randomUUID().toString(),TenantContext.requireOwnerId(),"io-fixture",com.coffer.governance.domain.GovernanceRunMode.LOCAL,java.util.Map.of());
         com.coffer.model.runtime.ModelExecutionContext.with(snapshot,()->ctx.getBean(com.coffer.inbox.application.InboxImportScanner.class).confirm(id,target));
     }
+    @Test void httpConfirmationImportsChineseFilenameWithoutConfiguredEmbedding() throws Exception {
+        try (var ctx = start()) {
+            // Exercise the real HTTP consent/snapshot boundary without sending the fixture to a model.
+            org.springframework.test.util.ReflectionTestUtils.setField(
+                    ctx.getBean(com.coffer.file.application.async.AsyncFileProcessor.class),
+                    "executor", (java.util.concurrent.Executor) task -> { });
+            var now = java.time.LocalDateTime.now();
+            ctx.getBean(com.coffer.repository.ModelRuntimeSettingRepository.class).saveAndFlush(
+                    com.coffer.entity.ModelRuntimeSetting.builder().id(TenantContext.requireOwnerId())
+                            .activeMode(com.coffer.governance.domain.GovernanceRunMode.API)
+                            .apiValidatedAt(now).updatedAt(now).build());
+            var mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders
+                    .webAppContextSetup((org.springframework.web.context.WebApplicationContext) ctx).build();
+            var json = ctx.getBean(com.fasterxml.jackson.databind.ObjectMapper.class);
+            Path source = Files.writeString(temp.resolve("VPS搭建.txt"), "isolated native import regression");
+            var nativeInbox = ctx.getBean(NativeInboxService.class);
+            nativeInbox.commit(source.toString(), nativeInbox.preview(source.toString()));
+            ctx.getBean(com.coffer.inbox.application.InboxImportScanner.class).scanOnce();
+            var rows = ctx.getBean(com.coffer.inbox.infrastructure.persistence.InboxImportRecordRepository.class);
+            var row = rows.findAll().get(0);
+            assertThat(row.getStatus()).isEqualTo(com.coffer.inbox.domain.InboxImportStatus.AWAITING_CONFIRMATION);
+            assertThat(source).exists();
+
+            var targetResult = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                            .get("/api/model-execution/target"))
+                    .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                    .andReturn();
+            var target = json.readTree(targetResult.getResponse().getContentAsByteArray()).path("data");
+            assertThat(target.path("targets").findValuesAsText("capability")).containsExactly("CHAT", "VISION");
+            String confirmation = json.writeValueAsString(java.util.Map.of("targetPath", row.getTargetPath()));
+            mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                            .post("/api/inbox-imports/{id}/confirm", row.getId())
+                            .header("X-Coffer-Model-Version", target.path("configurationVersion").asText())
+                            .header("X-Coffer-Allow-Sensitive", "true")
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(confirmation))
+                    .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
+
+            var imported = rows.findById(row.getId()).orElseThrow();
+            assertThat(imported.getStatus()).isEqualTo(com.coffer.inbox.domain.InboxImportStatus.IMPORTED);
+            var file = ctx.getBean(com.coffer.file.infrastructure.persistence.FileMetadataRepository.class)
+                    .findById(imported.getFileId()).orElseThrow();
+            assertThat(file.getFileName()).isEqualTo("VPS搭建.txt");
+            assertThat(file.getStoragePath()).isEqualTo(row.getTargetPath());
+            assertThat(ctx.getBean(DesktopDataDirectory.class).libraryRoot().resolve(file.getStoragePath()))
+                    .hasContent("isolated native import regression");
+            assertThat(source).doesNotExist();
+        }
+    }
     @Test void sourceIsDeletedOnlyAfterFormalMetadataAndVerifiedBodyCommit() throws Exception {
         try(var ctx=start()) {
             var service=ctx.getBean(NativeInboxService.class);
@@ -97,4 +145,25 @@ class DesktopNativeBridgeIntegrationTest {
             assertThat(ctx.getBean(org.springframework.jdbc.core.JdbcTemplate.class).queryForObject("SELECT state FROM desktop_native_transfer",String.class)).isEqualTo("RETAINED");
         }
     }
+    @Test void newNativeDefaultCopyAndExplicitMoveSaveWithoutAIOrPathConfirmation() throws Exception {
+        try(var ctx=start()) {
+            var service=ctx.getBean(NativeInboxService.class);
+            Path copy=Files.writeString(temp.resolve("复制样本.txt"),"fictional-copy");
+            Long copyId=service.save(copy.toString(),service.preview(copy.toString()),false);
+            assertThat(copy).hasContent("fictional-copy");
+            var files=ctx.getBean(com.coffer.file.infrastructure.persistence.FileMetadataRepository.class);
+            var saved=files.findById(copyId).orElseThrow();
+            assertThat(saved.getStatus()).isEqualTo(com.coffer.file.domain.FileStatus.FAILED);
+            assertThat(ctx.getBean(DesktopDataDirectory.class).libraryRoot().resolve(saved.getStoragePath())).hasContent("fictional-copy");
+            ctx.getBean(NativeTransferService.class).recover();assertThat(copy).exists();
+            Path move=Files.writeString(temp.resolve("移动样本.txt"),"fictional-move");
+            Long moveId=service.save(move.toString(),service.preview(move.toString()),true);
+            assertThat(move).doesNotExist();
+            var moved=files.findById(moveId).orElseThrow();
+            assertThat(ctx.getBean(DesktopDataDirectory.class).libraryRoot().resolve(moved.getStoragePath())).hasContent("fictional-move");
+            var json=ctx.getBean(com.fasterxml.jackson.databind.ObjectMapper.class);
+            assertThat(json.readValue("{\"sourcePath\":\"fixture\"}",NativeInboxController.Confirmation.class).moveSource()).isFalse();
+        }
+    }
+
 }

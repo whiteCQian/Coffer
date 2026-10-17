@@ -38,7 +38,7 @@ public class ModelRuntimeConnectivityTester {
                 case CHAT -> buildChat(endpoint, 2048, 60).chat("Reply with OK only.");
                 case VISION -> new OpenAiCompatibleVisionProvider(
                         buildChat(endpoint, 1024, 60), endpoint.mode().name(), endpoint.modelName())
-                        .chat("Reply with OK only.");
+                        .chat(VisionConnectivityProbe.message());
                 case EMBEDDING -> {
                     float[] vector = buildEmbedding(endpoint, dimensions).embed("Coffer runtime endpoint validation").content().vector();
                     if (dimensions != null && vector.length != dimensions)
@@ -95,12 +95,20 @@ public class ModelRuntimeConnectivityTester {
 
     private String safeMessage(Exception failure) {
         for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof dev.langchain4j.exception.TimeoutException
+                    || cause instanceof java.net.http.HttpTimeoutException
+                    || cause instanceof java.net.SocketTimeoutException)
+                return "模型生成响应超时，服务未在等待时限内返回结果，请稍后重试";
+        }
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
             if (cause instanceof dev.langchain4j.exception.HttpException http) {
                 return switch (http.statusCode()) {
                     case 401, 403 -> "API Key 验证失败或没有访问权限，请确认 Key 与当前服务端点及地域匹配";
                     case 400, 404 -> "模型、接口或参数配置不匹配；RAG 请使用支持 Embedding 的向量模型和端点";
                     case 402 -> "模型服务额度或余额不足，请在对应服务控制台核查";
                     case 429 -> "模型服务限流，请稍后重试并检查服务额度";
+                    case 500 -> "模型服务内部错误（HTTP 500），请稍后重试";
+                    case 502, 503, 504 -> "模型服务暂时不可用（HTTP " + http.statusCode() + "），请稍后重试";
                     default -> "模型服务返回异常，请稍后重试";
                 };
             }

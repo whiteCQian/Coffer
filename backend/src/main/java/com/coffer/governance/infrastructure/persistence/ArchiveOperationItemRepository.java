@@ -21,6 +21,8 @@ public interface ArchiveOperationItemRepository extends com.coffer.auth.infrastr
 
     List<ArchiveOperationItem> findByFileIdOrderByCreatedAtDesc(Long fileId);
 
+    Optional<ArchiveOperationItem> findFirstByFileIdOrderByCreatedAtDescIdDesc(Long fileId);
+
     Optional<ArchiveOperationItem> findByBatchIdAndFileId(String batchId, Long fileId);
 
     Optional<ArchiveOperationItem> findByItemKey(String itemKey);
@@ -47,6 +49,13 @@ public interface ArchiveOperationItemRepository extends com.coffer.auth.infrastr
                                      @Param("fileId") Long fileId,
                                      @Param("status") com.coffer.governance.domain.ArchiveOperationItemExecutionStatus status,
                                      Pageable pageable);
+
+    @Query("select i from ArchiveOperationItem i where (:name is null or " +
+            "lower(i.sourceFileName) like lower(concat('%', :name, '%')) or " +
+            "lower(i.targetFileName) like lower(concat('%', :name, '%'))) " +
+            "and (:attention = false or i.executionStatus in (com.coffer.governance.domain.ArchiveOperationItemExecutionStatus.FAILED, " +
+            "com.coffer.governance.domain.ArchiveOperationItemExecutionStatus.CONFLICTED, com.coffer.governance.domain.ArchiveOperationItemExecutionStatus.MANUAL_REVIEW))")
+    Page<ArchiveOperationItem> searchRecent(@Param("name") String name, @Param("attention") boolean attention, Pageable pageable);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select i from ArchiveOperationItem i where i.id = :id")

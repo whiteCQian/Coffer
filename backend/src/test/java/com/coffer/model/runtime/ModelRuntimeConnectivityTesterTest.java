@@ -14,6 +14,74 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class ModelRuntimeConnectivityTesterTest {
     @Test
+    void visionProbeContainsSyntheticPixelsAndTimeoutDoesNotImplyBadCredentials() throws Exception {
+        var received = new AtomicReference<String>();
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            received.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = "{\"id\":\"fixture\",\"object\":\"chat.completion\",\"created\":1,\"model\":\"fixture\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"red\"},\"finish_reason\":\"stop\"}]}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        try {
+            var tester = new ModelRuntimeConnectivityTester(new EmbeddingProperties());
+            var endpoint = new ResolvedModelRuntimeEndpoint(GovernanceRunMode.LOCAL, ModelRuntimeCapability.VISION,
+                    "http://127.0.0.1:" + server.getAddress().getPort() + "/v1", "fixture", "", "CUSTOM", true, ModelProvider.QWEN_VL);
+            assertThat(tester.test(endpoint).isSuccess()).isTrue();
+            assertThat(received.get()).contains("image_url", "data:image/png;base64,");
+            String timeout = org.springframework.test.util.ReflectionTestUtils.invokeMethod(tester, "safeMessage", new java.net.http.HttpTimeoutException("fixture"));
+            assertThat(timeout).contains("超时").doesNotContain("Key", "密钥");
+        } finally { server.stop(0); }
+    }
+
+    @Test
+    void chatConnectionReportsProviderOutageAndRecoversWithoutChangingConfiguration() throws Exception {
+        var status = new AtomicInteger(503);
+        var calls = new AtomicInteger();
+        var received = new AtomicReference<String>();
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        // DeepSeek also accepts a bare origin as its Base URL; /v1 is not mandatory.
+        server.createContext("/chat/completions", exchange -> {
+            calls.incrementAndGet();
+            received.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            String payload = status.get() == 200
+                    ? "{\"id\":\"fixture\",\"object\":\"chat.completion\",\"created\":1,\"model\":\"deepseek-flash\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"OK\"},\"finish_reason\":\"stop\"}]}"
+                    : "{\"error\":{\"code\":\"service_unavailable_error\",\"message\":\"synthetic-key PRIVATE_BODY_MARKER\"}}";
+            byte[] body = payload.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(status.get(), body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            var endpoint = new ResolvedModelRuntimeEndpoint(GovernanceRunMode.LOCAL, ModelRuntimeCapability.CHAT,
+                    "http://127.0.0.1:" + server.getAddress().getPort(), "deepseek-flash", "synthetic-key",
+                    "CUSTOM", true, ModelProvider.DEEPSEEK);
+            var tester = new ModelRuntimeConnectivityTester(new EmbeddingProperties());
+            var unavailable = tester.test(endpoint);
+            assertThat(unavailable.isSuccess()).isFalse();
+            assertThat(unavailable.getMessage()).contains("HTTP 503", "暂时不可用")
+                    .doesNotContain("密钥配置", "synthetic-key", "PRIVATE_BODY_MARKER");
+            assertThat(calls.get()).isEqualTo(1);
+            assertThat(new ObjectMapper().readTree(received.get()).path("model").asText()).isEqualTo("deepseek-flash");
+
+            status.set(200);
+            assertThat(tester.test(endpoint).isSuccess()).isTrue();
+            assertThat(calls.get()).isEqualTo(2);
+
+            status.set(401);
+            var unauthorized = tester.test(endpoint);
+            assertThat(unauthorized.isSuccess()).isFalse();
+            assertThat(unauthorized.getMessage()).contains("API Key").doesNotContain("HTTP 503", "PRIVATE_BODY_MARKER");
+            assertThat(calls.get()).isEqualTo(3);
+        } finally { server.stop(0); }
+    }
+
+    @Test
     void missingEmbeddingKeyIsExplainedBeforeAnyNetworkRequest() {
         var tester = new ModelRuntimeConnectivityTester(new EmbeddingProperties());
         // This unreachable endpoint would fail differently if the tester contacted it.

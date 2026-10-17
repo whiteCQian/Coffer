@@ -48,7 +48,7 @@ class TaskControllerTest extends com.coffer.auth.OwnerTestSupport {
     private TagRepository tagRepository;
 
     @Test
-    void getOverviewAggregatesProcessingFailedAndPendingConfirm() throws Exception {
+    void getOverviewAggregatesCurrentFileStatesAndExcludesStaleFailures() throws Exception {
         // 处理中任务 ×2
         asyncTaskRepository.save(AsyncTask.builder().taskId("overview-proc-1").fileName("需求报告.pdf")
                 .status(AsyncTaskStatus.PROCESSING).progress(42).build());
@@ -57,6 +57,17 @@ class TaskControllerTest extends com.coffer.auth.OwnerTestSupport {
         // 失败任务 ×1：result 字段承载错误信息
         asyncTaskRepository.save(AsyncTask.builder().taskId("overview-fail-1").fileName("损坏文件.bin")
                 .status(AsyncTaskStatus.FAILED).progress(60).result("解析超时").build());
+        fileMetadataRepository.save(FileMetadata.builder()
+                .fileName("损坏文件.bin").fileSize(10L).fileType("bin")
+                .taskId("overview-fail-1").status(FileStatus.FAILED).build());
+        // 文件已删除或已归档的历史失败不能继续进入需处理面板。
+        asyncTaskRepository.save(AsyncTask.builder().taskId("overview-orphan-fail").fileName("已删除文件.bin")
+                .status(AsyncTaskStatus.FAILED).progress(60).build());
+        asyncTaskRepository.save(AsyncTask.builder().taskId("overview-archived-fail").fileName("已归档文件.bin")
+                .status(AsyncTaskStatus.FAILED).progress(60).build());
+        fileMetadataRepository.save(FileMetadata.builder()
+                .fileName("已归档文件.bin").fileSize(10L).fileType("bin")
+                .taskId("overview-archived-fail").status(FileStatus.FAILED).archived(true).build());
 
         Long tagId = tagRepository.save(Tag.builder().tagName("合同").build()).getId();
         // 已完成 + 待确认标签 → 入「待确认」面板
@@ -64,11 +75,17 @@ class TaskControllerTest extends com.coffer.auth.OwnerTestSupport {
                 .fileName("待确认合同.pdf").fileSize(10L).fileType("pdf").status(FileStatus.COMPLETED).build());
         fileTagMappingRepository.save(FileTagMapping.builder().fileId(pending.getId()).tagId(tagId)
                 .confirmationStatus(ConfirmationStatus.PENDING_CONFIRMATION).build());
-        // 已完成 + 仅已确认标签 → 不入列
+        // 分析完成且标签已确认，但尚未归档，仍需确认归档。
         FileMetadata confirmedOnly = fileMetadataRepository.save(FileMetadata.builder()
                 .fileName("已确认发票.pdf").fileSize(10L).fileType("pdf").status(FileStatus.COMPLETED).build());
         fileTagMappingRepository.save(FileTagMapping.builder().fileId(confirmedOnly.getId()).tagId(tagId)
                 .confirmationStatus(ConfirmationStatus.CONFIRMED).build());
+        // 已归档文件即使仍有历史待确认标签，也不再进入待归档面板。
+        FileMetadata archived = fileMetadataRepository.save(FileMetadata.builder()
+                .fileName("已归档合同.pdf").fileSize(10L).fileType("pdf")
+                .status(FileStatus.COMPLETED).archived(true).build());
+        fileTagMappingRepository.save(FileTagMapping.builder().fileId(archived.getId()).tagId(tagId)
+                .confirmationStatus(ConfirmationStatus.PENDING_CONFIRMATION).build());
         // 未完成（PROCESSING）+ 待确认标签 → 状态不满足，不入列
         FileMetadata notCompleted = fileMetadataRepository.save(FileMetadata.builder()
                 .fileName("处理中文件.pdf").fileSize(10L).fileType("pdf").status(FileStatus.PROCESSING).build());
@@ -80,17 +97,20 @@ class TaskControllerTest extends com.coffer.auth.OwnerTestSupport {
                 .andExpect(jsonPath("$.code").value(0))
                 .andExpect(jsonPath("$.data.processingCount").value(2))
                 .andExpect(jsonPath("$.data.failedCount").value(1))
-                .andExpect(jsonPath("$.data.pendingConfirmCount").value(1))
+                .andExpect(jsonPath("$.data.pendingConfirmCount").value(2))
                 .andExpect(jsonPath("$.data.processing.length()").value(2))
                 .andExpect(jsonPath("$.data.failed.length()").value(1))
-                .andExpect(jsonPath("$.data.pendingConfirm.length()").value(1))
+                .andExpect(jsonPath("$.data.pendingConfirm.length()").value(2))
                 // 处理中明细字段透传（按 taskId 定位，不依赖 created_at 先后）
                 .andExpect(jsonPath("$.data.processing[?(@.taskId == 'overview-proc-1')].progress").value(42))
                 .andExpect(jsonPath("$.data.processing[?(@.taskId == 'overview-proc-2')].fileName").value("架构图.png"))
                 // 失败明细 error 取任务 result
                 .andExpect(jsonPath("$.data.failed[?(@.taskId == 'overview-fail-1')].error").value("解析超时"))
-                // 待确认明细仅剩那个「已完成 + 待确认标签」的文件
-                .andExpect(jsonPath("$.data.pendingConfirm[0].fileName").value("待确认合同.pdf"));
+                // 标签确认状态不代替正式归档事实，两份已完成但未归档文件均入列。
+                .andExpect(jsonPath("$.data.pendingConfirm[?(@.fileId == " + pending.getId() + ")].fileName")
+                        .value("待确认合同.pdf"))
+                .andExpect(jsonPath("$.data.pendingConfirm[?(@.fileId == " + confirmedOnly.getId() + ")].fileName")
+                        .value("已确认发票.pdf"));
     }
 
     @Test

@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 
-import { uploadFile } from '@/api/files'
+import { uploadFile, saveFileOnly } from '@/api/files'
 import { UploadFilled } from '@element-plus/icons-vue'
 import DesktopImportPanel from '@/components/DesktopImportPanel.vue'
 import { desktopBridge } from '@/api/desktop'
@@ -41,9 +41,13 @@ async function upload(file: File) {
     lastUpload.value = { signature, requestId: crypto.randomUUID() }
   }
   try {
-    await uploadFile(fd, lastUpload.value.requestId)
+    try { await uploadFile(fd, lastUpload.value.requestId) }
+    catch {
+      await ElMessageBox.confirm('AI 暂不可用或尚未授权。可以先安全保存，之后再整理；普通查找和下载仍可用。', '仅保存文件', {confirmButtonText:'仅保存',cancelButtonText:'返回'})
+      await saveFileOnly(fd, lastUpload.value.requestId)
+    }
     lastUpload.value = null
-    ElMessage.success(`「${file.name}」已上传，AI 开始解析…`)
+    ElMessage.success(`「${file.name}」已保存，可在详情查看整理状态`)
     router.push({ name: 'files' })
   } catch {
     /* 拦截器已弹错 */

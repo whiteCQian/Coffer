@@ -30,7 +30,7 @@ const router = createRouter({
           component: GovernancePreviewView,
           meta: { title: '整理预览' },
         },
-        { path: 'operations', name: 'operations', component: OperationsView, meta: { title: '操作台账' } },
+        { path: 'operations', name: 'operations', component: OperationsView, meta: { title: '最近操作' } },
         { path: 'search', name: 'search', component: SearchView, meta: { title: '搜索' } },
         { path: 'settings', name: 'settings', component: SettingsView, meta: { title: '设置' } },
       ],

@@ -130,3 +130,7 @@ export function uploadFile(
     },
   })
 }
+
+export function saveFileOnly(body: FormData, key: string) {
+  return http.post<Result<FileUploadResponse>>('/files/save', body, { headers: { 'Idempotency-Key': key } })
+}

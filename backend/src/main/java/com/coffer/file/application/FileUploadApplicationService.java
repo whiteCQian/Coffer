@@ -217,7 +217,8 @@ public class FileUploadApplicationService {
 
             FileMetadata metadata = uploadPipelineService.registerUploadTask(
                     taskId, fileName, fileType, storagePath, fileSize, stored.sha256());
-            applicationEventPublisher.publishEvent(new FileUploadedEvent(taskId));
+            if (com.coffer.model.runtime.ModelExecutionContext.currentId() != null)
+                applicationEventPublisher.publishEvent(new FileUploadedEvent(taskId));
             TransactionSynchronization completion = new TransactionSynchronization() {
                 @Override public void afterCommit() {
                     try { writeIntents.registered(operationId); }

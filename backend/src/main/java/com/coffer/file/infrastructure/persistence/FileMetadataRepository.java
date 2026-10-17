@@ -202,11 +202,8 @@ public interface FileMetadataRepository extends com.coffer.auth.infrastructure.O
      *
      * @return 待确认标签文件列表（上传时间倒序）
      */
-    @Query("SELECT DISTINCT fm FROM FileMetadata fm " +
-            "JOIN FileTagMapping ftm ON fm.id = ftm.fileId " +
-            "WHERE fm.status = com.coffer.file.domain.FileStatus.COMPLETED " +
-            "AND ftm.confirmationStatus = com.coffer.tag.domain.ConfirmationStatus.PENDING_CONFIRMATION " +
-            "ORDER BY fm.uploadTime DESC")
+    @Query("SELECT fm FROM FileMetadata fm WHERE fm.archived = false " +
+            "AND fm.status = com.coffer.file.domain.FileStatus.COMPLETED ORDER BY fm.uploadTime DESC")
     List<FileMetadata> findPendingConfirmFiles();
 
     /**

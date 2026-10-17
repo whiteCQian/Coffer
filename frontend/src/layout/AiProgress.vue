@@ -42,16 +42,13 @@ let loadRequest = 0
 const confirmingImportId = ref<number | null>(null)
 let timer: ReturnType<typeof setInterval> | null = null
 
-const inboxCompletedCount = computed(() => {
-  const i = inbox.value
-  return i ? i.importedCount + i.duplicateCount : 0
-})
-
-const inboxProgressPercent = computed(() => {
-  const i = inbox.value
-  if (!i || i.totalCount === 0) return 0
-  return Math.min(100, Math.round((inboxCompletedCount.value / i.totalCount) * 100))
-})
+// The inbox API aggregates historical records, not the current import batch.
+// Keep actionable records here; batch progress belongs to the import operation.
+const inboxHasActions = computed(() => inbox.value?.items?.some(item =>
+  item.status === 'AWAITING_CONFIRMATION'
+  || item.status === 'MANUAL_REVIEW'
+  || (item.status === 'IMPORTED' && !!item.error),
+) ?? false)
 
 const rows = computed<OverviewRow[]>(() => {
   const o = overview.value
@@ -156,8 +153,8 @@ async function doConfirmInbox(item: InboxImportItemResponse) {
   if (!item.id || !item.targetPath || confirmingImportId.value !== null) return
   confirmingImportId.value = item.id
   try {
-    await ElMessageBox.confirm(`文件：${item.fileName}\n目标：${item.targetPath}\n\n${desktopBridge ? '正式入库并校验成功后，删除通过本机选择或拖放导入的原路径文件。失败或来源变化时保留源文件。' : '复制到此路径，保留收件箱原文件。'}目标被占用时停止，不覆盖或改名。`,
-      '确认本地导入路径', { confirmButtonText: desktopBridge ? '确认入库并接管' : '确认复制', cancelButtonText: '取消', type: 'warning' })
+    await ElMessageBox.confirm(`文件：${item.fileName}\n目标：${item.targetPath}\n\n${desktopBridge ? '默认保留原位置文件；只有导入时明确选择的移动任务，才在副本校验后移除来源。' : '复制到此路径，保留收件箱原文件。'}目标被占用时停止，不覆盖或改名。`,
+      '确认本地导入路径', { confirmButtonText: desktopBridge ? '保存到文件库' : '确认复制', cancelButtonText: '取消', type: 'warning' })
     await confirmInboxImport(item.id, item.targetPath)
     ElMessage.success('已入库并登记处理任务，请查看导入结果')
   } catch { /* Cancellation or HTTP errors are handled by the existing request boundary. */ }
@@ -183,31 +180,17 @@ onUnmounted(() => {
       <span class="card-count">
         处理中 {{ overview?.processingCount ?? 0 }} · 待确认
         {{ overview?.pendingConfirmCount ?? 0 }} · 失败 {{ overview?.failedCount ?? 0 }}
-        <template v-if="inbox?.enabled && !props.pendingOnly"> · 批量导入 {{ inboxCompletedCount }}/{{ inbox.totalCount }}</template>
       </span>
     </div>
     <p v-if="props.pendingOnly && overview && overview.pendingConfirmCount > rows.length" class="progress-empty-sub">显示最近 {{ rows.length }} 个待确认文件，处理后会更新下一批。</p>
     <p v-if="loadFailed" role="alert">任务状态暂时无法加载。<button class="task-btn is-select" @click="load">重新加载</button></p>
 
-    <div v-if="inbox?.enabled && !props.pendingOnly" class="inbox-summary">
-      <div class="inbox-summary-head">
-        <span>收件箱批量导入</span>
-        <span>{{ inboxProgressPercent }}%</span>
-      </div>
-      <div class="inbox-bar-track">
-        <div class="inbox-bar-fill" :style="{ width: inboxProgressPercent + '%' }"></div>
-      </div>
-      <p class="inbox-summary-detail">
-        已导入 {{ inbox.importedCount }} · 重复 {{ inbox.duplicateCount }} ·
-        待稳定 {{ inbox.discoveredCount + inbox.stableCount }} · 失败 {{ inbox.failedCount }} ·
-        待人工处理 {{ inbox.manualReviewCount }}
-        <template v-if="inbox.requiresPathConfirmation"> · 待确认路径 {{ inbox.awaitingConfirmationCount }}</template>
-      </p>
+    <div v-if="inbox?.enabled && !props.pendingOnly && inboxHasActions" class="inbox-summary">
       <div v-for="item in inbox.items.filter(i => i.status === 'AWAITING_CONFIRMATION')"
            :key="`confirm-${item.id}`" class="inbox-import-preview">
         <strong>{{ item.fileName }}</strong>
         <span>目标：{{ item.targetPath }}</span>
-        <button class="task-btn is-select" :disabled="confirmingImportId !== null" @click="doConfirmInbox(item)">{{ desktopBridge ? '确认入库并接管' : '确认路径并复制' }}</button>
+        <button class="task-btn is-select" :disabled="confirmingImportId !== null" @click="doConfirmInbox(item)">{{ desktopBridge ? '保存到文件库' : '确认路径并复制' }}</button>
       </div>
       <div v-for="item in inbox.items.filter(i => i.status === 'MANUAL_REVIEW')"
            :key="item.id" class="inbox-manual-item">
@@ -247,18 +230,18 @@ onUnmounted(() => {
           class="task-btn is-select"
           @click="t.fileId && openPending(t.fileId)"
         >
-          去确认标签
+          确认并归档
         </button>
 
         <!-- 失败：重试（文件已删则仅展示） -->
-        <button v-else-if="t.fileId" class="task-btn is-retry" @click="doRetry(t)">重试</button>
+        <template v-else-if="t.fileId"><button class="task-btn is-select" @click="openPending(t.fileId)">查看已保存文件／先归档</button><button class="task-btn is-retry" @click="doRetry(t)">重试 AI 分析</button></template>
       </li>
     </ul>
 
     <!-- 空态 -->
     <div v-else-if="!loadFailed" class="progress-empty">
-      <p>{{ props.pendingOnly ? '标签都已确认' : '当前没有待处理的任务' }}</p>
-      <p class="progress-empty-sub">{{ props.pendingOnly ? 'AI 提出的新标签会显示在这里，确认后会从列表移除。' : '导入文件后，可在这里核对路径并查看解析结果。' }}</p>
+      <p>{{ props.pendingOnly ? '当前没有待确认的文件' : '当前没有待处理的任务' }}</p>
+      <p class="progress-empty-sub">{{ props.pendingOnly ? '采用建议并归档后，文件会从待确认列表移除。' : '已保存文件始终可在文件库查看、下载或稍后整理。' }}</p>
     </div>
   </section>
 </template>
@@ -305,31 +288,6 @@ onUnmounted(() => {
   padding: 10px 14px;
   border-radius: var(--radius-inner);
   background: var(--card-item-bg);
-}
-.inbox-summary-head {
-  display: flex;
-  justify-content: space-between;
-  color: var(--ink-mint);
-  font-size: 12.5px;
-  font-weight: 600;
-}
-.inbox-bar-track {
-  height: 6px;
-  margin-top: 8px;
-  border-radius: var(--radius-pill);
-  background: rgb(var(--ink-mint-rgb) / 0.2);
-  overflow: hidden;
-}
-.inbox-bar-fill {
-  height: 100%;
-  border-radius: var(--radius-pill);
-  background: var(--ink-mint);
-  transition: width 0.25s ease;
-}
-.inbox-summary-detail {
-  margin: 7px 0 0;
-  color: rgb(var(--ink-mint-rgb) / 0.7);
-  font-size: 11.5px;
 }
 .inbox-manual-item {
   display: flex;

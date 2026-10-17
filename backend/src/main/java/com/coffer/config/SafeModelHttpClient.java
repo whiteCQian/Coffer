@@ -12,10 +12,10 @@ public final class SafeModelHttpClient {
     private SafeModelHttpClient() { }
 
     public static HttpClientBuilder builder() {
-        var jdkClient = HttpClient.newBuilder()
+        var jdkClient = DeadlineHttpClient.builder(HttpClient.newBuilder())
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .connectTimeout(Duration.ofSeconds(10));
         return JdkHttpClient.builder().httpClientBuilder(jdkClient)
-                .connectTimeout(Duration.ofSeconds(10)).readTimeout(Duration.ofSeconds(90));
+                .connectTimeout(Duration.ofSeconds(10));
     }
 }

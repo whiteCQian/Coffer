@@ -40,7 +40,9 @@ public class NativeInboxService {
         } catch (IOException failure) { throw new IllegalStateException("所选文件不可读或被占用，请关闭外部应用后重试", failure); }
     }
 
-    public void commit(String selectedPath, Preview confirmed) {
+    public void commit(String selectedPath, Preview confirmed) { commit(selectedPath, confirmed, true); }
+
+    public void commit(String selectedPath, Preview confirmed, boolean moveSource) {
         if (confirmed == null || confirmed.sha256() == null || !confirmed.sha256().matches("[0-9a-f]{64}")) throw new IllegalArgumentException("导入预览身份无效");
         String prefix = "users/" + TenantContext.requireOwnerId() + "/inbox/";
         StorageKey.requireOwned(confirmed.targetPath());
@@ -49,13 +51,17 @@ public class NativeInboxService {
         try (var input = LocalImportSource.open(source, confirmed.size(), confirmed.modifiedMillis(), confirmed.fileKey())) {
             if (!input.sha256().equals(confirmed.sha256())) throw new StorageConflictException("所选文件正文已变化，请重新预览");
             if (storage.exists(confirmed.targetPath())) throw new StorageConflictException("收件箱目标已存在，请重新预览");
-            String transfer = transfers.begin(source, confirmed);
+            String transfer = moveSource ? transfers.begin(source, confirmed) : null;
             storage.writeVerified(confirmed.targetPath(), input.stream(), null, confirmed.size(), confirmed.sha256());
             input.verify();
-            transfers.staged(transfer);
+            if (transfer != null) transfers.staged(transfer);
         } catch (IOException failure) { throw new IllegalStateException("复制到收件箱失败，来源文件已保留，请检查占用和空间", failure); }
         // No model call or formal registration here. R31 still requires the displayed final path confirmation.
         scanner.scanOnce();
+    }
+    public Long save(String selectedPath, Preview confirmed, boolean moveSource) {
+        commit(selectedPath, confirmed, moveSource);
+        return scanner.saveNativeSelection(Path.of(confirmed.targetPath()).getFileName().toString());
     }
     private String target(String name) { return StorageKey.requireOwned("users/" + TenantContext.requireOwnerId() + "/inbox/" + name); }
     private Path source(String value) {

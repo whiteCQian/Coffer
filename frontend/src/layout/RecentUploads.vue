@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
+import { taskStateLabel } from '@/utils/status'
 import { listFiles } from '@/api/files'
 import type { FileListResponse } from '@/api/types'
 import FileTile from '@/components/FileTile.vue'
@@ -44,7 +45,8 @@ const emptyText = computed(() =>
 
 /** 行副文本：失败 → 解析中 → 排队 → AI 摘要 → 已确认标签名 */
 function descOf(f: FileListResponse) {
-  if (f.status === 'FAILED') return '解析失败'
+  if (f.archived) return f.summary || '已归档，可以查找和取回'
+  if (f.status === 'FAILED') return '文件已保存；可先归档或重试 AI 分析'
   if (f.status === 'PROCESSING') return 'AI 正在解析…'
   if (f.status === 'PENDING') return '排队等待解析'
   if (f.summary) return f.summary
@@ -55,13 +57,7 @@ function descOf(f: FileListResponse) {
 }
 
 /** 行右侧状态文案 */
-function stateOf(f: FileListResponse) {
-  if (f.status === 'COMPLETED' && f.tags?.some(tag => tag.confirmationStatus === 'PENDING_CONFIRMATION')) return '待确认'
-  if (f.status === 'COMPLETED') return '完成'
-  if (f.status === 'PROCESSING') return '解析中'
-  if (f.status === 'FAILED') return '失败'
-  return '排队'
-}
+function stateOf(f: FileListResponse) { return taskStateLabel(f) }
 
 async function load() {
   const current = ++requestId
@@ -87,7 +83,8 @@ async function load() {
 }
 
 onMounted(load)
-onUnmounted(() => { requestId++ })
+const timer=setInterval(load,5000)
+onUnmounted(() => { requestId++;clearInterval(timer) })
 watch(() => view.activeTag, load)
 </script>
 

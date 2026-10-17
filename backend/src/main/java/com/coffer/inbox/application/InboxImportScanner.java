@@ -493,6 +493,23 @@ public class InboxImportScanner {
     private record FileSnapshot(String fileName, long size, long modifiedMillis, String fileKey, String sha256) {
     }
 
+    public Long saveNativeSelection(String inboxFileName) {
+        Path candidate = directories.requireSource(resolveOwnerDirectory().resolve(inboxFileName));
+        try {
+            var snapshot = captureSnapshot(candidate);
+            if (!SUPPORTED_EXTENSIONS.contains(extensionOf(snapshot.fileName())))
+                throw new IllegalArgumentException("不支持的文件类型");
+            var record = observeSnapshot(snapshot, LocalDateTime.now());
+            if (record.getStatus() == InboxImportStatus.IMPORTED) return record.getFileId();
+            record.setContentSha256(snapshot.sha256());
+            record.setTargetPath(paths.generateStoragePath(snapshot.fileName(), extensionOf(snapshot.fileName())));
+            record.setStatus(InboxImportStatus.AWAITING_CONFIRMATION);
+            recordRepository.saveAndFlush(record);
+            confirm(record.getId(), record.getTargetPath());
+            return recordRepository.findById(record.getId()).orElseThrow().getFileId();
+        } catch (IOException failed) { throw new IllegalStateException("文件已暂存，正式登记未完成；原文件保留，请在收件箱重试", failed); }
+    }
+
     /** The target is exactly the persisted preview. Claiming prevents concurrent duplicate copies. */
     public void confirm(Long id, String target) {
         if (!requiresConfirmation()) throw new IllegalStateException("此导入方式不支持路径确认");

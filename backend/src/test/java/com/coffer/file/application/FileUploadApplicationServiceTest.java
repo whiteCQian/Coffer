@@ -74,7 +74,9 @@ class FileUploadApplicationServiceTest {
         when(uploadPipelineService.registerUploadTask(anyString(), eq("需求报告.PDF"), eq("pdf"),
                 eq("files/2026/01/01/pdf/path_需求报告.PDF"), eq(7L), eq(sha))).thenReturn(metadata);
 
-        FileUploadResponse response = service.upload(request);
+        var snapshot = new com.coffer.model.runtime.ModelExecutionContext.Snapshot("authorized-upload-fixture",
+                com.coffer.auth.service.TenantContext.requireOwnerId(), "fixture", com.coffer.governance.domain.GovernanceRunMode.API, java.util.Map.of());
+        FileUploadResponse response = com.coffer.model.runtime.ModelExecutionContext.with(snapshot, () -> service.upload(request));
 
         assertThat(response.getFileName()).isEqualTo("需求报告.PDF");
         assertThat(response.getFileSize()).isEqualTo(7L);
@@ -82,7 +84,7 @@ class FileUploadApplicationServiceTest {
         var order = inOrder(intents, storage, uploadPipelineService);
         order.verify(intents).begin(anyString(), anyString(), eq("UPLOAD"),
                 eq("files/2026/01/01/pdf/path_需求报告.PDF"), eq("需求报告.PDF"),
-                eq("pdf"), eq("text/plain"), eq(7L), isNull());
+                eq("pdf"), eq("text/plain"), eq(7L), eq("authorized-upload-fixture"));
         order.verify(storage).write(eq("files/2026/01/01/pdf/path_需求报告.PDF"),
                 any(InputStream.class), eq("text/plain"), eq(7L));
         order.verify(intents).objectWritten(anyString(), any(FileStoragePort.StoredObject.class));

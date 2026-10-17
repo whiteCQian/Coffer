@@ -183,7 +183,7 @@ function formatDate(value: string) {
         </article>
       </div>
       <div class="audit-list">
-        <h3>账号操作记录</h3>
+        <h3>账号最近操作</h3>
         <p v-for="event in audit" :key="event.id" class="audit-row">
           {{ formatDate(event.createdAt) }} · {{ event.actorUsername }} · {{ event.action }} · 账号 #{{ event.targetUserId ?? '—' }}
         </p>

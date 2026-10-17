@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { Search } from '@element-plus/icons-vue'
 import { ref } from 'vue'
+import { taskStateLabel } from '@/utils/status'
+const aiQuestion=ref('')
 
 import { searchFiles, fileDownloadUrl } from '@/api/files'
 import type { FileListResponse } from '@/api/types'
@@ -54,7 +56,8 @@ function reset() {
 
 /** 行副文本：失败/处理中/排队 → AI 摘要 → 已确认标签名 */
 function rowDesc(f: FileListResponse) {
-  if (f.status === 'FAILED') return '解析失败'
+  if (f.archived) return f.summary || '已归档，可以查找和取回'
+  if (f.status === 'FAILED') return '文件已保存；可先归档或重试 AI 分析'
   if (f.status === 'PROCESSING') return 'AI 解析中…'
   if (f.status === 'PENDING') return '排队等待解析'
   if (f.summary) return f.summary
@@ -62,12 +65,6 @@ function rowDesc(f: FileListResponse) {
     .filter((t) => t.confirmationStatus === 'CONFIRMED')
     .map((t) => t.tagName)
   return names.join(' · ') || '暂无摘要'
-}
-const STATUS_LABEL: Record<string, string> = {
-  COMPLETED: '完成',
-  PROCESSING: '处理中',
-  FAILED: '失败',
-  PENDING: '排队',
 }
 
 /** 文件上传时间展示 */
@@ -148,7 +145,7 @@ function uploadTimeOf(f: FileListResponse) {
             <div class="row-side">
               <a class="row-download" :href="fileDownloadUrl(f.id)" :download="f.fileName" :aria-label="`下载 ${f.fileName}`" @click.stop @keydown.stop>下载</a>
               <span class="row-state" :class="`is-${String(f.status).toLowerCase()}`">
-                {{ STATUS_LABEL[f.status ?? ''] ?? '—' }}
+                {{ taskStateLabel(f) }}
               </span>
               <span class="row-meta">
                 {{ formatBytes(f.fileSize) }}<br />{{ uploadTimeOf(f) }}
@@ -161,7 +158,7 @@ function uploadTimeOf(f: FileListResponse) {
         <div v-else-if="!searching" class="no-result">
           <p class="nr-title">没有找到匹配的文件</p>
           <p class="nr-sub">试试放宽关键词，或仅用一个标签搜索。</p>
-          <button class="empty-btn" @click="reset">清空搜索</button>
+          <button v-if="keyword.trim()" class="empty-btn" @click="aiQuestion=keyword">用 AI 查找“{{ keyword }}”</button><button class="empty-btn" @click="reset">清空搜索</button>
         </div>
       </template>
 
@@ -183,7 +180,7 @@ function uploadTimeOf(f: FileListResponse) {
         </div>
       </div>
     </div>
-    <aside v-show="drawerId === null" class="search-ai"><ChatDock /></aside>
+    <aside v-show="drawerId === null" class="search-ai"><ChatDock :question="aiQuestion" /></aside>
 
     <!-- 详情抽屉 -->
     <FileDetailDrawer v-show="drawerId !== null" v-model="drawerId" inline @changed="doSearch" />

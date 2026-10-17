@@ -22,9 +22,9 @@ public class NativeInboxController {
     @PostMapping("/preview") public Result<NativeInboxService.Preview> preview(@RequestHeader(value="X-Coffer-Native-Capability", required=false) String header, @RequestBody Selection request) {
         authorize(header); return Result.success(inbox.preview(request.sourcePath()));
     }
-    @PostMapping("/commit") public Result<Void> commit(@RequestHeader(value="X-Coffer-Native-Capability", required=false) String header, @RequestBody Confirmation request) {
-        authorize(header); inbox.commit(request.sourcePath(), request.preview()); return Result.success();
+    @PostMapping("/commit") public Result<Long> commit(@RequestHeader(value="X-Coffer-Native-Capability", required=false) String header, @RequestBody Confirmation request) {
+        authorize(header); return Result.success(inbox.save(request.sourcePath(), request.preview(), request.moveSource()));
     }
     public record Selection(String sourcePath) { }
-    public record Confirmation(String sourcePath, NativeInboxService.Preview preview) { }
+    public record Confirmation(String sourcePath, NativeInboxService.Preview preview, boolean moveSource) { }
 }

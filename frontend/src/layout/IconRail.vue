@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { FolderOpened, HomeFilled, List, Moon, Search, Setting, Sunny, SwitchButton, PriceTag } from '@element-plus/icons-vue'
+import { FolderOpened, HomeFilled, List, Moon, Search, Setting, Sunny, SwitchButton } from '@element-plus/icons-vue'
 import CofferBrand from '@/components/CofferBrand.vue'
+import SidebarTags from '@/components/SidebarTags.vue'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -16,7 +17,7 @@ const workspace = useWorkspaceStore()
 const NAV = [
   { path: '/', label: '工作台', icon: HomeFilled, exact: true },
   { path: '/files', label: '全部文件', icon: FolderOpened },
-  { path: '/operations', label: '操作记录', icon: List },
+  { path: '/operations', label: '最近操作', icon: List },
   { path: '/search', label: 'AI 搜索', icon: Search },
   { path: '/settings', label: '设置', icon: Setting },
 ]
@@ -61,10 +62,7 @@ async function signOut() {
     <nav aria-label="Web 主导航" class="web-nav">
       <button v-for="item in visibleNav" :key="item.path" class="rail-icon" :class="{ 'is-active': isActive(item) }" :title="item.label" :aria-current="isActive(item) ? 'page' : undefined" @click="navigate(item.path)"><el-icon><component :is="item.icon" /></el-icon><span>{{ item.label }}</span></button>
     </nav>
-    <section v-if="!auth.isAdmin && workspace.tags.length" class="web-tags">
-      <div class="web-nav-label">常用标签 <span>{{ workspace.tags.length }}</span></div>
-      <button v-for="tag in workspace.tags" :key="tag.name" class="rail-icon" :class="{ 'is-active': route.path === '/files' && route.query.tag === tag.name }" @click="navigate('/files', tag.name)"><el-icon><PriceTag /></el-icon><span>{{ tag.name }}</span><small>{{ tag.fileCount }}</small></button>
-    </section>
+    <SidebarTags v-if="!auth.isAdmin" class="web-tags" file-path="/files" @navigate="emit('navigate')" />
     <div class="web-sidebar-bottom">
       <button class="rail-theme" :title="isDark ? '切换到亮色主题' : '切换到深色主题'" :aria-label="isDark ? '切换到亮色主题' : '切换到深色主题'" @click="onToggleTheme"><el-icon><Sunny v-if="isDark" /><Moon v-else /></el-icon><span>{{ isDark ? '亮色主题' : '深色主题' }}</span></button>
       <div class="web-account"><span class="web-avatar">{{ auth.user?.username?.slice(0, 1).toUpperCase() || 'U' }}</span><span class="web-account-name"><strong>{{ auth.user?.username || '用户' }}</strong><small>{{ auth.isAdmin ? '管理员账号' : '独立文件空间' }}</small></span><button class="rail-avatar" :title="`${auth.user?.username || '用户'} · 退出登录`" aria-label="退出登录" @click="signOut"><el-icon><SwitchButton /></el-icon></button></div>
@@ -82,7 +80,7 @@ async function signOut() {
 .rail-icon .el-icon, .rail-theme .el-icon { flex-shrink: 0; font-size: 17px; }.rail-icon > span:not(.el-icon) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rail-icon:hover, .rail-theme:hover { background: var(--hover-bg); color: var(--text-1); }.rail-icon.is-active { background: rgb(var(--accent-rgb) / .1); color: var(--accent); font-weight: 600; }
 .rail-icon small { margin-left: auto; font-size: 11px; color: var(--text-3); }
-.web-tags { margin-top: 20px; min-height: 0; overflow-y: auto; }.web-tags .rail-icon { padding-block: 8px; }
+.web-tags { margin-top: 20px; min-height: 0; overflow-y: auto; }
 .web-sidebar-bottom { margin-top: auto; padding-top: 20px; }.rail-theme { font-size: 12px; }
 .web-account { display: flex; align-items: center; gap: 9px; padding: 16px 6px 0; margin-top: 12px; border-top: 1px solid var(--line); }
 .web-avatar { width: 32px; height: 32px; display: grid; place-items: center; font-size: 12px; font-weight: 600; color: var(--accent); border-radius: 9px; background: rgb(var(--accent-rgb) / .1); }

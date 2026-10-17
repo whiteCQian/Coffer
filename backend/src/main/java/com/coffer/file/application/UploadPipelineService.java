@@ -130,6 +130,10 @@ public class UploadPipelineService {
 
         // AsyncTask 无 fileMetadataId 字段，文件与任务经 FileMetadata.taskId 关联
         taskRegistrationService.createPendingTask(taskId, originalFilename);
+        if (com.coffer.model.runtime.ModelExecutionContext.currentId() == null) {
+            metadata.markAsFailed(); fileMetadataRepository.save(metadata);
+            asyncTaskService.markAsFailed(taskId, "文件已保存，尚未授权 AI 分析；可先归档或授权后重试");
+        }
         log.info("上传任务登记完成");
         return metadata;
     }

@@ -3,6 +3,7 @@ const {app,BrowserWindow,session,ipcMain,dialog,Menu,shell}=require('electron');
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {dataPath,noLinks,regularFile,atomicJson}=require('./safe-paths.cjs');
 const {verifyResources}=require('./resources.cjs');
+const {recentTagStorage}=require('./recent-tags.cjs');
 const {LoopbackServer}=require('./loopback-server.cjs');
 const {BackendSupervisor}=require('./backend-supervisor.cjs');
 const {runMaintenance}=require('./maintenance.cjs');
@@ -54,6 +55,8 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
   };
   function handle(channel,fn){ipcMain.handle(channel,async(event,...args)=>{if(!sourceValid(event))throw new Error('IPC 来源验证失败');return fn(...args);});}
   handle('coffer:get-pane-widths',()=>({...paneWidths}));
+  handle('coffer:get-recent-tags',async()=>{const owner=await user();return recentTagStorage(profileDirectory,settings.dataDirectory,owner.id).read();});
+  handle('coffer:save-recent-tags',async names=>{const owner=await user();recentTagStorage(profileDirectory,settings.dataDirectory,owner.id).write(names);});
   handle('coffer:get-theme',()=>theme);
   handle('coffer:save-theme',value=>{
     if(!['light','dark'].includes(value))throw new Error('主题参数无效');
@@ -279,13 +282,13 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
     handle('coffer:commit-inbox',async items=>{
       const owner=await user();if(!Array.isArray(items) || items.length<1 || items.length>20)throw new Error('导入确认参数无效');
       const receipts=items.map(item=>{
-        if(!item || Object.keys(item).some(key=>!['id','targetPath'].includes(key)))throw new Error('导入确认参数无效');
+        if(!item || Object.keys(item).some(key=>!['id','targetPath','moveSource'].includes(key)))throw new Error('导入确认参数无效');
         const entry=selected.get(item.id);if(!entry || entry.expires<Date.now() || entry.ownerId!==owner.id || item.targetPath!==entry.preview.targetPath)throw new Error('导入预览已过期、归属变化或路径不一致，请重新选择');
-        return [item.id,entry];
+        return [item.id,entry,item.moveSource===true];
       });
       const results=[];
-      for(const [id,entry] of receipts){
-        try{if((await user()).id!==entry.ownerId)throw new Error('个人文件库已变化');await nativeApi('/api/desktop/native-inbox/commit',{sourcePath:entry.sourcePath,preview:entry.preview});selected.delete(id);results.push({name:entry.preview.name,targetPath:entry.preview.targetPath,ok:true});}
+      for(const [id,entry,moveSource] of receipts){
+        try{if((await user()).id!==entry.ownerId)throw new Error('个人文件库已变化');const fileId=await nativeApi('/api/desktop/native-inbox/commit',{sourcePath:entry.sourcePath,preview:entry.preview,moveSource});selected.delete(id);results.push({name:entry.preview.name,targetPath:entry.preview.targetPath,fileId,ok:true});}
         catch(error){results.push({name:entry.preview.name,targetPath:entry.preview.targetPath,ok:false,error:error.message});}
       }
       return results;
@@ -293,6 +296,11 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
     handle('coffer:open-work-copy',async id=>{
       await user();if(typeof id!=='string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id))throw new Error('工作副本 ID 无效');
       return nativeApi(`/api/desktop/work-copies/${id}/open`);
+    });
+    handle('coffer:open-file',async(id,revision)=>{
+      await user();
+      if(!Number.isSafeInteger(id)||id<1||revision!==undefined&&revision!==null&&(!Number.isSafeInteger(revision)||revision<0))throw new Error('文件参数无效');
+      return nativeApi(`/api/desktop/files/${id}/open`,revision==null?{}:{revision});
     });
     await window.loadURL(server.origin+'/__desktop/start');window.show();
     try{manifest=verifyResources(resourceRoot);supervisor.manifest=manifest;phase=failure?'FAILED':'IDLE';}

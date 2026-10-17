@@ -177,3 +177,11 @@ export function exportArchiveOperations(
     responseType: 'blob',
   })
 }
+
+export function confirmSavedFile(fileId: number, payload: { revision: number; fileName?: string; summary?: string; category?: string; tags?: string[] }) {
+  return http.post<Result<ArchiveOperationBatchResponse>>(`/files/${fileId}/confirm-archive`, payload)
+}
+
+export function recentOperations(params: {name?: string; attention?: boolean; page?: number; size?: number}) {
+  return http.get<Result<{content:ArchiveOperationItemResponse[];totalPages:number;totalElements:number}>>('/governance/operations/recent', {params})
+}

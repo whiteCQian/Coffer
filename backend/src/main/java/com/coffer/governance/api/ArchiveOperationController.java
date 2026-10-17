@@ -50,6 +50,13 @@ public class ArchiveOperationController {
         return Result.success(archiveOperationQueryService.searchBatches(batchId, fileId, status, pageable));
     }
 
+    @GetMapping("/recent")
+    public Result<Page<ArchiveOperationItemResponse>> recent(@RequestParam(required=false) String name,
+            @RequestParam(defaultValue="false") boolean attention,
+            @PageableDefault(size=20, sort="createdAt", direction=org.springframework.data.domain.Sort.Direction.DESC) Pageable pageable) {
+        return Result.success(archiveOperationQueryService.recent(name, attention, pageable));
+    }
+
     @GetMapping("/items")
     public Result<Page<ArchiveOperationItemResponse>> searchItems(
             @RequestParam(required = false) String batchId,

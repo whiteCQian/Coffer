@@ -64,6 +64,11 @@ public class ArchiveOperationQueryService {
     }
 
     @Transactional(readOnly = true)
+    public Page<ArchiveOperationItemResponse> recent(String name, boolean attention, Pageable pageable) {
+        return itemRepository.searchRecent(normalize(name), attention, pageable).map(this::toItemResponse);
+    }
+
+    @Transactional(readOnly = true)
     public ExportedOperationLedger export(String batchId,
                                           Long fileId,
                                           ArchiveOperationItemExecutionStatus status,

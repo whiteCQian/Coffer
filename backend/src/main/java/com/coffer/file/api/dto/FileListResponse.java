@@ -22,6 +22,7 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 public class FileListResponse {
+    private String taskState;
 
     /** 文件 ID。 */
     private Long id;

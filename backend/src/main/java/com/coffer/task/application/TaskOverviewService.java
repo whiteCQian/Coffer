@@ -31,6 +31,8 @@ public class TaskOverviewService {
     private static final int MAX_ITEMS = 50;
 
     private final AsyncTaskRepository asyncTaskRepository;
+    @org.springframework.beans.factory.annotation.Autowired(required=false)
+    private com.coffer.file.application.FileTaskState taskState;
     private final FileMetadataRepository fileMetadataRepository;
 
     /**
@@ -45,8 +47,10 @@ public class TaskOverviewService {
         List<AsyncTask> processingTasks =
                 asyncTaskRepository.findByStatusOrderByCreatedAtDesc(AsyncTaskStatus.PROCESSING);
         List<AsyncTask> failedTasks =
-                asyncTaskRepository.findByStatusOrderByCreatedAtDesc(AsyncTaskStatus.FAILED);
-        List<FileMetadata> pendingConfirmFiles = fileMetadataRepository.findPendingConfirmFiles();
+                asyncTaskRepository.findByStatusOrderByCreatedAtDesc(AsyncTaskStatus.FAILED).stream()
+                .filter(t -> fileMetadataRepository.findByTaskId(t.getTaskId()).map(f -> !f.isArchived() && (taskState == null || "SAVED_NEEDS_ATTENTION".equals(taskState.state(f)))).orElse(false)).toList();
+        List<FileMetadata> pendingConfirmFiles = fileMetadataRepository.findPendingConfirmFiles().stream()
+                .filter(f -> taskState == null || "AWAITING_CONFIRMATION".equals(taskState.state(f))).toList();
 
         List<ProcessingTaskItem> processing = processingTasks.stream()
                 .limit(MAX_ITEMS)

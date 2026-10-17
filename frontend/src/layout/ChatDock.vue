@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { Promotion } from '@element-plus/icons-vue'
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 
 import { sendMessage } from '@/api/chat'
-import { getModelCredentialStatus } from '@/api/modelCredentials'
+import { getRuntimeEndpointConfigs, getRuntimeModeStatus } from '@/api/modelRuntime'
 import type { ChatCitation } from '@/api/types'
 import FileDetailDrawer from '@/components/FileDetailDrawer.vue'
 
@@ -19,6 +19,8 @@ const QUICK_PROMPTS = ['帮我找上个月的发票', '最近上传了什么', '
 
 const messages = ref<Msg[]>([])
 const draft = ref('')
+const props = defineProps<{ question?: string }>()
+watch(() => props.question, q => { if (q) draft.value = q }, { immediate:true })
 const sending = ref(false)
 const sessionId = ref<string | undefined>(undefined)
 const listEl = ref<HTMLElement>()
@@ -55,8 +57,9 @@ const citationKey = (citation: ChatCitation) =>
 async function loadAiStatus() {
   aiStatus.value = 'checking'
   try {
-    const { data } = await getModelCredentialStatus()
-    aiStatus.value = data.data.configured?.DEEPSEEK ? 'configured' : 'unconfigured'
+    const [status,config] = await Promise.all([getRuntimeModeStatus(),getRuntimeEndpointConfigs()])
+    const active=config.data.data.find(c => c.mode===status.data.data.activeMode && c.capability==='CHAT')
+    aiStatus.value=active?.configured ? 'configured' : 'unconfigured'
   } catch {
     aiStatus.value = 'failed'
   }
@@ -131,6 +134,8 @@ async function send(text?: string) {
     })
     aiStatus.value = 'connected'
   } catch {
+    draft.value = content
+    messages.value.push({role:'ai',text:'AI 查找未完成或尚未授权。原问题已保留，可重试；普通关键词查找和文件下载仍可使用。',citations:[]})
     /* 拦截器已弹错 */
     if (aiStatus.value !== 'unconfigured') {
       aiStatus.value = 'failed'
@@ -173,7 +178,7 @@ function onQuick(p: string) {
       </div>
 
       <div class="chat-guide">
-        直接用自然语言问文件，比如「帮我找上个月的发票」。
+        {{ aiStatus === 'unconfigured' ? '文字服务尚未配置，请在设置中配置后重试；普通查找和下载仍可用。' : aiStatus === 'failed' ? 'AI 状态尚未确认，可稍后重试；普通关键词查找和下载仍可用。' : '直接用自然语言问文件，比如「帮我找上个月的发票」。首次发送仍需有效授权。' }}
       </div>
 
       <div ref="listEl" class="chat-messages">

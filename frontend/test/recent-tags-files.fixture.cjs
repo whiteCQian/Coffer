@@ -1,0 +1,1 @@
+exports.getFileDetail=async id=>{const state=globalThis.__recentTagTest;state.reads.push(id);if(!state.details.has(id))throw Error('fictional missing metadata');return{data:{data:await state.details.get(id)}};};

@@ -28,6 +28,7 @@ public class ModelRuntimeProviderFactory {
 
     private final ModelRuntimeEndpointConfigurationService configurationService;
     private final EmbeddingProperties embeddingProperties;
+    @org.springframework.beans.factory.annotation.Autowired private ModelRuntimeConnectivityTester connectivityTester;
     @org.springframework.beans.factory.annotation.Autowired private AdminEmbeddingService adminEmbedding;
 
     @Value("${coffer.models.deepseek.temperature:0.1}")
@@ -77,23 +78,17 @@ public class ModelRuntimeProviderFactory {
     }
 
     private void validateChat(GovernanceRunMode mode, Map<String, String> capabilities) {
-        try {
-            requireCredentials(mode, ModelRuntimeCapability.CHAT);
-            chat(mode).chat("Reply with OK only.");
-            capabilities.put("chat", "OK");
-        } catch (Exception e) {
-            capabilities.put("chat", safeMessage());
-        }
+        validateCapability(mode, ModelRuntimeCapability.CHAT, "chat", capabilities);
     }
 
     private void validateVision(GovernanceRunMode mode, Map<String, String> capabilities) {
-        try {
-            requireCredentials(mode, ModelRuntimeCapability.VISION);
-            vision(mode).chat("Reply with OK only.");
-            capabilities.put("vision", "OK");
-        } catch (Exception e) {
-            capabilities.put("vision", safeMessage());
-        }
+        validateCapability(mode, ModelRuntimeCapability.VISION, "vision", capabilities);
+    }
+
+    private void validateCapability(GovernanceRunMode mode, ModelRuntimeCapability capability,
+                                    String name, Map<String,String> capabilities) {
+        var result = connectivityTester.test(configurationService.resolve(mode, capability));
+        capabilities.put(name, result.isSuccess() ? "OK" : result.getMessage());
     }
 
     private void validateEmbedding(GovernanceRunMode mode, Map<String, String> capabilities) {

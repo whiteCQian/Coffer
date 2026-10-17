@@ -104,6 +104,25 @@ class DesktopGovernanceIntegrationTest {
     private byte[] read(ConfigurableApplicationContext ctx, String path) throws Exception {
         try (var input = ctx.getBean(FileStoragePort.class).read(path)) { return input.readAllBytes(); }
     }
+    @Test void savedSuggestionConfirmsOnceWithoutModelAndCanBeFoundAndRead() throws Exception {
+        try (var ctx = start()) {
+            var file = seed(ctx); var service = ctx.getBean(ArchiveSavedFileService.class);
+            var request = new ArchiveSavedFileRequest(file.getRevision(), null, null, null, null);
+            var result = service.confirm(file.getId(), request);
+            assertThat(service.confirm(file.getId(), request).batchId()).isEqualTo(result.batchId());
+            var item = await(ctx, result.batchId(), row -> row.getExecutionStatus() == ArchiveOperationItemExecutionStatus.SUCCEEDED);
+            var saved = ctx.getBean(FileMetadataRepository.class).findById(file.getId()).orElseThrow();
+            assertThat(saved.isArchived()).isTrue(); assertThat(saved.getFileName()).isEqualTo(file.getFileName());
+            assertThat(read(ctx, saved.getStoragePath())).isEqualTo(BODY);
+            assertThat(ctx.getBean(ArchiveOperationItemRepository.class).findByFileIdOrderByCreatedAtDesc(file.getId())).hasSize(1);
+            assertThat(ctx.getBean(FileTaskState.class).state(saved)).isEqualTo("ARCHIVED");
+            assertThat(ctx.getBean(ArchiveOperationQueryService.class).recent("离线资料", false, org.springframework.data.domain.PageRequest.of(0,20)).getContent()).hasSize(1);
+            verify(ctx.getBean(TagGenerationTool.class), never()).generateTagAndCategory(anyString());
+            assertThat(ctx.getBean(FileService.class).listFiles("离线资料", org.springframework.data.domain.PageRequest.of(0,20)).getContent()).hasSize(1);
+            assertThat(ctx.getBean(ArchiveOperationItemRepository.class).findById(item.getId())).isPresent();
+        }
+    }
+
     @Test void actualPreviewDoesNotPolluteFormalFilesAndOfflineArchiveRollbackRestoreTheCompleteSnapshot() throws Exception {
         try (var ctx = start()) {
             var file = seed(ctx); var storage = ctx.getBean(FileStoragePort.class); var snapshots = ctx.getBean(ArchiveSnapshotService.class);

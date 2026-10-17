@@ -28,7 +28,9 @@ class LoopbackServer {
       const headers={'X-Coffer-Desktop-Token':backend.token};
       for (const name of ['content-type','content-length','cookie','x-xsrf-token','x-coffer-model-version','x-coffer-allow-sensitive','idempotency-key','range','if-range']) if(req.headers[name]) headers[name]=req.headers[name];
       if (Number(headers['content-length'] ?? 0)>34*1024*1024) { res.writeHead(413); res.end(); return; }
-      const upstream=http.request({hostname:'127.0.0.1',port:backend.port,path:url.pathname+url.search,method:req.method,headers,timeout:60000}, response => {
+      const timeout=url.pathname==='/api/settings/runtime/validate'?220000
+        :url.pathname==='/api/settings/runtime/config/test'?100000:60000;
+      const upstream=http.request({hostname:'127.0.0.1',port:backend.port,path:url.pathname+url.search,method:req.method,headers,timeout}, response => {
         const forwarded={};
         for(const name of ['content-type','content-length','content-range','accept-ranges','etag','set-cookie','content-disposition','cache-control']) if(response.headers[name]) forwarded[name]=response.headers[name];
         res.writeHead(response.statusCode,forwarded); response.pipe(res);

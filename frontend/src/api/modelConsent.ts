@@ -2,19 +2,26 @@ import { ElMessageBox } from 'element-plus'
 import http from './http'
 import type { Result } from './types'
 import { useAuthStore } from '@/stores/auth'
+import { createChatTargetConsent } from './chatTargetConsent'
 
 export interface ModelTarget {
   configurationVersion: string
   mode: 'API' | 'LOCAL'
   targets: { capability: string; baseUrl: string; modelName: string }[]
+  chatConsentApproved?: boolean
 }
 
-export async function currentChatTargetVersion() {
-  const owner = useAuthStore().user?.id
-  const { data } = await http.get<Result<ModelTarget>>('/model-execution/target')
-  if (!owner || owner !== useAuthStore().user?.id) throw new Error('账号已变化，请重新提交')
-  return data.data.configurationVersion
-}
+export const currentChatTargetVersion = createChatTargetConsent({
+  identity: () => ({ owner: useAuthStore().user?.id, epoch: useAuthStore().generation }),
+  target: async () => (await http.get<Result<ModelTarget>>('/model-execution/chat-target')).data.data,
+  confirm: message => ElMessageBox.confirm(message, '允许 AI 对话查找', {
+    confirmButtonText: '允许并记住此配置', cancelButtonText: '取消', type: 'warning', customClass: 'model-consent-dialog',
+  }),
+  storage: {
+    getItem: key => localStorage.getItem(key),
+    setItem: (key, value) => localStorage.setItem(key, value),
+  },
+})
 
 export async function confirmModelTarget(inbox = false) {
   const owner = useAuthStore().user?.id

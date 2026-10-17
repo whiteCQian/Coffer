@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import CofferLogo from '@/components/CofferLogo.vue'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import AccountPanel from '@/components/AccountPanel.vue'
 import DesktopBackupPanel from '@/components/DesktopBackupPanel.vue'
@@ -28,6 +28,8 @@ type EndpointCard = RuntimeEndpointConfig & {
   apiKey: string
   saving: boolean
   testing: boolean
+  testResult?: { state:string; message:string; time:string; signature:string }
+  savedSignature?: string
 }
 
 const modes: RuntimeMode[] = ['API', 'LOCAL']
@@ -49,7 +51,7 @@ const modeStatus = ref<RuntimeModeStatus | null>(null)
 const cards = reactive<EndpointCard[]>([])
 
 const activeCards = computed(() => cards.filter((card) => card.mode === selectedMode.value))
-const selectedModeValidated = computed(() => Boolean(modeStatus.value?.validatedModes?.[selectedMode.value]))
+const selectedModeValidated = computed(() => Boolean(modeStatus.value?.validatedModes?.[selectedMode.value]) && activeCards.value.every(c => fingerprint(c) === c.savedSignature && !c.apiKey))
 const activeMode = computed(() => modeStatus.value?.activeMode ?? 'API')
 const chatCard = computed(() => activeCards.value.find((card) => card.capability === 'CHAT'))
 const embeddingStatus = ref<EmbeddingStatus | null>(null)
@@ -79,7 +81,12 @@ function applyConfigs(configs: RuntimeEndpointConfig[]) {
     apiKey: '',
     saving: false,
     testing: false,
+    savedSignature: undefined,
   })))
+  for (const card of cards) {
+    card.savedSignature=fingerprint(card)
+    try {const previous=JSON.parse(localStorage.getItem(resultKey(card)) || 'null');if(previous?.signature===fingerprint(card))card.testResult=previous} catch { /* No saved result. */ }
+  }
 }
 
 async function load() {
@@ -102,15 +109,25 @@ async function load() {
 }
 
 async function validateSelectedMode() {
+  if (modeLoading.value || activeCards.value.some(c => c.testing)) return
+  if (activeCards.value.some(c => fingerprint(c) !== c.savedSignature || c.apiKey)) {
+    ElMessage.warning('请先保存修改的配置，再校验当前模式'); return
+  }
   modeLoading.value = true
   try {
-    const { data } = await validateRuntimeMode(selectedMode.value)
-    modeStatus.value = data.data
-    if (data.data.validationSuccess) ElMessage.success(`${modeLabel(selectedMode.value)}校验通过`)
-    else ElMessage.warning(data.data.message || '部分模型能力校验失败')
-  } finally {
-    modeLoading.value = false
-  }
+    // Show each outcome immediately; a timeout in one capability cannot erase another result.
+    const results = await Promise.all(activeCards.value.filter(c => capabilities.includes(c.capability)).map(testCard))
+    if (results.every(Boolean)) {
+      const { data } = await validateRuntimeMode(selectedMode.value)
+      modeStatus.value = data.data
+      modeResult.value = data.data.validationSuccess ? '当前模式校验通过；各能力连接测试结果如下。' : (data.data.message || '模式校验未通过，分项连接结果仍保留。')
+      for (const [cap, value] of Object.entries(data.data.capabilities ?? {})) {
+        const card = activeCards.value.find(c => c.capability.toLowerCase() === cap)
+        if (card && value !== 'OK') recordTest(card, /超时|timeout/i.test(value) ? '测试超时' : '测试失败', value)
+      }
+    } else modeResult.value = '综合校验未通过。已完成的分项结果保留，可单独重试；超时不代表密钥错误。'
+  } catch { modeResult.value = '模式综合校验未完成，尚未确认可启用。分项结果保留，请重试。' }
+  finally { modeLoading.value = false }
 }
 
 async function enableSelectedMode() {
@@ -128,25 +145,43 @@ async function enableSelectedMode() {
   }
 }
 
-async function testCard(card: EndpointCard) {
+const modeResult = ref('')
+function fingerprint(card: EndpointCard) {
+  const value=JSON.stringify([card.mode,card.capability,card.baseUrl,card.modelName,card.maskedApiKey,card.source])
+  let hash=2166136261
+  for (const ch of value) hash=Math.imul(hash ^ ch.charCodeAt(0),16777619)
+  return String(hash >>> 0) + (card.apiKey ? ':unsaved' : '')
+}
+function resultKey(card:EndpointCard) {return `coffer:test:${auth.user?.id}:${card.mode}:${card.capability}`}
+function recordTest(card:EndpointCard,state:string,message:string) {
+  card.testResult={state,message,time:new Date().toLocaleString('zh-CN',{hour12:false}),signature:fingerprint(card)}
+  try {localStorage.setItem(resultKey(card),JSON.stringify(card.testResult))} catch { /* Still visible in this session. */ }
+}
+function testSummary(card:EndpointCard) {
+  if (card.testing) return '正在测试：等待该服务响应…'
+  if (!card.testResult || card.testResult.signature!==fingerprint(card)) return '尚未测试当前配置'
+  return `${card.testResult.state} · ${card.testResult.time}：${card.testResult.message}`
+}
+watch(() => cards.map(c => [c.baseUrl,c.modelName,c.apiKey]), (values, previous) => {
+  if (!previous) return
+  cards.forEach((c,index) => { if (previous[index] && JSON.stringify(values[index])!==JSON.stringify(previous[index])) c.testResult=undefined })
+})
+async function testCard(card: EndpointCard):Promise<boolean> {
+  if (card.testing) return false
   if (card.mode === 'API' && !(card.apiKey.trim() || card.maskedApiKey)) {
-    ElMessage.warning(`${capabilityLabel(card.capability)} 尚未配置 Key，请填写该服务对应的 API Key 后再测试。`)
-    return
+    recordTest(card,'测试失败','未配置该能力的 API Key，请保存配置后重试。'); return false
   }
   card.testing = true
   try {
-    const { data } = await testRuntimeEndpoint({
-      mode: card.mode,
-      capability: card.capability,
-      baseUrl: card.baseUrl,
-      modelName: card.modelName,
-      apiKey: card.apiKey.trim() || undefined,
-    })
-    if (data.data.success) ElMessage.success(`${capabilityLabel(card.capability)} 连接成功`)
-    else ElMessage.error(data.data.message)
-  } finally {
-    card.testing = false
-  }
+    const { data } = await testRuntimeEndpoint({mode:card.mode,capability:card.capability,baseUrl:card.baseUrl,modelName:card.modelName,apiKey:card.apiKey.trim() || undefined})
+    const result=data.data
+    recordTest(card,result.success ? '测试通过' : /超时|timeout/i.test(result.message) ? '测试超时' : '测试失败', result.message + (card.capability==='VISION' && result.success ? '；仅确认测试图片请求成功，实际图片整理需单独验收。' : ''))
+    return result.success
+  } catch(error) {
+    const timeout=/timeout|超时/i.test(String((error as Error).message))
+    recordTest(card,timeout?'测试超时':'测试失败',timeout?'服务未在时限内返回，连接尚未确认；可重试此项。':'测试请求未完成；请检查服务连接或权限后重试。')
+    return false
+  } finally {card.testing=false}
 }
 
 async function saveCard(card: EndpointCard) {
@@ -163,7 +198,8 @@ async function saveCard(card: EndpointCard) {
       modelName: card.modelName.trim(),
       apiKey: card.apiKey.trim() || undefined,
     })
-    Object.assign(card, data.data, { apiKey: '' })
+    Object.assign(card, data.data, { apiKey: '' }); card.savedSignature=fingerprint(card)
+    for(const c of cards){c.testResult=undefined;try{localStorage.removeItem(resultKey(c))}catch{}}
     ElMessage.success(`${capabilityLabel(card.capability)} 配置已保存，运行模式需要重新校验`)
     await refreshModeStatus()
   } finally {
@@ -180,6 +216,7 @@ async function removeCard(card: EndpointCard) {
       : '删除后将恢复环境变量或默认值。'
     await ElMessageBox.confirm(warning, `删除${capabilityLabel(card.capability)}配置`, { type: 'warning' })
     await deleteRuntimeEndpoint(card.mode, card.capability)
+    for(const c of cards){try{localStorage.removeItem(resultKey(c))}catch{}}
     ElMessage.success(`${capabilityLabel(card.capability)} 配置已删除`)
     await load()
   } catch {
@@ -259,12 +296,12 @@ onMounted(load)
             </span>
           </div>
           <div class="runtime-actions">
-            <button class="action-button secondary" :disabled="modeLoading" @click="validateSelectedMode">{{ modeLoading ? '校验中...' : '测试当前模式' }}</button>
-            <button class="action-button primary" :disabled="modeLoading || !selectedModeValidated || activeMode === selectedMode" @click="enableSelectedMode">{{ activeMode === selectedMode ? '正在使用' : '启用该模式' }}</button>
+            <button class="action-button secondary" :disabled="modeLoading || activeCards.some(c => c.testing)" @click="validateSelectedMode">{{ modeLoading ? '校验中...' : '测试当前模式' }}</button>
+            <button class="action-button primary" :disabled="modeLoading || !selectedModeValidated || activeMode === selectedMode" @click="enableSelectedMode">{{ activeMode === selectedMode ? modeStatus?.currentModeValidated ? '正在使用' : '当前模式（待校验）' : '启用该模式' }}</button>
           </div>
         </div>
         <p class="panel-note">
-          新任务当前使用{{ modeLabel(activeMode) }}{{ modeStatus?.currentModeValidated ? '（已校验）' : '（待校验）' }}。
+          当前选择{{ modeLabel(activeMode) }}{{ modeStatus?.currentModeValidated ? '（正在使用，已校验）' : '（尚未校验，暂不能提交 AI 任务）' }}。文件保存和取回仍可使用。
           保存 Chat 和 Vision 配置后，请点击“测试当前模式”；切换模式还需点击“启用该模式”。单独测试 Chat 成功不会启用整个模式。
         </p>
       </section>
@@ -280,12 +317,12 @@ onMounted(load)
           <button class="action-button secondary" :disabled="loading" @click="load">重新加载</button>
         </div>
 
-        <div class="endpoint-grid">
+        <p v-if="modeResult" role="status" class="panel-note">{{ modeResult }}</p><div class="endpoint-grid">
           <article v-if="chatCard" class="pg-panel endpoint-card chat-rag-card">
             <div class="endpoint-head">
               <div class="capability-icon">问</div>
               <div class="endpoint-title"><h3>RAG 回答 / Chat 模型</h3><p>由你选择检索后回答、对话、摘要和标签生成使用的模型</p></div>
-              <span class="source-chip" :class="{ 'is-custom': chatCard.source === 'CUSTOM' }">{{ chatCard.source === 'CUSTOM' ? '自定义' : '默认' }}</span>
+              <span class="source-chip" :class="{ 'is-custom': chatCard.source === 'CUSTOM' }">{{ fingerprint(chatCard) !== chatCard.savedSignature ? '修改未保存' : chatCard.source === 'CUSTOM' ? '配置已保存' : '默认配置' }}</span>
             </div>
             <div class="field-grid">
               <label class="field"><span>Chat Base URL</span><input v-model="chatCard.baseUrl" type="url" placeholder="https://api.example.com/v1" /></label>
@@ -295,7 +332,7 @@ onMounted(load)
             <datalist id="chat-model-suggestions"><option value="deepseek-flash" /><option value="deepseek-v4-pro" /></datalist>
             <p class="endpoint-note">RAG 的回答模型目前与 Chat 共用这份配置，可填写 DeepSeek 或其他兼容服务支持的模型。保存回答模型不需要填写或测试 Embedding。</p>
             <div class="endpoint-actions">
-              <button class="action-button secondary" :disabled="chatCard.testing" @click="testCard(chatCard)">{{ chatCard.testing ? '测试中...' : '测试回答模型' }}</button>
+              <p role="status">{{ testSummary(chatCard) }}</p><button class="action-button secondary" :disabled="chatCard.testing" @click="testCard(chatCard)">{{ chatCard.testing ? '测试中...' : '测试回答模型' }}</button>
               <button class="action-button primary" :disabled="chatCard.saving" @click="saveCard(chatCard)">{{ chatCard.saving ? '保存中...' : '保存回答模型' }}</button>
               <button class="action-button danger" :disabled="chatCard.saving" @click="removeCard(chatCard)">删除 Chat 配置</button>
             </div>
@@ -312,7 +349,7 @@ onMounted(load)
             <div class="endpoint-head">
               <div class="capability-icon">视</div>
               <div class="endpoint-title"><h3>Vision</h3><p>图片与视觉内容理解</p></div>
-              <span class="source-chip" :class="{ 'is-custom': visionCard.source === 'CUSTOM' }">{{ visionCard.source === 'CUSTOM' ? '自定义' : '默认' }}</span>
+              <span class="source-chip" :class="{ 'is-custom': visionCard.source === 'CUSTOM' }">{{ fingerprint(visionCard) !== visionCard.savedSignature ? '修改未保存' : visionCard.source === 'CUSTOM' ? '配置已保存' : '默认配置' }}</span>
             </div>
             <div class="field-grid">
               <label class="field"><span>Base URL</span><input v-model="visionCard.baseUrl" type="url" placeholder="https://api.example.com/v1" /></label>
@@ -320,7 +357,7 @@ onMounted(load)
               <label class="field field-wide"><span>API Key <em v-if="visionCard.maskedApiKey">已保存 {{ visionCard.maskedApiKey }}</em></span><input v-model="visionCard.apiKey" type="password" autocomplete="new-password" :placeholder="visionCard.maskedApiKey ? '留空则沿用已保存密钥' : selectedMode === 'API' ? '输入 API Key' : '可选：本地服务密钥'" /></label>
             </div>
             <div class="endpoint-actions">
-              <button class="action-button secondary" :disabled="visionCard.testing" @click="testCard(visionCard)">{{ visionCard.testing ? '测试中...' : '测试连接' }}</button>
+              <p role="status">{{ testSummary(visionCard) }}</p><button class="action-button secondary" :disabled="visionCard.testing" @click="testCard(visionCard)">{{ visionCard.testing ? '测试中...' : '测试连接' }}</button>
               <button class="action-button primary" :disabled="visionCard.saving" @click="saveCard(visionCard)">{{ visionCard.saving ? '保存中...' : '保存配置' }}</button>
               <button class="action-button danger" :disabled="visionCard.saving" @click="removeCard(visionCard)">删除配置</button>
             </div>

@@ -4,6 +4,8 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 contextBridge.exposeInMainWorld('cofferDesktop',Object.freeze({
   status:()=>ipcRenderer.invoke('coffer:status'),
   getTheme:()=>ipcRenderer.invoke('coffer:get-theme'),
+  getRecentTags:()=>ipcRenderer.invoke('coffer:get-recent-tags'),
+  saveRecentTags:names=>ipcRenderer.invoke('coffer:save-recent-tags',names),
   saveTheme:value=>ipcRenderer.invoke('coffer:save-theme',value),
   getPaneWidths:()=>ipcRenderer.invoke('coffer:get-pane-widths'),
   savePaneWidth:(key,value)=>ipcRenderer.invoke('coffer:save-pane-width',key,value),
@@ -28,5 +30,6 @@ contextBridge.exposeInMainWorld('cofferDesktop',Object.freeze({
     return ipcRenderer.invoke('coffer:preview-drops',paths);
   },
   commitInbox:confirmed=>ipcRenderer.invoke('coffer:commit-inbox',confirmed),
-  openWorkCopy:id=>ipcRenderer.invoke('coffer:open-work-copy',id)
+  openWorkCopy:id=>ipcRenderer.invoke('coffer:open-work-copy',id),
+  openFile:(id,revision)=>ipcRenderer.invoke('coffer:open-file',id,revision)
 }));
