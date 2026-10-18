@@ -33,6 +33,8 @@ public class ArchiveSavedFileService {
     public ArchiveOperationBatchResponse confirm(Long fileId, ArchiveSavedFileRequest request) {
         var file = files.findByIdForUpdate(fileId)
                 .orElseThrow(com.coffer.auth.service.ResourceNotFoundException::new);
+        if (!Objects.equals(file.getOwnerId(), com.coffer.auth.service.TenantContext.requireOwnerId()))
+            throw new com.coffer.auth.service.ResourceNotFoundException();
         String key = "saved-file-" + fileId + "-" + request.revision();
         var existing = batches.findByRequestId(key).orElse(null);
         if (existing != null) {

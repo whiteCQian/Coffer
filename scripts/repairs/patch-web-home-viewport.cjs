@@ -1,0 +1,12 @@
+'use strict';
+const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
+const repo=path.resolve(__dirname,'../..'),input=path.resolve(repo,'../coffer-test-release/build-artifacts/web'),output=path.join(repo,'.test-tmp/web-home-viewport/stage');
+const hash=s=>crypto.createHash('sha256').update(s).digest('hex');
+if(fs.existsSync(output))throw Error('Use fresh staging');
+const originalJs='index-reader-controls-db6c27b9f781.js',originalCss='index-reader-controls-fda57b2e432e.css',js=fs.readFileSync(path.join(input,'assets',originalJs)),css=fs.readFileSync(path.join(input,'assets',originalCss));
+if(hash(js)!=='f0716160622fc70381451671cd6536f548e4bf1a01455c9090d6859a6668edee'||hash(css)!=='fda57b2e432ec9cf41b41a47f136b2cb369af87467d6132afb925293ea691e28')throw Error('Deployed release changed');
+const nextCss=css+'\n'+fs.readFileSync(path.join(repo,'frontend/src/styles/web-home-viewport.css'),'utf8'),nextName=`index-home-viewport-${hash(nextCss).slice(0,12)}.css`;
+const html=fs.readFileSync(path.join(input,'index.html'),'utf8');if(!html.includes(originalJs)||!html.includes(originalCss))throw Error('HTML changed');
+const web=path.join(output,'build-artifacts/web');fs.mkdirSync(path.join(web,'assets'),{recursive:true});
+fs.writeFileSync(path.join(web,'index.html'),html.replaceAll(originalCss,nextName));fs.writeFileSync(path.join(web,'assets',nextName),nextCss);
+const files=['index.html','assets/'+nextName];fs.writeFileSync(path.join(output,'patch.json'),JSON.stringify({repair:'web-home-viewport-2026-10-18',originalJs,originalCss,originalJsHash:hash(js),originalCssHash:hash(css),files:files.map(n=>({path:n,sha256:hash(fs.readFileSync(path.join(web,n)))}))},null,2));console.log(JSON.stringify({staged:true,files}));

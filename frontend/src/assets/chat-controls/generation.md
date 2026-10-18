@@ -1,0 +1,13 @@
+# Chat size controls, version 2
+
+Generated with the built-in imagegen tool on 2026-10-18 at the user's request. Original PNG alpha is preserved; CSS uses the actual drawings as theme-colored masks. No SVG tracing or replacement glyphs.
+
+## Collapse prompt
+
+Use case: ui-mockup. Asset type: production transparent PNG glyph for a 28px desktop/web utility button in Coffer, a restrained teal document manager. Generate ONE icon only, NOT a mockup or button frame. Subject: collapse / shrink the expanded chat panel, shown as exactly TWO diagonal arrows pointing TOWARD EACH OTHER: one shaft starts upper-right and ends near the center pointing southwest; the other starts lower-left and ends near the center pointing northeast. Leave a clean visible gap between the two inward-facing arrowheads. Style: beautifully balanced minimal flat UI line icon, optically crisp, uniform medium-weight strokes, softly rounded line caps and joins, no overlapping paths, no cross or star at center. Pure solid black monochrome glyph with genuine transparent background; no white backing, no checkerboard drawn into image. Square canvas, glyph centered, occupying about 75 percent of canvas. Must be legible when reduced to 18px. No letters, text, caption, outline square, border, shadow, gradients, texture, badge, 3D, decorative details, or other icons. The resulting alpha will be used as a CSS mask so exact color is unimportant.
+
+## Expand prompt
+
+Reference: collapse-generated-v2.png, style reference only.
+
+Use case: ui-mockup. Generate the MATCHING ENLARGE glyph companion to the provided collapse glyph. The input is a STYLE REFERENCE only. Output ONE transparent square PNG icon, not an icon sheet, not a screenshot or button background. Keep the same minimal, balanced, rounded, uniform-weight arrow aesthetic and proportions as the reference. Change the direction and arrangement so exactly TWO arrows point OUTWARD, away from each other, on the northeast-to-southwest diagonal: upper-right arrowhead near the upper-right of the glyph, lower-left arrowhead near the lower-left; separated shafts originate near center with a generous clear gap. Medium-weight softly rounded clean flat linework. Render the glyph in solid muted teal #39877F so it is visible in previews. Genuine alpha-transparent background. Centered glyph occupies about 75 percent of square, matching reference visual size. It must remain crisp and recognizable when shown at 20px in a quiet file-manager UI. No text, letters, captions, badge, border, outline square, gradient, shadow, glow, checkerboard drawing, texture, 3D, extra marks, or other icons.

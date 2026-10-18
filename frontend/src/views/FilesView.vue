@@ -10,6 +10,7 @@ import { suggestTags } from '@/api/fileTags'
 import * as governanceApi from '@/api/governance'
 import type { FileListResponse, FileStatus, TagCandidate } from '@/api/types'
 import FileDetailDrawer from '@/components/FileDetailDrawer.vue'
+import ArchiveFileButton from '@/components/ArchiveFileButton.vue'
 import FileTile from '@/components/FileTile.vue'
 import DesktopImportPanel from '@/components/DesktopImportPanel.vue'
 import StorageQuotaPanel from '@/components/StorageQuotaPanel.vue'
@@ -20,6 +21,7 @@ import { desktopBridge } from '@/api/desktop'
 import ChatDock from '@/layout/ChatDock.vue'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useOpenFile } from '@/composables/useOpenFile'
+import { useArchiveFile } from '@/composables/useArchiveFile'
 import { formatBytes, shortTime, toDisplayTime } from '@/utils/format'
 
 /**
@@ -28,13 +30,15 @@ import { formatBytes, shortTime, toDisplayTime } from '@/utils/format'
  */
 const PAGE_SIZE = 12
 const auth = useAuthStore()
-const { openFile, isOpening } = useOpenFile()
+const { openFile, isOpening, canOpenFile } = useOpenFile()
+const { completedRevision } = useArchiveFile()
+watch(completedRevision, () => { void loadList() })
 let inspectTimer: ReturnType<typeof setTimeout> | undefined
 function inspectClickedFile(id: number, event: MouseEvent) {
   clearTimeout(inspectTimer)
   if (event.detail > 1) return
   // Let a double-click finish before the small-window inspector can cover its second click.
-  if (desktopBridge && windowWidth.value <= 960) inspectTimer = setTimeout(() => inspect(id), 500)
+  if (!auth.isPersonal || windowWidth.value <= 960) inspectTimer = setTimeout(() => inspect(id), 500)
   else inspect(id)
 }
 onUnmounted(() => clearTimeout(inspectTimer))
@@ -43,12 +47,13 @@ function openListedFile(id: number, event?: MouseEvent) {
   if (event?.target instanceof Element && event.target.closest('input,button,a,label')) return
   const file = items.value.find(item => item.id === id)
   contextMenu.value = null
+  if (!canOpenFile(file?.fileType)) { inspect(id); return }
   void openFile(id, undefined, file?.fileType)
 }
 const windowWidth=useWindowWidth(),contentElement=ref<HTMLElement>(),contentWidth=ref(0)
 const sidePanelMax=computed(()=>Math.max(280,Math.min(600,contentWidth.value-328)))
 const {width:sidePanelWidth,resize:resizeSidePanel,commit:saveSidePanel,reset:resetSidePanel}=usePaneWidth('coffer:side-panel-width',340,280,sidePanelMax)
-const canResizePanels=computed(()=>auth.isPersonal && windowWidth.value>960)
+const canResizePanels=computed(()=>windowWidth.value>960)
 let contentObserver:ResizeObserver|undefined
 onMounted(()=>{contentObserver=new ResizeObserver(entries=>{contentWidth.value=entries[0]?.contentRect.width || 0});if(contentElement.value)contentObserver.observe(contentElement.value)})
 onUnmounted(()=>contentObserver?.disconnect())
@@ -86,7 +91,7 @@ function imagePreview(file: ListItem) {
 function markImageUnavailable(id: number) { unavailableImages.value = new Set(unavailableImages.value).add(id) }
 function openContext(event: MouseEvent, id: number) {
   event.preventDefault()
-  contextMenu.value = { id, x: Math.max(8, Math.min(event.clientX, window.innerWidth - 190)), y: Math.max(8, Math.min(event.clientY, window.innerHeight - 210)) }
+  contextMenu.value = { id, x: Math.max(8, Math.min(event.clientX, window.innerWidth - 190)), y: Math.max(8, Math.min(event.clientY, window.innerHeight - 260)) }
 }
 function dismissContext() { contextMenu.value = null }
 function onKey(event: KeyboardEvent) {
@@ -443,7 +448,7 @@ onUnmounted(() => { listRequest++; clearInterval(pollTimer); window.removeEventL
       <template v-else><span>{{ suggesting ? '正在匹配标签…' : '相关标签' }}</span><button v-for="suggestion in suggestions" :key="suggestion.name" class="desk-tag" @click="chooseSuggestion(suggestion.name)">{{ suggestion.name }} · {{ suggestion.fileCount }}</button></template>
       <button v-if="keyword.trim()" class="desk-text-button" :disabled="suggesting" @click="suggestWithModel">AI 标签联想</button>
     </div>
-    <div ref="contentElement" class="workbench-content" :style="auth.isPersonal?{'--workbench-side-width':`${sidePanelWidth}px`}:undefined">
+    <div ref="contentElement" class="workbench-content" :style="{'--workbench-side-width':`${sidePanelWidth}px`}">
       <section class="file-browser" aria-label="文件浏览区" :aria-busy="loading">
         <div v-if="selectedCount" class="selection-toolbar"><strong>已选择 {{ selectedCount }} 个文件</strong><button class="desk-button is-primary" :disabled="archiving || !eligibleSelected.length" @click="archiveSelected">{{ archiving ? '正在提交…' : `确认并归档这 ${eligibleSelected.length} 个文件` }}</button><details><summary>高级整理</summary><button class="desk-button" @click="createPreview">历史整理预览</button></details><button class="desk-button" @click="reanalyzeSelected">重新分析</button><button class="desk-text-button" @click="clearSelection">取消选择</button></div>
         <p v-if="archiveResult" role="status">{{ archiveResult }}</p><div class="file-scroll">
@@ -460,14 +465,14 @@ onUnmounted(() => { listRequest++; clearInterval(pollTimer); window.removeEventL
           <div v-else-if="items.length" class="desk-file-grid"><article v-for="file in items" :key="file.id" class="desk-file-card" :class="{ inspected: drawerId === file.id, selected: selectedIds.has(file.id) }" tabindex="0" @click="inspectClickedFile(file.id, $event)" @dblclick="openListedFile(file.id, $event)" @keydown.enter.prevent="openListedFile(file.id)" @contextmenu="openContext($event, file.id)"><div class="desk-card-top"><input type="checkbox" :checked="selectedIds.has(file.id)" :aria-label="`选择 ${file.fileName}`" @click.stop @keydown.stop @change="toggleSelection(file.id)" /><span class="desk-state" :class="stateMini(file).cls">{{ stateMini(file).label }}</span></div><div class="desk-card-preview"><img v-if="imagePreview(file)" :src="`/api/files/${file.id}/content`" :alt="file.fileName" loading="lazy" @error="markImageUnavailable(file.id)" /><FileTile v-else :file-type="file.fileType" size="lg" /></div><h3 :title="file.fileName">{{ file.fileName }}</h3><p>{{ descOf(file) }}</p><div class="desk-row-tags"><span v-for="tag in file.tags.filter(t => t.status !== 'REJECTED').slice(0, 2)" :key="tag.id" class="desk-tag" :class="{ pending: tag.status === 'PENDING_CONFIRMATION' }">{{ tag.name }}</span></div><footer>{{ shortTime(file.uploadTime) }}<span>{{ formatBytes(file.fileSize) }}</span></footer></article></div>
           <div v-else class="desk-empty"><el-icon><FolderOpened /></el-icon><h2>{{ loading ? '正在读取文件库…' : loadFailed ? '文件库暂时无法加载' : keyword || activeTag ? '没有找到匹配的文件' : '你的文件库，从这里开始' }}</h2><p>{{ loadFailed ? (auth.isPersonal ? '请检查本地后台状态，再刷新重试。' : '请检查服务连接，再刷新重试。') : keyword || activeTag ? '试试其他关键词，或清除当前筛选条件。' : '导入文档、图片和资料，在这里浏览、查找与整理。' }}</p><button v-if="keyword.trim() && !loading && !loadFailed" class="desk-button is-primary" @click="findWithAi">用 AI 查找“{{ keyword }}”</button><button class="desk-button" @click="loadFailed ? reload() : keyword || activeTag ? resetFilters() : onUploadClick()">{{ loadFailed ? '重新加载' : keyword || activeTag ? '清除筛选' : '导入第一个文件' }}</button></div>
         </div>
-        <footer class="browser-footer"><span>{{ selectedCount ? `已选择 ${selectedCount} 个文件` : '单击查看详情 · 双击打开文件 · 右键查看更多操作' }}</span><el-pagination v-if="totalPages > 1" v-model:current-page="page" :page-size="PAGE_SIZE" :total="total" layout="prev, pager, next" :pager-count="5" small /></footer>
+        <footer class="browser-footer"><span>{{ selectedCount ? `已选择 ${selectedCount} 个文件` : '单击查看详情 · 双击预览支持的文件 · 右键查看更多操作' }}</span><el-pagination v-if="totalPages > 1" v-model:current-page="page" :page-size="PAGE_SIZE" :total="total" layout="prev, pager, next" :pager-count="5" small /></footer>
       </section>
       <PaneResizeHandle v-if="canResizePanels && (showInspector || aiOpen)" label="调整主区域右边界" :size="sidePanelWidth" :min="280" :max="sidePanelMax" reverse @resize="resizeSidePanel" @commit="saveSidePanel" @reset="resetSidePanel"/>
       <FileDetailDrawer v-show="showInspector && !aiOpen" v-model="drawerId" inline @changed="reload" @reanalyzed="goToReanalysis" />
       <aside v-if="aiMounted" v-show="aiOpen" class="workbench-ai"><div class="ai-panel-heading"><span>AI 文件助手</span><button class="desk-icon-button" aria-label="收起 AI 助手" @click="aiOpen = false">×</button></div><ChatDock :question="aiQuestion" /></aside>
     </div>
     <footer class="workbench-status"><span class="status-indicator"></span><span>{{ workspace.unavailable ? '任务状态暂时不可用' : !workspace.overview ? '正在读取任务状态…' : workspace.overview.processingCount ? `正在解析 ${workspace.overview.processingCount} 个文件` : '当前没有正在解析的文件' }}</span><RouterLink v-if="workspace.overview?.pendingConfirmCount" :to="pendingDestination">{{ workspace.overview.pendingConfirmCount }} 个文件待确认标签</RouterLink><RouterLink v-if="workspace.overview?.failedCount" :to="taskDestination" class="status-error">{{ workspace.overview.failedCount }} 个任务失败</RouterLink><RouterLink :to="taskDestination" class="status-tasks">查看任务 <el-icon><ArrowRight /></el-icon></RouterLink></footer>
-    <div v-if="contextMenu" class="file-context-menu" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @click.stop><button :disabled="isOpening(contextMenu.id)" @click="openListedFile(contextMenu.id)">打开文件</button><button @click="inspect(contextMenu.id)">查看文件详情</button><a :href="fileApi.fileDownloadUrl(contextMenu.id)" :download="items.find(file => file.id === contextMenu?.id)?.fileName" @click="dismissContext">下载到本地</a><button @click="selectedIds = new Set([contextMenu.id]); contextMenu = null; createPreview()">生成整理预览</button><button @click="toggleSelection(contextMenu.id); contextMenu = null">{{ selectedIds.has(contextMenu.id) ? '取消选择' : '选择文件' }}</button></div>
+    <div v-if="contextMenu" class="file-context-menu" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @click.stop><button v-if="canOpenFile(items.find(file => file.id === contextMenu?.id)?.fileType)" :disabled="isOpening(contextMenu.id)" @click="openListedFile(contextMenu.id)">打开文件</button><button @click="inspect(contextMenu.id)">查看文件详情</button><ArchiveFileButton :file-id="contextMenu.id" :archived="items.find(file => file.id === contextMenu?.id)?.archived" :status="items.find(file => file.id === contextMenu?.id)?.status" @changed="loadList()" /><a :href="fileApi.fileDownloadUrl(contextMenu.id)" :download="items.find(file => file.id === contextMenu?.id)?.fileName" @click="dismissContext">下载到本地</a><button @click="selectedIds = new Set([contextMenu.id]); contextMenu = null; createPreview()">生成整理预览</button><button @click="toggleSelection(contextMenu.id); contextMenu = null">{{ selectedIds.has(contextMenu.id) ? '取消选择' : '选择文件' }}</button></div>
   </div>
 </template>
 

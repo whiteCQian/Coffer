@@ -2,15 +2,23 @@
 import { ArrowRight, Search } from '@element-plus/icons-vue'
 import UploadZone from '@/layout/UploadZone.vue'
 import RecentUploads from '@/layout/RecentUploads.vue'
-import SuggestTags from '@/layout/SuggestTags.vue'
 import ChatDock from '@/layout/ChatDock.vue'
-import AiProgress from '@/layout/AiProgress.vue'
+import WebUploadProgress from '@/components/WebUploadProgress.vue'
+import FileDetailDrawer from '@/components/FileDetailDrawer.vue'
+import { useWebUploadsStore } from '@/stores/webUploads'
 import { useAuthStore } from '@/stores/auth'
 import { useWorkspaceStore } from '@/stores/workspace'
-import { nextTick, onMounted, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 const auth = useAuthStore(), workspace = useWorkspaceStore()
 const route = useRoute()
+const uploads = useWebUploadsStore(), recent = ref<InstanceType<typeof RecentUploads>>(), selectedFile = ref<number | null>(null)
+const hasTasks = computed(() => uploads.entries.length || workspace.overview?.processingCount || workspace.overview?.pendingConfirmCount || workspace.overview?.failedCount || workspace.unavailable || route.hash === '#web-task-progress')
+async function afterUpload() {
+  void recent.value?.refresh(); void workspace.refresh()
+  await nextTick(); document.getElementById('web-task-progress')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+}
+function fileChanged() { void uploads.refresh(true); void recent.value?.refresh(); void workspace.refresh() }
 async function focusTasks() {
   if (route.hash === '#web-task-progress') { await nextTick(); document.getElementById('web-task-progress')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }) }
 }
@@ -22,9 +30,10 @@ watch(() => route.hash, focusTasks)
     <header class="web-home-head"><div><p class="web-greeting">你好，{{ auth.user?.username }}</p><h1>工作台</h1><p class="web-home-description">上传、查找、整理，让每一份文件都有迹可循。</p></div><RouterLink to="/files" class="web-home-browse">浏览文件库 <el-icon><ArrowRight /></el-icon></RouterLink></header>
     <div class="web-overview" aria-label="文件任务概览"><span><i class="overview-dot"></i>正在解析 <strong>{{ workspace.overview?.processingCount ?? '—' }}</strong></span><span>待确认标签 <strong>{{ workspace.overview?.pendingConfirmCount ?? '—' }}</strong></span><span>失败任务 <strong>{{ workspace.overview?.failedCount ?? '—' }}</strong></span><span v-if="workspace.unavailable" role="status">任务状态暂时无法读取</span><RouterLink to="/search"><el-icon><Search /></el-icon>用自然语言找文件</RouterLink></div>
     <div class="web-home-workspace">
-      <div class="web-home-library"><UploadZone compact /><RecentUploads /><SuggestTags compact /></div>
-      <div class="web-home-side"><ChatDock /><AiProgress id="web-task-progress" /></div>
+      <div class="web-home-library"><UploadZone compact @uploaded="afterUpload" /><RecentUploads ref="recent" /></div>
+      <div class="web-home-side" :class="{ 'has-upload-tasks': hasTasks }"><ChatDock /><WebUploadProgress :show-empty="route.hash === '#web-task-progress'" @open-file="selectedFile = $event" @changed="fileChanged" /></div>
     </div>
+    <FileDetailDrawer v-model="selectedFile" @changed="fileChanged" />
   </div>
 </template>
 <style scoped>
@@ -37,4 +46,13 @@ watch(() => route.hash, focusTasks)
 @media (max-width: 1200px) { .web-home { padding: 22px; }.web-home-workspace { gap: 16px; grid-template-columns: minmax(0, 1.3fr) minmax(300px, 1fr); }.web-overview { gap: 16px; }.web-overview a { font-size: 10px; } }
 @media (max-width: 1050px) { .web-home { height: auto; }.web-home-workspace { grid-template-columns: minmax(0, 1fr); }.web-home-library :deep(.recent-card) { min-height: 320px; }.web-home-side { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }.web-home-side :deep(.chat-card) { min-height: 370px; }.web-home-side :deep(.progress-card) { max-height: 370px; } }
 @media (max-width: 620px) { .web-home { padding: 20px 16px; }.web-home-head { align-items: flex-start; }.web-home-head h1 { font-size: 22px; }.web-home-description { max-width: 230px; font-size: 11px; }.web-home-browse { font-size: 10px; padding: 6px 9px; margin-top: 22px; }.web-overview { gap: 14px; flex-wrap: wrap; padding-bottom: 14px; }.web-overview a { margin-left: 0; width: 100%; }.web-home-side { display: flex; }.web-home-side :deep(.progress-card) { flex-basis: 270px; }.web-home-library :deep(.card-head) { flex-wrap: wrap; } }
+</style>
+<style scoped>
+.web-home-side :deep(.upload-progress) { flex: 0 1 auto; max-height: 45%; min-height: 120px; }
+@media (max-width: 1050px) {
+  .web-home-side { display: flex; }
+  .web-home-side.has-upload-tasks { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .web-home-side :deep(.upload-progress) { max-height: 380px; }
+}
+@media (max-width: 620px) { .web-home-side.has-upload-tasks { display: flex; } }
 </style>

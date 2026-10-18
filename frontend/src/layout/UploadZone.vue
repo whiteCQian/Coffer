@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useWebUploadsStore } from '@/stores/webUploads'
+import { useAuthStore } from '@/stores/auth'
 
 import { uploadFile, saveFileOnly } from '@/api/files'
 import { UploadFilled } from '@element-plus/icons-vue'
 import DesktopImportPanel from '@/components/DesktopImportPanel.vue'
 import { desktopBridge } from '@/api/desktop'
 
-const router = useRouter()
-const props = defineProps<{ compact?: boolean }>()
+const uploads = useWebUploadsStore(), auth = useAuthStore()
+const emit = defineEmits<{ (e: 'uploaded'): void }>()
+const props = withDefaults(defineProps<{ compact?: boolean; allowSaveOnly?: boolean }>(), { allowSaveOnly: true })
 defineExpose({ pick: pickFile })
 const inputRef = ref<HTMLInputElement>()
 const uploading = ref(false)
@@ -40,16 +42,25 @@ async function upload(file: File) {
   if (lastUpload.value?.signature !== signature) {
     lastUpload.value = { signature, requestId: crypto.randomUUID() }
   }
+  const key = lastUpload.value.requestId, generation = auth.generation
+  uploads.begin(key, file.name)
   try {
-    try { await uploadFile(fd, lastUpload.value.requestId) }
-    catch {
+    let receipt, savedOnly = false
+    try { receipt = await uploadFile(fd, key, percent => { if (generation === auth.generation) uploads.progress(key, percent) }) }
+    catch (error) {
+      if (props.allowSaveOnly === false) throw error
+      if (generation !== auth.generation) return
       await ElMessageBox.confirm('AI 暂不可用或尚未授权。可以先安全保存，之后再整理；普通查找和下载仍可用。', '仅保存文件', {confirmButtonText:'仅保存',cancelButtonText:'返回'})
-      await saveFileOnly(fd, lastUpload.value.requestId)
+      if (generation !== auth.generation) return
+      receipt = await saveFileOnly(fd, key); savedOnly = true
     }
+    if (generation !== auth.generation) return
+    uploads.accepted(key, receipt.data.data, savedOnly)
     lastUpload.value = null
-    ElMessage.success(`「${file.name}」已保存，可在详情查看整理状态`)
-    router.push({ name: 'files' })
+    ElMessage.success(savedOnly ? `「${file.name}」已保存，可稍后分析` : `「${file.name}」已上传，请在下方查看处理结果`)
+    emit('uploaded')
   } catch {
+    if (generation === auth.generation) uploads.failed(key)
     /* 拦截器已弹错 */
   } finally {
     uploading.value = false

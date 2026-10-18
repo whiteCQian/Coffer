@@ -166,7 +166,7 @@ function onQuick(p: string) {
             <span class="status-dot" :class="`is-${aiStatus}`"></span>
             {{ aiStatusLabel }}
           </span>
-          <!-- 右上角：放大到页面中央 / 收起还原（浅金迷你圆钮，无图标） -->
+          <!-- 右上角：向外箭头放大，向内箭头收起还原。 -->
           <button
             class="expand-btn"
             :title="expanded ? '收起（回到侧栏）' : '放大到页面中央'"

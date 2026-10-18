@@ -1,0 +1,84 @@
+/* The workbench fits the viewport; each growing content area owns its scroll. */
+html[data-desktop='false'] .web-shell .page-viewport:has(> .web-home) {
+  overflow: clip;
+}
+html[data-desktop='false'] .web-shell:has(.web-home) { overflow: clip; }
+html[data-desktop='false'] .web-home {
+  height: 100%;
+  min-height: 0;
+  max-height: 100%;
+  overflow: clip;
+}
+html[data-desktop='false'] .web-home > .web-home-head,
+html[data-desktop='false'] .web-home > .web-overview { flex: none; }
+html[data-desktop='false'] .web-home .web-home-workspace {
+  flex: 1 1 0;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1.8fr) minmax(280px, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  overflow: clip;
+}
+html[data-desktop='false'] .web-home .web-home-library {
+  min-height: 0;
+  overflow: clip;
+}
+html[data-desktop='false'] .web-home .web-home-library > .upload-zone { flex: none; }
+html[data-desktop='false'] .web-home .recent-card {
+  flex: 1 1 0;
+  height: auto;
+  min-height: 0;
+  overflow: hidden;
+}
+html[data-desktop='false'] .web-home .recent-card > .card-head { flex: none; }
+html[data-desktop='false'] .web-home .recent-list { flex: 1 1 0; }
+html[data-desktop='false'] .web-home .web-home-side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+html[data-desktop='false'] .web-home .web-home-side .chat-card:not(.is-expanded) {
+  flex: 1 0 210px;
+  min-height: 210px;
+  overflow: hidden;
+}
+html[data-desktop='false'] .web-home .web-home-side .upload-progress {
+  flex: 0 0 auto;
+  min-height: 120px;
+  max-height: 45%;
+}
+@media (max-height: 700px) {
+  html[data-desktop='false'] .web-home { padding-block: 14px; gap: 10px; }
+  html[data-desktop='false'] .web-home .web-home-description { margin-top: 3px; }
+  html[data-desktop='false'] .web-home .web-overview { padding-block: 4px 10px; }
+  html[data-desktop='false'] .web-home .web-home-workspace,
+  html[data-desktop='false'] .web-home .web-home-library,
+  html[data-desktop='false'] .web-home .web-home-side { gap: 10px; }
+}
+@media (max-width: 760px) {
+  html[data-desktop='false'] .web-home { padding: 12px 14px; gap: 10px; }
+  html[data-desktop='false'] .web-home .web-home-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1.15fr) minmax(0, 1fr);
+    gap: 10px;
+  }
+  html[data-desktop='false'] .web-home .web-home-description,
+  html[data-desktop='false'] .web-home .web-greeting { display: none; }
+  html[data-desktop='false'] .web-home .web-home-head { align-items: center; }
+  html[data-desktop='false'] .web-home .web-home-browse { margin-top: 0; }
+  html[data-desktop='false'] .web-home .web-overview { padding: 0 0 8px; gap: 8px 14px; }
+  html[data-desktop='false'] .web-home .web-overview a { width: auto; margin-left: auto; }
+  html[data-desktop='false'] .web-home .web-home-library { gap: 8px; }
+  html[data-desktop='false'] .web-home .upload-zone.compact .uz-inner { padding: 10px 12px; }
+  html[data-desktop='false'] .web-home .upload-zone.compact .uz-main { flex-wrap: nowrap; gap: 8px; }
+  html[data-desktop='false'] .web-home .upload-zone.compact .uz-main > div { min-width: 0; }
+  html[data-desktop='false'] .web-home .upload-zone.compact .uz-btn { margin: 0 0 0 auto; padding: 7px 9px; }
+  html[data-desktop='false'] .web-home .upload-zone.compact .uz-title { font-size: 12px; }
+  html[data-desktop='false'] .web-home .upload-zone.compact .uz-description,
+  html[data-desktop='false'] .web-home .upload-zone.compact .uz-hint { display: none; }
+  html[data-desktop='false'] .web-home .upload-symbol { width: 28px; height: 28px; }
+  html[data-desktop='false'] .web-home .recent-card { padding: 12px; }
+  html[data-desktop='false'] .web-home .chat-quick { display: none; }
+  html[data-desktop='false'] .web-home .web-home-side .chat-card:not(.is-expanded) { flex-basis: 180px; min-height: 180px; padding: 12px; }
+}

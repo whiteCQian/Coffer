@@ -1,0 +1,96 @@
+/* Keep long web content reachable at small window sizes. */
+html[data-desktop='false'] .web-shell .page-viewport {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+html[data-desktop='false'] .operations-page {
+  height: auto;
+  max-height: none;
+  min-height: 100%;
+  display: flex;
+  overflow: visible;
+}
+html[data-desktop='false'] .operations-page > * { flex-shrink: 0; }
+html[data-desktop='false'] .operations-page .ledger-layout {
+  flex: none;
+  align-items: start;
+  min-height: 0;
+}
+html[data-desktop='false'] .operations-page .batch-panel {
+  display: flex;
+  flex-direction: column;
+  max-height: clamp(300px, 55vh, 560px);
+  min-height: 0;
+  overflow: hidden;
+}
+html[data-desktop='false'] .operations-page .batch-panel > .panel-heading,
+html[data-desktop='false'] .operations-page .batch-panel > .pager { flex: none; }
+html[data-desktop='false'] .operations-page .batch-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+}
+html[data-desktop='false'] .operations-page .batch-row { flex: none; }
+html[data-desktop='false'] .operations-page .batch-row-head code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+html[data-desktop='false'] .operations-page .detail-panel,
+html[data-desktop='false'] .operations-page .detail-list {
+  max-height: none;
+  overflow: visible;
+}
+html[data-desktop='false'] .operations-page .detail-list { flex: none; }
+
+html[data-desktop='false'] .web-home { height: auto; min-height: 100%; }
+html[data-desktop='false'] .web-home .web-home-workspace {
+  grid-template-columns: minmax(0, 1.8fr) minmax(300px, 1fr);
+}
+html[data-desktop='false'] .web-home .recent-card {
+  flex: none;
+  height: clamp(380px, 62vh, 640px);
+}
+html[data-desktop='false'] .web-home .recent-list {
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+html[data-desktop='false'] .web-home .recent-list::-webkit-scrollbar { width: 8px; background: transparent; }
+html[data-desktop='false'] .web-home .recent-list::-webkit-scrollbar-thumb { background: transparent; border-radius: 8px; }
+html[data-desktop='false'] .web-home .recent-list.is-scrolling { scrollbar-color: var(--text-3) transparent; }
+html[data-desktop='false'] .web-home .recent-list.is-scrolling::-webkit-scrollbar-thumb { background: var(--text-3); }
+html[data-desktop='false'] .web-home .recent-item {
+  flex: none;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  padding: 14px 2px;
+}
+html[data-desktop='false'] .web-home .file-name {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+html[data-desktop='false'] .web-home .file-desc {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+  margin-top: 5px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+html[data-desktop='false'] .web-home .file-state { margin-top: 2px; white-space: nowrap; }
+@media (max-width: 1050px) {
+  html[data-desktop='false'] .web-home .web-home-workspace { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 620px) {
+  html[data-desktop='false'] .web-home .recent-item { grid-template-columns: 28px minmax(0, 1fr); gap: 8px; }
+  html[data-desktop='false'] .web-home .file-state { grid-column: 2; justify-self: start; margin-top: 0; }
+}

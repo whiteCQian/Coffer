@@ -1,0 +1,38 @@
+/* Generated alpha masks keep their original drawing and inherit theme colors. */
+html[data-desktop] .chat-card .expand-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 9px;
+  color: var(--text-2);
+  background: transparent;
+  border-color: transparent;
+}
+
+html[data-desktop] .chat-card .expand-btn:hover {
+  color: var(--accent);
+  background: var(--hover-bg);
+  border-color: var(--line);
+  box-shadow: none;
+  transform: none;
+  filter: none;
+}
+
+html[data-desktop] .chat-card .expand-btn::after {
+  content: '';
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  vertical-align: middle;
+  background: currentColor;
+  --chat-size-icon: url('../assets/chat-controls/expand-generated-v2.png');
+  -webkit-mask: var(--chat-size-icon) center / contain no-repeat;
+  mask: var(--chat-size-icon) center / contain no-repeat;
+}
+
+html[data-desktop] .chat-card .expand-btn[aria-expanded='true']::after {
+  --chat-size-icon: url('../assets/chat-controls/collapse-generated-v2.png');
+}

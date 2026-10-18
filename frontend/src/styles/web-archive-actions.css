@@ -1,0 +1,15 @@
+.archive-file-button { font: inherit; font-size: 11px; padding: 4px 9px; margin-left: 8px; border: 1px solid var(--accent); border-radius: 6px; background: var(--panel-2); color: var(--accent); cursor: pointer; }
+.archive-file-button:disabled { opacity: .55; cursor: default; }
+.file-context-menu > .archive-file-button { display: block; width: 100%; margin-left: 0; border: 0; border-radius: 0; text-align: left; }
+html[data-desktop='false'] .web-home .file-state.is-parsed { color: #2467a8; background: #e4effb; }
+html[data-desktop='false'] .web-home .file-state.is-archived { color: #227347; background: #e2f3e8; }
+html[data-desktop='false'] .web-home .file-state.is-unparsed { color: #566375; background: #e8edf3; }
+html[data-desktop='false'] .web-home .file-state.is-processing,
+html[data-desktop='false'] .web-home .file-state.is-awaiting { color: #875407; background: #fff0d4; }
+html[data-desktop='false'] .web-home .file-state.is-failed { color: #a23b35; background: #fde8e5; }
+html[data-desktop='false'][data-theme='dark'] .web-home .file-state.is-parsed { color: #9ac9fa; background: #263d56; }
+html[data-desktop='false'][data-theme='dark'] .web-home .file-state.is-archived { color: #9eddb6; background: #294536; }
+html[data-desktop='false'][data-theme='dark'] .web-home .file-state.is-unparsed { color: #bcc8d6; background: #36404c; }
+html[data-desktop='false'][data-theme='dark'] .web-home .file-state.is-processing,
+html[data-desktop='false'][data-theme='dark'] .web-home .file-state.is-awaiting { color: #f3ce87; background: #514127; }
+html[data-desktop='false'][data-theme='dark'] .web-home .file-state.is-failed { color: #f3aaa4; background: #54322f; }

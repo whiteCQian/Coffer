@@ -14,6 +14,14 @@ import './styles/global.css'
 import './styles/tokens.css'
 import './styles/desktop.css'
 import './styles/web.css'
+import './styles/web-content-layout.css'
+import './styles/web-home-viewport.css'
+import './styles/web-archive-actions.css'
+import './styles/web-pane-layout.css'
+import './styles/chat-expand-controls.css'
+import { installRecentUploadScrollbar } from './utils/recentUploadScrollbar'
+
+installRecentUploadScrollbar()
 
 // 首屏渲染前应用主题，避免刷新时闪烁
 const themeReady = initializeTheme()

@@ -1,0 +1,11 @@
+'use strict';
+const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
+const repo=path.resolve(__dirname,'../..'),input=path.resolve(repo,'../coffer-test-release/build-artifacts/web'),output=path.join(repo,'.test-tmp/chat-size-icons/stage');
+const hash=s=>crypto.createHash('sha256').update(s).digest('hex');
+if(fs.existsSync(output))throw Error('Use fresh staging');
+const originalJs='index-eight-tags-009fa1f840aa.js',originalCss='index-pane-layout-555e68d855f5.css',js=fs.readFileSync(path.join(input,'assets',originalJs)),css=fs.readFileSync(path.join(input,'assets',originalCss));
+if(hash(js)!=='c2520e3b92b02d2782ac717be90d6a4aa2aa45a4f227206a6eb87f889e2d4c30'||hash(css)!=='555e68d855f5dd187a6adc09fdea8c2e0c865c2f7e5c04fa4f8819b5665d3fa3')throw Error('Deployed release changed');
+const nextCss=css.toString()+'\n'+fs.readFileSync(path.join(repo,'frontend/src/styles/chat-expand-controls.css'),'utf8'),nextCssName=`index-chat-size-${hash(nextCss).slice(0,12)}.css`,html=fs.readFileSync(path.join(input,'index.html'),'utf8');
+if(!html.includes(originalJs)||!html.includes(originalCss))throw Error('HTML changed');
+const web=path.join(output,'build-artifacts/web');fs.mkdirSync(path.join(web,'assets'),{recursive:true});fs.writeFileSync(path.join(web,'assets',nextCssName),nextCss);fs.writeFileSync(path.join(web,'index.html'),html.replaceAll(originalCss,nextCssName));
+const out=['index.html','assets/'+nextCssName];fs.writeFileSync(path.join(output,'patch.json'),JSON.stringify({repair:'web-chat-size-icons-2026-10-18',originalJs,originalCss,originalJsHash:hash(js),originalCssHash:hash(css),files:out.map(n=>({path:n,sha256:hash(fs.readFileSync(path.join(web,n)))}))},null,2));console.log(JSON.stringify({staged:true,files:out}));

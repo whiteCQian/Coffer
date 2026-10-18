@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
-import { taskStateLabel } from '@/utils/status'
+import { recentUploadStateLabel, recentUploadStateTone } from '@/utils/recentUploadState'
 import { listFiles } from '@/api/files'
 import type { FileListResponse } from '@/api/types'
 import FileTile from '@/components/FileTile.vue'
@@ -19,6 +19,7 @@ const files = ref<FileListResponse[]>([])
 const total = ref(0)
 const loading = ref(false)
 const loadFailed = ref(false)
+defineExpose({ refresh: load })
 let requestId = 0
 
 const shown = computed(() => files.value.slice(0, SHOW))
@@ -57,7 +58,7 @@ function descOf(f: FileListResponse) {
 }
 
 /** 行右侧状态文案 */
-function stateOf(f: FileListResponse) { return taskStateLabel(f) }
+function stateOf(f: FileListResponse) { return recentUploadStateLabel(f) }
 
 async function load() {
   const current = ++requestId
@@ -104,7 +105,7 @@ watch(() => view.activeTag, load)
             {{ descOf(f) }}
           </span>
         </div>
-        <span class="file-state" :class="stateOf(f) === '待确认' ? 'is-awaiting' : `is-${String(f.status).toLowerCase()}`">
+        <span class="file-state" :class="`is-${recentUploadStateTone(f)}`">
           {{ stateOf(f) }}
         </span>
       </li>

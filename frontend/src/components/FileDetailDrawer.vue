@@ -2,6 +2,7 @@
 import { ElMessage } from 'element-plus'
 import { computed, nextTick, ref, watch, onUnmounted } from 'vue'
 import ArchiveConfirmationCard from '@/components/ArchiveConfirmationCard.vue'
+import ArchiveFileButton from '@/components/ArchiveFileButton.vue'
 import { taskStateLabel } from '@/utils/status'
 
 import * as fileApi from '@/api/files'
@@ -12,6 +13,7 @@ import FileTile from '@/components/FileTile.vue'
 import WorkCopyPanel from '@/components/WorkCopyPanel.vue'
 import { desktopBridge } from '@/api/desktop'
 import { useOpenFile } from '@/composables/useOpenFile'
+import { useArchiveFile } from '@/composables/useArchiveFile'
 import { formatBytes, shortTime, toDisplayTime } from '@/utils/format'
 
 /**
@@ -59,7 +61,9 @@ const loading = ref(false)
 /** 当前打开文件拉取的真实详情（切换/关闭时置空，未加载完成为 null） */
 const detail = ref<FileDetailResponse | null>(null)
 const reanalyzing = ref(false)
-const { openFile, isOpening } = useOpenFile()
+const { openFile, isOpening, canOpenFile } = useOpenFile()
+const { completedRevision } = useArchiveFile()
+watch(completedRevision, () => { if (props.modelValue != null) { void loadDetail(props.modelValue); emit('changed', props.modelValue) } })
 const editorPanel = ref<InstanceType<typeof WorkCopyPanel>>()
 const editorExpanded = ref(false), editing = ref(false)
 async function editFile() {
@@ -292,7 +296,7 @@ onUnmounted(() => clearInterval(refreshTimer))
           <button class="head-x" title="关闭" @click="close">✕</button>
         </div>
         <div class="drawer-actions">
-          <button class="act-btn is-download" :disabled="isOpening(file.id)" @click="openFile(file.id, detail?.revision ?? props.revision, file.fileType)">{{ isOpening(file.id) ? '正在打开…' : '打开文件' }}</button>
+          <button v-if="canOpenFile(file.fileType)" class="act-btn is-download" :disabled="isOpening(file.id)" @click="openFile(file.id, detail?.revision ?? props.revision, file.fileType)">{{ isOpening(file.id) ? '正在打开…' : '打开文件' }}</button>
           <button v-if="desktopBridge && props.revision === undefined" class="act-btn" :disabled="editing" @click="editFile">{{ editing ? '正在准备…' : '编辑文件' }}</button>
           <a v-if="downloadLink" class="act-btn is-download" :href="downloadLink" :download="file.fileName">下载到本地</a>
           <button
@@ -319,7 +323,7 @@ onUnmounted(() => clearInterval(refreshTimer))
           <template v-else>
             <FileTile :file-type="file.fileType" size="lg" />
             <p class="preview-note">
-              {{ desktopBridge ? '点击“打开文件”查看；需要修改时选择“编辑文件”。查看副本的改动不会写回文件库。' : '该类型暂不支持内嵌预览' }}<template v-if="previewLink && !desktopBridge">
+              {{ desktopBridge ? '点击“打开文件”查看；需要修改时选择“编辑文件”。查看副本的改动不会写回文件库。' : canOpenFile(file.fileType) ? '可打开文件在线阅读。' : '该类型暂不支持在线阅读，请下载到本地查看。' }}<template v-if="previewLink && !desktopBridge && canOpenFile(file.fileType)">
                 ，可
                 <a class="preview-link" :href="previewLink" target="_blank" rel="noreferrer">打开文件预览</a>
               </template>
@@ -417,6 +421,7 @@ onUnmounted(() => clearInterval(refreshTimer))
                 <span :class="file.archived ? 'arch is-on' : 'arch'">
                   {{ file.archived ? '已归档' : '未归档' }}
                 </span>
+                <ArchiveFileButton v-if="!file.archived && props.revision === undefined" :file-id="file.id" :archived="file.archived" :status="file.status" @changed="loadDetail(file.id); emit('changed', file.id)" />
               </dd>
             </div>
             <div class="meta-item">

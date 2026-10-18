@@ -1,0 +1,18 @@
+/* Match the ledger columns while keeping long results reachable inside each card. */
+html[data-desktop='false'] .operations-page .ledger-layout { align-items: stretch; }
+html[data-desktop='false'] .operations-page .batch-panel,
+html[data-desktop='false'] .operations-page .detail-panel {
+  height: clamp(300px, 55vh, 560px);
+  max-height: clamp(300px, 55vh, 560px);
+  min-height: 0;
+  box-sizing: border-box;
+}
+html[data-desktop='false'] .operations-page .detail-panel {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+}
+html[data-desktop='false'] .operations-page .detail-panel > * { flex-shrink: 0; }
+html[data-desktop='false'] .operations-page .detail-panel > .empty-panel { flex: 1 0 180px; min-height: 0; }

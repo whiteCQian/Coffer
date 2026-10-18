@@ -4,11 +4,16 @@ import type {
   Result,
   TaskOverviewResponse,
   TaskProgressResponse,
+  FileDetailResponse,
 } from './types'
 
 /** 异步任务进度查询（上传后轮询：PENDING → PROCESSING → COMPLETED/FAILED） */
-export function getTaskProgress(taskId: string) {
-  return http.get<Result<TaskProgressResponse>>(`/tasks/${taskId}`)
+export function getTaskProgress(taskId: string, quietError = false) {
+  return http.get<Result<TaskProgressResponse>>(`/tasks/${encodeURIComponent(taskId)}`, { quietError })
+}
+
+export function getTaskFile(taskId: string) {
+  return http.get<Result<FileDetailResponse>>(`/tasks/${encodeURIComponent(taskId)}/file`, { quietError: true })
 }
 
 /** 首页总览：处理中/失败/待确认标签三类面板的计数与明细 */

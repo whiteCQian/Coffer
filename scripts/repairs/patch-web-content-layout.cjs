@@ -1,0 +1,20 @@
+'use strict';
+// CSS-only overlay against the exact deployed release; leave its API/runtime intact.
+const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
+const repo=path.resolve(__dirname,'../..'),input=path.resolve(repo,'../coffer-test-release/build-artifacts/web');
+const output=path.resolve(process.argv[2]||path.join(repo,'.test-tmp/web-content-layout/stage'));
+const hash=s=>crypto.createHash('sha256').update(s).digest('hex');
+if(!output.startsWith(path.join(repo,'.test-tmp')+path.sep)||fs.existsSync(output))throw Error('Use fresh repository-local staging');
+const originalJs='index-upload-flow-9f2b4370ed9a.js',originalCss='index-upload-flow-c125fef235ef.css';
+const js=fs.readFileSync(path.join(input,'assets',originalJs)),css=fs.readFileSync(path.join(input,'assets',originalCss));
+if(hash(js)!=='db83f930c2926066c1dd00d403503bd5c36fb270d67d888abc54a8971cdcfc4e'||hash(css)!=='c125fef235effb15633d447f5eabd344b22b2c12e2b20e0f2c2691061c82ce07')throw Error('Deployed release changed');
+const nextCss=css+'\n'+fs.readFileSync(path.join(repo,'frontend/src/styles/web-content-layout.css'),'utf8');
+const nextCssName=`index-content-layout-${hash(nextCss).slice(0,12)}.css`;
+const html=fs.readFileSync(path.join(input,'index.html'),'utf8');
+if(!html.includes(originalJs)||!html.includes(originalCss))throw Error('HTML changed');
+const web=path.join(output,'build-artifacts/web');fs.mkdirSync(path.join(web,'assets'),{recursive:true});
+fs.writeFileSync(path.join(web,'index.html'),html.replaceAll(originalCss,nextCssName));
+fs.writeFileSync(path.join(web,'assets',nextCssName),nextCss);
+const files=['index.html','assets/'+nextCssName];
+fs.writeFileSync(path.join(output,'patch.json'),JSON.stringify({repair:'web-content-layout-2026-10-18',originalJs,originalCss,originalJsHash:hash(js),originalCssHash:hash(css),files:files.map(n=>({path:n,sha256:hash(fs.readFileSync(path.join(web,n)))}))},null,2));
+console.log(JSON.stringify({staged:true,output,files}));
