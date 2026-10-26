@@ -1,3 +1,4 @@
+import axios from 'axios'
 import http from './http'
 import type {
   ArchiveOperationBatchResponse,
@@ -182,6 +183,42 @@ export function confirmSavedFile(fileId: number, payload: { revision: number; fi
   return http.post<Result<ArchiveOperationBatchResponse>>(`/files/${fileId}/confirm-archive`, payload)
 }
 
-export function recentOperations(params: {name?: string; attention?: boolean; page?: number; size?: number}) {
-  return http.get<Result<{content:ArchiveOperationItemResponse[];totalPages:number;totalElements:number}>>('/governance/operations/recent', {params})
+type RecentQuery = { name?: string; attention?: boolean; page?: number; size?: number }
+type RecentPage = { content: ArchiveOperationItemResponse[]; totalPages: number; totalElements: number }
+let recentRouteMissing = false
+
+/** Older deployed backends expose the same owner-scoped ledger via /items. */
+export async function recentOperations(params: RecentQuery = {}) {
+  if (!recentRouteMissing) {
+    try {
+      return await http.get<Result<RecentPage>>('/governance/operations/recent', { params, quietError: true })
+    } catch (error) {
+      if (!axios.isAxiosError(error) || error.response?.status !== 404) throw error
+      recentRouteMissing = true
+    }
+  }
+  const size = Math.max(1, Math.min(100, params.size ?? 20))
+  const page = Math.max(0, params.page ?? 0)
+  const name = params.name?.trim().toLocaleLowerCase() ?? ''
+  const read = (page: number, size: number) => http.get<Result<RecentPage>>('/governance/operations/items', {
+    params: { page, size, sort: 'createdAt,desc' }, quietError: true,
+  })
+  if (!name && !params.attention) return read(page, size)
+
+  // Do not pretend that filtering only one legacy page searches the whole ledger.
+  const first = await read(0, 100)
+  const limit = 2000
+  if (first.data.data.totalElements > limit) throw new Error('当前服务版本的操作记录较多，完整筛选需要更新后端；可清空筛选查看最近记录。')
+  const items = [...first.data.data.content]
+  for (let index = 1; index < first.data.data.totalPages; index++) {
+    const next = await read(index, 100)
+    items.push(...next.data.data.content)
+    if (items.length > limit || next.data.data.totalElements > limit) throw new Error('当前服务版本的操作记录较多，完整筛选需要更新后端；可清空筛选查看最近记录。')
+  }
+  const matches = items.filter(item => (!name || [item.sourceFileName, item.targetFileName].some(value => value?.toLocaleLowerCase().includes(name)))
+    && (!params.attention || ['FAILED', 'CONFLICTED', 'MANUAL_REVIEW'].includes(item.executionStatus)))
+  return { ...first, data: { ...first.data, data: {
+    content: matches.slice(page * size, (page + 1) * size),
+    totalElements: matches.length, totalPages: Math.ceil(matches.length / size),
+  } } }
 }

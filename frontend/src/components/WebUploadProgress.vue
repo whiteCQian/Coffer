@@ -5,8 +5,8 @@ import { useWebUploadsStore, type UploadPhase } from '@/stores/webUploads'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { confirmTag } from '@/api/fileTags'
 import { useAuthStore } from '@/stores/auth'
-const props = defineProps<{ showEmpty?: boolean }>()
-const emit = defineEmits<{ (e: 'open-file', id: number): void; (e: 'changed'): void }>()
+const props = defineProps<{ showEmpty?: boolean; expanded?: boolean }>()
+const emit = defineEmits<{ (e: 'open-file', id: number): void; (e: 'changed'): void; (e: 'toggle-expand'): void }>()
 const uploads = useWebUploadsStore(), workspace = useWorkspaceStore(), auth = useAuthStore(), busy = ref<string | null>(null)
 const labels: Record<UploadPhase, string> = { UPLOADING: '正在上传', PENDING: '已上传，等待解析', PROCESSING: '正在解析', CONFIRM: '请确认标签', COMPLETED: '已完成', FAILED: '分析未完成', SAVED: '已保存，稍后分析', UPLOAD_FAILED: '上传未完成', REMOVED: '文件已移除' }
 const others = computed(() => {
@@ -45,9 +45,9 @@ async function accept(key: string) {
 </script>
 <template>
   <section v-if="visible" id="web-task-progress" class="upload-progress" aria-label="本次上传与处理" aria-live="polite">
-    <header><h2>上传与处理</h2><button v-if="uploads.hasFinished" class="text-button" @click="uploads.clearFinished">收起已完成</button><button class="text-button" @click="refresh(true)">刷新状态</button></header>
+    <header><h2>上传与处理</h2><button v-if="uploads.hasFinished" class="text-button" @click="uploads.clearFinished">收起已完成</button><button class="text-button" @click="refresh(true)">刷新状态</button><button type="button" class="task-expand-button" :aria-expanded="!!props.expanded" aria-controls="web-task-receipts" :aria-label="props.expanded ? '收起上传与处理' : '展开上传与处理'" @click="emit('toggle-expand')">{{ props.expanded ? '收起' : '展开' }}</button></header>
     <p v-if="workspace.unavailable" role="status">任务列表暂时无法读取，已上传的文件仍会保留。可刷新状态重试。</p>
-    <ol class="upload-receipts">
+    <ol id="web-task-receipts" class="upload-receipts">
       <li v-for="entry in uploads.entries" :key="entry.key" class="upload-receipt" :data-phase="entry.phase">
         <div class="receipt-heading"><strong :title="entry.name">{{ entry.name }}</strong><span>{{ labels[entry.phase] }}</span></div>
         <progress v-if="['UPLOADING', 'PROCESSING'].includes(entry.phase)" :value="entry.progress" max="100" :aria-label="`${entry.name}的${labels[entry.phase]}进度`" />

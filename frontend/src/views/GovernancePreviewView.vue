@@ -14,6 +14,7 @@ import type {
 } from '@/api/types'
 import FileTile from '@/components/FileTile.vue'
 import { formatBytes, toDisplayTime } from '@/utils/format'
+import { createRequestId } from '@/utils/requestId'
 
 type Draft = {
   fileName: string
@@ -331,7 +332,7 @@ async function authorizeAndReanalyze(item: GovernancePreviewItemResponse) {
   try {
     await approveFileModel(item.fileId, capability, target)
     const { data } = await governanceApi.reanalyzeGovernanceFile(item.fileId, {
-      requestId: crypto.randomUUID(),
+      requestId: createRequestId(),
       mode: preview.value?.mode ?? 'API',
     })
     if (data.data?.previewId) await router.push({ name: 'governance-preview', params: { previewId: data.data.previewId } })

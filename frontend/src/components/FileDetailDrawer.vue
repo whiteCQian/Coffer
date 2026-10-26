@@ -2,7 +2,6 @@
 import { ElMessage } from 'element-plus'
 import { computed, nextTick, ref, watch, onUnmounted } from 'vue'
 import ArchiveConfirmationCard from '@/components/ArchiveConfirmationCard.vue'
-import ArchiveFileButton from '@/components/ArchiveFileButton.vue'
 import { taskStateLabel } from '@/utils/status'
 
 import * as fileApi from '@/api/files'
@@ -14,6 +13,8 @@ import WorkCopyPanel from '@/components/WorkCopyPanel.vue'
 import { desktopBridge } from '@/api/desktop'
 import { useOpenFile } from '@/composables/useOpenFile'
 import { useArchiveFile } from '@/composables/useArchiveFile'
+import { useDetailPresentation } from '@/composables/useDetailPresentation'
+import '@/styles/detail-presentation.css'
 import { formatBytes, shortTime, toDisplayTime } from '@/utils/format'
 
 /**
@@ -57,6 +58,9 @@ const emit = defineEmits<{
 }>()
 
 const open = computed(() => props.modelValue !== null)
+const { expanded, panel, toggleButton, setExpanded, onKeydown: presentationKeydown } = useDetailPresentation(
+  () => `${props.modelValue}:${props.revision ?? ''}`,
+)
 const loading = ref(false)
 /** 当前打开文件拉取的真实详情（切换/关闭时置空，未加载完成为 null） */
 const detail = ref<FileDetailResponse | null>(null)
@@ -188,17 +192,25 @@ async function reanalyze() {
 /* —— 标签确认 / 拒绝 —— */
 const editingTag = ref<number | null>(null)
 const correction = ref('')
+const tagBusy = ref(false)
+const tagEditName = computed(() => file.value?.tags.find(t => t.id === editingTag.value)?.name ?? '')
 
 async function doConfirm(tagId: number) {
   const id = props.modelValue
-  if (!id) return
-  await confirmTag({ fileId: id, tagId })
-  await loadDetail(id) // 标签移入已确认区
-  emit('changed', id)
-  ElMessage.success('标签已确认')
+  if (!id || tagBusy.value) return
+  tagBusy.value = true
+  try {
+    await confirmTag({ fileId: id, tagId })
+    if (props.modelValue !== id) return
+    await loadDetail(id)
+    emit('changed', id)
+    ElMessage.success('标签已确认')
+  } catch { /* The request layer displays failures; retain the tag for retry. */ }
+  finally { tagBusy.value = false }
 }
 
 function beginReject(tagId: number) {
+  if (tagBusy.value) return
   editingTag.value = tagId
   correction.value = ''
 }
@@ -206,14 +218,20 @@ function cancelReject() {
   editingTag.value = null
 }
 async function submitReject() {
-  const id = props.modelValue!
-  const tagId = editingTag.value!
+  const id = props.modelValue
+  const tagId = editingTag.value
+  if (!id || tagId === null || tagBusy.value) return
   const newName = correction.value.trim()
-  await rejectTag(newName ? { fileId: id, tagId, newTagName: newName } : { fileId: id, tagId })
-  await loadDetail(id)
-  emit('changed', id)
-  editingTag.value = null
-  ElMessage.success(newName ? `已拒绝原标签，并记录为「${newName}」` : '已拒绝该标签')
+  tagBusy.value = true
+  try {
+    await rejectTag(newName ? { fileId: id, tagId, newTagName: newName } : { fileId: id, tagId })
+    if (props.modelValue !== id) return
+    await loadDetail(id)
+    emit('changed', id)
+    editingTag.value = null
+    ElMessage.success(newName ? `已移除原标签，并记录为「${newName}」` : '已移除该文件的标签')
+  } catch { /* Keep the editor open so a failed request can be retried. */ }
+  finally { tagBusy.value = false }
 }
 
 /* —— 预览 —— */
@@ -256,6 +274,8 @@ watch(open, (v) => {
 watch(
   () => [props.modelValue, props.revision] as const,
   async ([id]) => {
+    editingTag.value = null
+    correction.value = ''
     detail.value = null
     if (id !== null) {
       await loadDetail(id)
@@ -274,14 +294,15 @@ onUnmounted(() => clearInterval(refreshTimer))
 <template>
   <div
     class="drawer-wrap"
-    :class="{ 'is-open': open, 'is-elevated': props.elevated, 'is-inline': props.inline }"
+    :class="{ 'is-open': open, 'is-elevated': props.elevated, 'is-inline': props.inline, 'is-expanded': expanded }"
     :aria-hidden="!open && !props.inline"
+    @keydown.capture="presentationKeydown"
   >
     <!-- 遮罩 -->
-    <div v-if="!props.inline" class="drawer-mask" @click="close"></div>
+    <div v-if="!props.inline || expanded" class="drawer-mask" @click="expanded ? setExpanded(false) : close()"></div>
 
     <!-- 抽屉面板 -->
-    <aside v-if="file" class="drawer-panel">
+    <aside v-if="file" ref="panel" class="drawer-panel" :role="expanded ? 'dialog' : undefined" :aria-modal="expanded || undefined" :aria-label="expanded ? '文件详情' : undefined" tabindex="-1">
       <div v-if="props.inline" class="inspector-heading">文件详情 <span>预览与 AI 信息</span></div>
       <!-- 顶栏：图章 + 文件名 + 操作 -->
       <div class="drawer-head">
@@ -293,6 +314,7 @@ onUnmounted(() => clearInterval(refreshTimer))
               <span class="meta-time">上传于 {{ shortTime(file.uploadTime) }}</span>
             </div>
           </div>
+          <button ref="toggleButton" class="head-expand" :aria-label="expanded ? '收起文件详情' : '放大文件详情'" :aria-expanded="expanded" @click="setExpanded(!expanded)"><span aria-hidden="true">{{ expanded ? '↙' : '↗' }}</span>{{ expanded ? '收起' : '放大' }}</button>
           <button class="head-x" title="关闭" @click="close">✕</button>
         </div>
         <div class="drawer-actions">
@@ -358,7 +380,8 @@ onUnmounted(() => clearInterval(refreshTimer))
           <!-- 已确认标签 -->
           <div v-if="confirmedTags.length" class="tag-row">
             <span v-for="t in confirmedTags" :key="t.id" class="tag is-confirmed">
-              <span class="tag-check">✓</span>{{ t.name }}
+              <span class="tag-check">✓</span><span class="tag-name">{{ t.name }}</span>
+              <button type="button" class="op-btn is-no" :disabled="tagBusy" :aria-label="`移除标签 ${t.name}`" title="移除标签" @click="beginReject(t.id)">✕</button>
             </span>
           </div>
 
@@ -366,28 +389,30 @@ onUnmounted(() => clearInterval(refreshTimer))
           <div v-if="pendingTags.length" class="pending-block">
             <p class="pending-hint">AI 建议的标签，等待你确认：</p>
             <div v-for="t in pendingTags" :key="t.id" class="tag is-pending">
-              {{ t.name }}
+              <span class="tag-name">{{ t.name }}</span>
               <span class="pending-ops">
-                <button class="op-btn is-ok" title="确认标签" @click="doConfirm(t.id)">✓</button>
-                <button class="op-btn is-no" title="拒绝" @click="beginReject(t.id)">✕</button>
+                <button type="button" class="op-btn is-ok" :disabled="tagBusy" :aria-label="`确认标签 ${t.name}`" title="确认标签" @click="doConfirm(t.id)">✓</button>
+                <button type="button" class="op-btn is-no" :disabled="tagBusy" :aria-label="`移除标签 ${t.name}`" title="拒绝" @click="beginReject(t.id)">✕</button>
               </span>
             </div>
-            <!-- 拒绝时填修正标签 -->
-            <div v-if="editingTag !== null" class="correction">
+          </div>
+            <!-- Both pending and confirmed tags can be removed or corrected. -->
+            <div v-if="editingTag !== null" class="correction" :aria-busy="tagBusy">
+              <p class="pending-hint">移除标签：{{ tagEditName }}。留空直接移除，也可填写替代标签。</p>
               <input
                 v-model="correction"
+                :disabled="tagBusy"
                 class="correction-input"
                 placeholder="如标签有误，可输入更贴切的名字"
                 @keyup.enter="submitReject"
               />
               <div class="correction-ops">
-                <button class="mini-btn" @click="cancelReject">取消</button>
-                <button class="mini-btn is-primary" @click="submitReject">
-                  {{ correction.trim() ? '以修正标签替代' : '仅拒绝' }}
+                <button class="mini-btn" :disabled="tagBusy" @click="cancelReject">取消</button>
+                <button class="mini-btn is-primary" :disabled="tagBusy" @click="submitReject">
+                  {{ tagBusy ? '正在保存…' : correction.trim() ? '以修正标签替代' : '移除标签' }}
                 </button>
               </div>
             </div>
-          </div>
 
           <!-- 已拒绝标签（留档；后端详情不返回已拒绝标签，恒空） -->
           <div v-if="rejectedTags.length" class="rejected-line">
@@ -421,7 +446,6 @@ onUnmounted(() => clearInterval(refreshTimer))
                 <span :class="file.archived ? 'arch is-on' : 'arch'">
                   {{ file.archived ? '已归档' : '未归档' }}
                 </span>
-                <ArchiveFileButton v-if="!file.archived && props.revision === undefined" :file-id="file.id" :archived="file.archived" :status="file.status" @changed="loadDetail(file.id); emit('changed', file.id)" />
               </dd>
             </div>
             <div class="meta-item">
@@ -720,7 +744,9 @@ onUnmounted(() => clearInterval(refreshTimer))
   padding: 4px 12px;
   border-radius: var(--radius-pill);
   font-size: 12.5px;
+  max-width: 100%;
 }
+.tag-name { min-width: 0; overflow-wrap: anywhere; }
 .tag.is-confirmed {
   background: var(--tag-bg);
   color: var(--text-1);
@@ -736,10 +762,12 @@ onUnmounted(() => clearInterval(refreshTimer))
 }
 .pending-ops {
   display: inline-flex;
+  flex-shrink: 0;
   gap: 4px;
   margin-left: 4px;
 }
 .op-btn {
+  flex-shrink: 0;
   width: 20px;
   height: 20px;
   border: none;
@@ -765,6 +793,7 @@ onUnmounted(() => clearInterval(refreshTimer))
   background: var(--danger);
   color: #fff;
 }
+.op-btn:disabled { opacity: .5; cursor: default; }
 
 .pending-block {
   display: flex;
@@ -980,4 +1009,11 @@ onUnmounted(() => clearInterval(refreshTimer))
 .is-inline .modal-mask { position: fixed; z-index: 150; }
 @media (max-width: 1200px) { .drawer-wrap.is-inline { flex-basis: var(--workbench-side-width,300px); width: var(--workbench-side-width,300px); } .is-inline .drawer-panel { padding: 16px; } }
 @media (max-width: 960px) { .drawer-wrap.is-inline.is-open { position: fixed; inset: 0 0 0 auto; width: min(380px, calc(100vw - 210px)); z-index: 100; box-shadow: -8px 0 24px #0002; } .drawer-wrap.is-inline:not(.is-open) { display: none; } }
+@media (pointer: coarse), (max-width: 600px) {
+  .op-btn { width: 44px; height: 44px; font-size: 15px; touch-action: manipulation; }
+  .tag.is-pending { display: flex; width: 100%; justify-content: space-between; }
+  .tag-name { flex: 1; }
+  .correction-input { height: 44px; font-size: 16px; }
+  .mini-btn { min-height: 44px; font-size: 14px; touch-action: manipulation; }
+}
 </style>

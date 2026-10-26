@@ -23,6 +23,7 @@ import { useWorkspaceStore } from '@/stores/workspace'
 import { useOpenFile } from '@/composables/useOpenFile'
 import { useArchiveFile } from '@/composables/useArchiveFile'
 import { formatBytes, shortTime, toDisplayTime } from '@/utils/format'
+import { createRequestId } from '@/utils/requestId'
 
 /**
  * 全部文件：标签为主要组织维度，服务端分页/排序/关键词检索。
@@ -396,13 +397,15 @@ async function onUploadPicked(e: Event) {
   const picked = input.files?.[0]
   input.value = ''
   if (!picked) return
-  const fd = new FormData()
-  fd.append('file', picked)
-  const signature = `${picked.name}\0${picked.size}\0${picked.lastModified}`
-  if (lastUpload.value?.signature !== signature) {
-    lastUpload.value = { signature, requestId: crypto.randomUUID() }
-  }
+  let initialized = false
   try {
+    const fd = new FormData()
+    fd.append('file', picked)
+    const signature = `${picked.name}\0${picked.size}\0${picked.lastModified}`
+    if (lastUpload.value?.signature !== signature) {
+      lastUpload.value = { signature, requestId: createRequestId() }
+    }
+    initialized = true
     try { await fileApi.uploadFile(fd, lastUpload.value.requestId) }
     catch {
       await ElMessageBox.confirm('AI 暂不可用或尚未授权。可以先安全保存文件，稍后整理；普通查找和取回仍可用。', '仅保存文件', { confirmButtonText:'仅保存', cancelButtonText:'返回' })
@@ -411,7 +414,8 @@ async function onUploadPicked(e: Event) {
     lastUpload.value = null
     ElMessage.success(`「${picked.name}」已保存，可在详情查看整理状态`)
     reload()
-  } catch {
+  } catch (error) {
+    if (!initialized) ElMessage.error(error instanceof Error ? error.message : '上传初始化失败，请重新选择文件')
     /* 拦截器已弹错 */
   }
 }

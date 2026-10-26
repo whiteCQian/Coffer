@@ -10,17 +10,21 @@ import { useAuthStore } from '@/stores/auth'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import '@/styles/home-task-expansion.css'
 const auth = useAuthStore(), workspace = useWorkspaceStore()
 const route = useRoute()
 const uploads = useWebUploadsStore(), recent = ref<InstanceType<typeof RecentUploads>>(), selectedFile = ref<number | null>(null)
 const hasTasks = computed(() => uploads.entries.length || workspace.overview?.processingCount || workspace.overview?.pendingConfirmCount || workspace.overview?.failedCount || workspace.unavailable || route.hash === '#web-task-progress')
+const tasksExpanded = ref(false)
+watch(hasTasks, value => { if (!value) tasksExpanded.value = false })
 async function afterUpload() {
+  tasksExpanded.value = true
   void recent.value?.refresh(); void workspace.refresh()
   await nextTick(); document.getElementById('web-task-progress')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
 }
 function fileChanged() { void uploads.refresh(true); void recent.value?.refresh(); void workspace.refresh() }
 async function focusTasks() {
-  if (route.hash === '#web-task-progress') { await nextTick(); document.getElementById('web-task-progress')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }) }
+  if (route.hash === '#web-task-progress') { tasksExpanded.value = true; await nextTick(); document.getElementById('web-task-progress')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }) }
 }
 onMounted(focusTasks)
 watch(() => route.hash, focusTasks)
@@ -31,7 +35,7 @@ watch(() => route.hash, focusTasks)
     <div class="web-overview" aria-label="文件任务概览"><span><i class="overview-dot"></i>正在解析 <strong>{{ workspace.overview?.processingCount ?? '—' }}</strong></span><span>待确认标签 <strong>{{ workspace.overview?.pendingConfirmCount ?? '—' }}</strong></span><span>失败任务 <strong>{{ workspace.overview?.failedCount ?? '—' }}</strong></span><span v-if="workspace.unavailable" role="status">任务状态暂时无法读取</span><RouterLink to="/search"><el-icon><Search /></el-icon>用自然语言找文件</RouterLink></div>
     <div class="web-home-workspace">
       <div class="web-home-library"><UploadZone compact @uploaded="afterUpload" /><RecentUploads ref="recent" /></div>
-      <div class="web-home-side" :class="{ 'has-upload-tasks': hasTasks }"><ChatDock /><WebUploadProgress :show-empty="route.hash === '#web-task-progress'" @open-file="selectedFile = $event" @changed="fileChanged" /></div>
+      <div class="web-home-side" :class="{ 'has-upload-tasks': hasTasks, 'tasks-expanded': tasksExpanded }"><ChatDock :compact="tasksExpanded" @restore="tasksExpanded = false" /><WebUploadProgress :expanded="tasksExpanded" :show-empty="route.hash === '#web-task-progress'" @toggle-expand="tasksExpanded = !tasksExpanded" @open-file="selectedFile = $event" @changed="fileChanged" /></div>
     </div>
     <FileDetailDrawer v-model="selectedFile" @changed="fileChanged" />
   </div>

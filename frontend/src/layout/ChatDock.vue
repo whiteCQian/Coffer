@@ -19,7 +19,8 @@ const QUICK_PROMPTS = ['帮我找上个月的发票', '最近上传了什么', '
 
 const messages = ref<Msg[]>([])
 const draft = ref('')
-const props = defineProps<{ question?: string }>()
+const props = defineProps<{ question?: string; compact?: boolean }>()
+const emit = defineEmits<{ (e: 'restore'): void }>()
 watch(() => props.question, q => { if (q) draft.value = q }, { immediate:true })
 const sending = ref(false)
 const sessionId = ref<string | undefined>(undefined)
@@ -120,6 +121,7 @@ async function scrollBottom() {
 async function send(text?: string) {
   const content = (text ?? draft.value).trim()
   if (!content || sending.value) return
+  if (props.compact) emit('restore')
   draft.value = ''
   messages.value.push({ role: 'user', text: content, citations: [] })
   sending.value = true
@@ -158,7 +160,7 @@ function onQuick(p: string) {
     <!-- 放大态遮罩：点空白处收起 -->
     <div v-if="expanded" class="chat-backdrop" @click.self="toggleExpand"></div>
 
-    <aside class="chat-card" :class="{ 'is-expanded': expanded }">
+    <aside class="chat-card" :class="{ 'is-expanded': expanded, 'is-compact': props.compact && !expanded }">
       <div class="card-head">
         <h2 class="card-title">AI 管家</h2>
         <div class="head-right">
@@ -245,9 +247,11 @@ function onQuick(p: string) {
       </div>
 
       <div class="chat-input">
+        <button v-if="props.compact && !expanded" type="button" class="chat-restore" aria-label="展开 AI 管家" title="展开 AI 管家" @click="emit('restore')">↗</button>
         <input
           v-model="draft"
           class="chat-input-field"
+          aria-label="向 AI 管家提问"
           type="text"
           placeholder="用自然语言描述你的需求…"
           :disabled="sending"

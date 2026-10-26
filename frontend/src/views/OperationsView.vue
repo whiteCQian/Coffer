@@ -370,7 +370,7 @@ async function loadRecent(reset=false) {
   try {
     const {data}=await governanceApi.recentOperations({name:recentName.value.trim() || undefined,attention:attention.value,page:recentPage.value,size:20})
     recent.value=data.data.content;recentPages.value=data.data.totalPages;recentError.value=''
-  } catch {recentError.value='最近操作暂时无法读取，请重试；文件库仍可访问。'}
+  } catch (error) {recentError.value=error instanceof Error && error.message.startsWith('当前服务版本') ? error.message : '最近操作暂时无法读取，请点击刷新重试；文件库仍可访问。'}
   finally {recentLoading.value=false}
 }
 async function recentAction(item:ArchiveOperationItemResponse, undo=false) {
@@ -387,20 +387,20 @@ async function recentAction(item:ArchiveOperationItemResponse, undo=false) {
 }
 function openTechnical() {void load();void loadFileOperations()}
 onMounted(() => { void loadRecent() })
-const recentTimer=setInterval(() => {void loadRecent()},5000)
+const recentTimer=setInterval(() => {if (!recentError.value && !document.hidden) void loadRecent()},5000)
 onUnmounted(() => clearInterval(recentTimer))
 </script>
 
 <template>
   <div class="pg operations-page" role="region" aria-label="操作记录内容" tabindex="0">
-    <header class="pg-head"><div><h1 class="pg-title">最近操作</h1><p class="pg-sub">按文件查看归档结果，处理异常或撤销整理。</p></div><button class="ghost-btn" :disabled="recentLoading" @click="loadRecent()">刷新</button></header>
+    <header class="pg-head"><div><h1 class="pg-title">最近操作</h1><p class="pg-sub">双击文件名查看文件，可撤销整理或重试失败操作。</p></div><button class="ghost-btn" :disabled="recentLoading" @click="loadRecent()">刷新</button></header>
     <section class="pg-panel recent-panel">
       <form class="recent-filter" @submit.prevent="loadRecent(true)"><input v-model="recentName" class="field-input" placeholder="按文件名查找最近操作" aria-label="操作文件名" /><label><input v-model="attention" type="checkbox" @change="loadRecent(true)" />只看需要处理</label><button class="primary-btn">查找</button></form>
       <p v-if="recentError" role="alert">{{ recentError }}</p>
-      <p v-if="!recent.length && !recentLoading">{{ recentName || attention ? '没有匹配的操作记录' : '添加并归档文件后，操作记录会出现在这里。' }}</p>
+      <p v-if="!recent.length && !recentLoading && !recentError">{{ recentName || attention ? '没有匹配的操作记录' : '添加并归档文件后，操作记录会出现在这里。' }}</p>
       <article v-for="item in recent" :key="item.id" class="recent-row">
-        <div><strong>{{ item.targetFileName || item.sourceFileName }}</strong><p>{{ toDisplayTime(item.createdAt) }} · 归档 · {{ itemStatusLabel(item.executionStatus) }}<template v-if="item.rollbackStatus !== 'NOT_REQUESTED'"> · 撤销：{{ rollbackLabel(item.rollbackStatus) }}</template></p><p v-if="itemFailure(item)">文件已保存，归档未完成：{{ itemFailure(item) }}</p></div>
-        <div class="head-actions"><RouterLink :to="{path:'/files',query:{file:String(item.fileId)}}">查看文件</RouterLink><button v-if="item.executionStatus === 'FAILED'" class="ghost-btn" :disabled="recentBusy" @click="recentAction(item)">重试归档</button><button v-if="canRollbackItem(item)" class="ghost-btn" :disabled="recentBusy" @click="recentAction(item,true)">撤销整理</button><details><summary>技术详情</summary><p>批次 {{ item.batchId }} · 执行 {{ item.attempts }} 次</p><p>{{ item.sourcePath }} → {{ item.targetPath }}</p></details></div>
+        <div><RouterLink v-slot="{ navigate }" :to="{path:'/files',query:{file:String(item.fileId)}}" custom><strong class="recent-file-name" role="link" tabindex="0" title="双击查看文件" @dblclick="navigate" @keydown.enter.prevent="navigate()">{{ item.targetFileName || item.sourceFileName }}</strong></RouterLink><p>{{ toDisplayTime(item.createdAt) }} · 归档 · {{ itemStatusLabel(item.executionStatus) }}<template v-if="item.rollbackStatus !== 'NOT_REQUESTED'"> · 撤销：{{ rollbackLabel(item.rollbackStatus) }}</template></p><p v-if="itemFailure(item)">文件已保存，归档未完成：{{ itemFailure(item) }}</p></div>
+        <div class="head-actions"><button v-if="item.executionStatus === 'FAILED'" class="ghost-btn" :disabled="recentBusy" @click="recentAction(item)">重试归档</button><button v-if="canRollbackItem(item)" class="ghost-btn" :disabled="recentBusy" @click="recentAction(item,true)">撤销整理</button></div>
       </article>
       <div class="pager"><button class="pager-btn" :disabled="recentPage===0 || recentLoading" @click="recentPage--;loadRecent()">上一页</button><span>第 {{ recentPage+1 }} / {{ Math.max(1,recentPages) }} 页</span><button class="pager-btn" :disabled="recentPage+1>=recentPages || recentLoading" @click="recentPage++;loadRecent()">下一页</button></div>
     </section>
@@ -670,6 +670,7 @@ onUnmounted(() => clearInterval(recentTimer))
 .recent-panel { flex:none; } .recent-filter {display:flex;gap:12px;flex-wrap:wrap;align-items:center;}
 .recent-filter>.field-input {flex:1;min-width:180px;} .recent-row {padding:16px 0;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;overflow-wrap:anywhere;}
 .recent-row strong {font-size:14px;} .recent-row p {font-size:12px;color:var(--text-2);margin:5px 0;}
+.recent-file-name {cursor:pointer;} .recent-file-name:hover {color:var(--accent);} .recent-file-name:focus-visible {outline:2px solid var(--accent);outline-offset:4px;border-radius:3px;}
 .technical-ledger>summary,.recent-row summary {cursor:pointer;color:var(--accent);} .technical-ledger>.pg-head {margin:20px 0;} .technical-ledger .pg-panel {margin-bottom:16px;}
 
 .operations-page {

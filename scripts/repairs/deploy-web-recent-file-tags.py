@@ -34,7 +34,7 @@ def compose(*args):
 
 
 def main():
-    assert PLAN['repair'] in ('web-recent-opened-file-tags-2026-10-17', 'web-home-remove-tag-card-2026-10-17', 'web-upload-feedback-2026-10-17', 'web-content-layout-2026-10-18', 'web-reader-controls-2026-10-18', 'web-home-viewport-2026-10-18', 'web-upload-state-2026-10-18', 'web-archive-actions-2026-10-18', 'web-pane-layout-2026-10-18', 'web-eight-recent-tags-2026-10-18', 'web-chat-size-icons-2026-10-18', 'web-chat-drawn-icons-2026-10-18')
+    assert PLAN['repair'] in ('web-recent-opened-file-tags-2026-10-17', 'web-home-remove-tag-card-2026-10-17', 'web-upload-feedback-2026-10-17', 'web-content-layout-2026-10-18', 'web-reader-controls-2026-10-18', 'web-home-viewport-2026-10-18', 'web-upload-state-2026-10-18', 'web-archive-actions-2026-10-18', 'web-pane-layout-2026-10-18', 'web-eight-recent-tags-2026-10-18', 'web-chat-size-icons-2026-10-18', 'web-chat-drawn-icons-2026-10-18', 'web-recent-operations-2026-10-26', 'web-detail-single-archive-2026-10-26', 'web-operations-cleanup-2026-10-26', 'web-detail-presentation-2026-10-26', 'web-quota-spacing-2026-10-26', 'web-tag-remove-style-2026-10-26', 'web-home-task-expansion-2026-10-26', 'web-mobile-home-flow-2026-10-26', 'web-mobile-recent-scroll-2026-10-26')
     assert WEB.is_dir() and (DEPLOY / 'coffer-test.sh').is_file()
     with Path('/run/lock/coffer-test-web-update.lock').open('w') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

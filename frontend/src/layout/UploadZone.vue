@@ -8,6 +8,7 @@ import { uploadFile, saveFileOnly } from '@/api/files'
 import { UploadFilled } from '@element-plus/icons-vue'
 import DesktopImportPanel from '@/components/DesktopImportPanel.vue'
 import { desktopBridge } from '@/api/desktop'
+import { createRequestId } from '@/utils/requestId'
 
 const uploads = useWebUploadsStore(), auth = useAuthStore()
 const emit = defineEmits<{ (e: 'uploaded'): void }>()
@@ -36,15 +37,18 @@ async function upload(file: File) {
   if (uploading.value) return
   if (file.size > 32 * 1024 * 1024) { ElMessage.warning('单个文件不能超过 32MB'); return }
   uploading.value = true
-  const fd = new FormData()
-  fd.append('file', file)
-  const signature = `${file.name}\0${file.size}\0${file.lastModified}`
-  if (lastUpload.value?.signature !== signature) {
-    lastUpload.value = { signature, requestId: crypto.randomUUID() }
-  }
-  const key = lastUpload.value.requestId, generation = auth.generation
-  uploads.begin(key, file.name)
+  const generation = auth.generation
+  let activeKey: string | undefined
   try {
+    const fd = new FormData()
+    fd.append('file', file)
+    const signature = `${file.name}\0${file.size}\0${file.lastModified}`
+    if (lastUpload.value?.signature !== signature) {
+      lastUpload.value = { signature, requestId: createRequestId() }
+    }
+    const key = lastUpload.value.requestId
+    activeKey = key
+    uploads.begin(key, file.name)
     let receipt, savedOnly = false
     try { receipt = await uploadFile(fd, key, percent => { if (generation === auth.generation) uploads.progress(key, percent) }) }
     catch (error) {
@@ -59,8 +63,11 @@ async function upload(file: File) {
     lastUpload.value = null
     ElMessage.success(savedOnly ? `「${file.name}」已保存，可稍后分析` : `「${file.name}」已上传，请在下方查看处理结果`)
     emit('uploaded')
-  } catch {
-    if (generation === auth.generation) uploads.failed(key)
+  } catch (error) {
+    if (generation === auth.generation) {
+      if (activeKey) uploads.failed(activeKey)
+      else ElMessage.error(error instanceof Error ? error.message : '上传初始化失败，请重新选择文件')
+    }
     /* 拦截器已弹错 */
   } finally {
     uploading.value = false

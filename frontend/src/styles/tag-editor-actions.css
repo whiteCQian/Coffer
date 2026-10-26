@@ -1,0 +1,30 @@
+.confirmation-card .tag-editor > span > button[aria-label^='移除标签 '] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  min-height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1;
+}
+.confirmation-card .tag-editor > span > button[aria-label^='移除标签 ']:hover:not(:disabled) { background: var(--hover-bg); color: var(--text-1); }
+.confirmation-card .tag-editor > span > button[aria-label^='移除标签 ']:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (pointer: coarse), (max-width: 600px) {
+  .confirmation-card .tag-editor > span > button[aria-label^='移除标签 '] {
+    flex-basis: 44px;
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    touch-action: manipulation;
+  }
+}
